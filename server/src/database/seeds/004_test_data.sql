@@ -24,8 +24,8 @@ INSERT INTO `invite_codes` (`id`, `code`, `max_uses`, `used_count`, `status`, `e
 -- 表3: guilds (status: 0=禁用, 1=启用)
 -- ============================================================
 INSERT INTO `guilds` (`id`, `name`, `icon_url`, `kook_guild_id`, `kook_bot_token`, `owner_user_id`, `status`) VALUES
-  (999, '天山明月', NULL, 'test-guild-999', 'test-bot-token-999', 1, 1),
-  (998, '测试禁用公会', NULL, 'test-guild-998', 'test-bot-token-998', 1, 0);
+  (999, '天山明月', NULL, 'test-guild-999', '', 1, 1),
+  (998, '测试禁用公会', NULL, 'test-guild-998', '', 1, 0);
 
 -- ============================================================
 -- 表4: equipment_catalog (无状态字段，插入测试参考装备)

@@ -1,5 +1,5 @@
 -- 种子数据：初始角色、权限、管理员账号
--- 密码: admin123 (bcrypt hash)
+-- 请在部署后立即修改默认管理员密码
 
 USE kook_admin;
 
@@ -43,7 +43,7 @@ SELECT 2, id FROM `permissions` WHERE `module` != 'permission' OR `action` = 'vi
 INSERT INTO `role_permissions` (`role_id`, `permission_id`)
 SELECT 3, id FROM `permissions` WHERE `action` IN ('view', 'create', 'use');
 
--- 初始管理员账号 (密码: admin123)
+-- 初始管理员账号 (部署后请立即修改密码)
 INSERT INTO `users` (`username`, `password_hash`, `nickname`, `status`) VALUES
 ('admin', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '系统管理员', 1);
 

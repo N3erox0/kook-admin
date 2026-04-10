@@ -5,7 +5,7 @@
 USE kook_admin;
 
 -- ============================================================
--- 1. 初始管理员账号（密码: admin123）
+-- 1. 初始管理员账号（部署后请立即修改密码）
 -- ============================================================
 INSERT INTO `users` (`username`, `password_hash`, `nickname`, `status`) VALUES
   ('admin', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '系统管理员', 1);

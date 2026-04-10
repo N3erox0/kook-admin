@@ -5,7 +5,7 @@
 -- ============================================
 
 -- 1. 插入测试用户（如果不存在则忽略）
--- 密码统一为 123456 的 bcrypt 哈希
+-- 密码为 bcrypt 哈希（部署后请修改）
 INSERT INTO `users` (`username`, `password_hash`, `nickname`, `status`) VALUES
 ('jam',     '$2a$10$xVqYLGEMCgKLGGmYiQ7HBOGhEEHpPBcYxRHEMZh1JlNGjBq7FYMTe', 'jam',     1),
 ('mrtena',  '$2a$10$xVqYLGEMCgKLGGmYiQ7HBOGhEEHpPBcYxRHEMZh1JlNGjBq7FYMTe', 'mrtena',  1),

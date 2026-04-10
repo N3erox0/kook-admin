@@ -8,10 +8,13 @@ dist/
 build/
 *.tsbuildinfo
 
-# Environment
+# Environment (NEVER commit real credentials)
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
+!.env.example
 
 # IDE
 .idea/
