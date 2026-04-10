@@ -7,7 +7,9 @@ import { useGuildStore } from '@/stores/guild.store';
 import { getProfile } from '@/api/auth';
 import AppLayout from '@/components/Layout';
 import AuthRoute from '@/components/AuthRoute';
+import HomePage from '@/pages/home';
 import LoginPage from '@/pages/login';
+import JoinPage from '@/pages/join';
 import GuildSelectPage from '@/pages/guild/GuildSelect';
 import GuildCreatePage from '@/pages/guild/GuildCreate';
 import DashboardPage from '@/pages/dashboard';
@@ -58,11 +60,18 @@ export default function App() {
       <AntApp>
         <BrowserRouter>
           <Routes>
+            {/* 公开页面 */}
+            <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/join" element={<JoinPage />} />
+
+            {/* 需登录 */}
             <Route path="/guild/select" element={<AuthRoute><GuildSelectPage /></AuthRoute>} />
             <Route path="/guild/create" element={<AuthRoute><GuildCreatePage /></AuthRoute>} />
-            <Route path="/" element={<AuthRoute><GuildRoute><AppLayout /></GuildRoute></AuthRoute>}>
-              <Route index element={<Navigate to="/dashboard" replace />} />
+
+            {/* 管理后台 */}
+            <Route path="/admin" element={<AuthRoute><GuildRoute><AppLayout /></GuildRoute></AuthRoute>}>
+              <Route index element={<Navigate to="/admin/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="members" element={<MemberPage />} />
               <Route path="catalog" element={<CatalogPage />} />
@@ -73,7 +82,8 @@ export default function App() {
               <Route path="logs" element={<LogPage />} />
               <Route path="settings" element={<GuildSettingsPage />} />
             </Route>
-            <Route path="*" element={<Navigate to="/guild/select" replace />} />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
       </AntApp>

@@ -19,15 +19,15 @@ const { Text } = Typography;
 // 超管：全部
 // 库存管理员/补装管理员/普通用户：仅本公会数据
 const allMenuItems = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: '控制台', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['super_admin', 'ssvip'] },
-  { key: '/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
-  { key: '/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
-  { key: '/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
-  { key: '/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin'] },
-  { key: '/settings', icon: <SettingOutlined />, label: '公会设置', roles: ['super_admin'] },
+  { key: '/admin/dashboard', icon: <DashboardOutlined />, label: '控制台', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
+  { key: '/admin/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
+  { key: '/admin/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['super_admin', 'ssvip'] },
+  { key: '/admin/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
+  { key: '/admin/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
+  { key: '/admin/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
+  { key: '/admin/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
+  { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin'] },
+  { key: '/admin/settings', icon: <SettingOutlined />, label: '公会设置', roles: ['super_admin'] },
 ];
 
 export default function AppLayout() {
@@ -41,7 +41,7 @@ export default function AppLayout() {
   const effectiveRole = currentGuildRole || user?.globalRole || '';
   const currentPath = location.pathname;
   const selectedKey = allMenuItems.find(m => currentPath === m.key)?.key
-    || '/' + location.pathname.split('/')[1];
+    || '/admin/' + location.pathname.split('/').slice(2).join('/');
 
   const visibleMenus = allMenuItems.filter((m) => effectiveRole && m.roles.includes(effectiveRole));
   const menuItems: MenuProps['items'] = visibleMenus.map((m) => ({

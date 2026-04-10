@@ -27,9 +27,9 @@ export default function LoginPage() {
       }
       message.success('登录成功');
       if (res.user?.globalRole === 'ssvip') {
-        navigate('/dashboard');
+        navigate('/admin/dashboard');
       } else if (res.guilds && res.guilds.length > 0) {
-        navigate('/dashboard');
+        navigate('/admin/dashboard');
       } else {
         navigate('/guild/select');
       }
@@ -42,7 +42,7 @@ export default function LoginPage() {
       const res: any = await request.post('/api/guilds/invite-codes/validate', { code: values.inviteCode });
       if (res.valid) {
         message.success('邀请码验证通过，请先登录或注册');
-        navigate('/guild/create');
+        navigate('/join');
       } else {
         message.error(res.message || '邀请码无效');
       }
