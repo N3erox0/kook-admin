@@ -56,11 +56,12 @@ export default function HomePage() {
         </Space>
       </div>
 
-      {/* Hero - 文字居中在头图上 */}
+      {/* Hero - 文字居中在头图上，扁比例 */}
       <div style={{
         position: 'relative',
-        height: '100vh',
-        minHeight: 600,
+        height: '38vw',
+        minHeight: 320,
+        maxHeight: 480,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -84,21 +85,9 @@ export default function HomePage() {
           <Paragraph style={{ color: 'rgba(255,255,255,0.85)', fontSize: 22, marginBottom: 16 }}>
             专为游戏公会打造的一站式管理系统
           </Paragraph>
-          <Paragraph style={{ color: 'rgba(255,255,255,0.5)', fontSize: 15, marginBottom: 40 }}>
+          <Paragraph style={{ color: 'rgba(255,255,255,0.5)', fontSize: 15, margin: 0 }}>
             库存管理 · 补装审批 · 智能预警 · 成员追踪
           </Paragraph>
-          <Space size={16} wrap style={{ justifyContent: 'center' }}>
-            <Button type="primary" size="large"
-              style={{ height: 50, padding: '0 40px', fontSize: 16, borderRadius: 10 }}
-              onClick={() => navigate('/join')}>
-              邀请码创建公会
-            </Button>
-            <Button size="large" ghost
-              style={{ height: 50, padding: '0 40px', fontSize: 16, borderRadius: 10, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}
-              onClick={() => navigate('/login')}>
-              管理员登录
-            </Button>
-          </Space>
         </div>
       </div>
 
