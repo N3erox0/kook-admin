@@ -3,7 +3,7 @@ import { Typography, Button, Space, Card, Row, Col } from 'antd';
 import {
   DashboardOutlined, TeamOutlined, AppstoreOutlined,
   SyncOutlined, AlertOutlined, FileTextOutlined,
-  RocketOutlined, KeyOutlined, LoginOutlined,
+  KeyOutlined, LoginOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -36,44 +36,67 @@ export default function HomePage() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0f1a' }}>
-      {/* Hero - 使用第一张图做背景 */}
+      {/* 顶部导航栏 */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '16px 32px',
+      }}>
+        <Text strong style={{ color: '#fff', fontSize: 18 }}>22BN公会助手</Text>
+        <Space size={12}>
+          <Button type="link" style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 500 }}
+            onClick={() => navigate('/join')}>
+            <KeyOutlined /> 邀请码注册
+          </Button>
+          <Button type="primary" size="small"
+            style={{ borderRadius: 6 }}
+            onClick={() => navigate('/login')}>
+            <LoginOutlined /> 管理员登录
+          </Button>
+        </Space>
+      </div>
+
+      {/* Hero - 文字居中在头图上 */}
       <div style={{
         position: 'relative',
-        padding: '100px 24px 120px',
+        height: '100vh',
+        minHeight: 600,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         textAlign: 'center',
         overflow: 'hidden',
-        minHeight: 500,
       }}>
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
           backgroundImage: `url(${bannerImages[0]})`,
           backgroundSize: 'cover', backgroundPosition: 'center',
-          filter: 'brightness(0.35)',
+          filter: 'brightness(0.3)',
         }} />
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'linear-gradient(180deg, rgba(10,15,26,0.3) 0%, rgba(10,15,26,0.85) 100%)',
+          background: 'linear-gradient(180deg, rgba(10,15,26,0.2) 0%, rgba(10,15,26,0.7) 70%, #0a0f1a 100%)',
         }} />
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 800, margin: '0 auto' }}>
-          <Title style={{ color: '#fff', fontSize: 44, marginBottom: 8, fontWeight: 700 }}>
-            KOOK 公会助手
+        <div style={{ position: 'relative', zIndex: 1, maxWidth: 700, padding: '0 24px' }}>
+          <Title style={{ color: '#fff', fontSize: 52, marginBottom: 12, fontWeight: 800, letterSpacing: 2 }}>
+            22BN公会助手
           </Title>
-          <Paragraph style={{ color: 'rgba(255,255,255,0.8)', fontSize: 20, marginBottom: 12 }}>
+          <Paragraph style={{ color: 'rgba(255,255,255,0.85)', fontSize: 22, marginBottom: 16 }}>
             专为游戏公会打造的一站式管理系统
           </Paragraph>
-          <Paragraph style={{ color: 'rgba(255,255,255,0.55)', fontSize: 15, marginBottom: 40, maxWidth: 500, margin: '0 auto 40px' }}>
+          <Paragraph style={{ color: 'rgba(255,255,255,0.5)', fontSize: 15, marginBottom: 40 }}>
             库存管理 · 补装审批 · 智能预警 · 成员追踪
           </Paragraph>
           <Space size={16} wrap style={{ justifyContent: 'center' }}>
-            <Button type="primary" size="large" icon={<LoginOutlined />}
-              style={{ height: 50, padding: '0 36px', fontSize: 16, borderRadius: 10 }}
-              onClick={() => navigate('/login')}>
-              公会管理员登录
-            </Button>
-            <Button size="large" icon={<KeyOutlined />}
-              style={{ height: 50, padding: '0 36px', fontSize: 16, borderRadius: 10, background: '#faad14', borderColor: '#faad14', color: '#fff' }}
+            <Button type="primary" size="large"
+              style={{ height: 50, padding: '0 40px', fontSize: 16, borderRadius: 10 }}
               onClick={() => navigate('/join')}>
               邀请码创建公会
+            </Button>
+            <Button size="large" ghost
+              style={{ height: 50, padding: '0 40px', fontSize: 16, borderRadius: 10, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}
+              onClick={() => navigate('/login')}>
+              管理员登录
             </Button>
           </Space>
         </div>
@@ -147,13 +170,11 @@ export default function HomePage() {
         <Paragraph style={{ color: 'rgba(255,255,255,0.8)', fontSize: 16, marginBottom: 32 }}>
           一个邀请码，开启你的公会智能管理之旅
         </Paragraph>
-        <Space size={16}>
-          <Button size="large" ghost
-            style={{ height: 48, padding: '0 32px', fontSize: 16, borderRadius: 8, color: '#fff', borderColor: '#fff' }}
-            onClick={() => navigate('/join')}>
-            立即创建公会
-          </Button>
-        </Space>
+        <Button size="large" ghost
+          style={{ height: 48, padding: '0 32px', fontSize: 16, borderRadius: 8, color: '#fff', borderColor: '#fff' }}
+          onClick={() => navigate('/join')}>
+          立即创建公会
+        </Button>
       </div>
 
       {/* Footer */}

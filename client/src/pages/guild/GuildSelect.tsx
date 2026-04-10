@@ -24,7 +24,7 @@ export default function GuildSelectPage() {
 
   const handleSelect = (guildId: number) => {
     selectGuild(guildId);
-    navigate('/dashboard');
+    navigate('/admin/dashboard');
   };
 
   return (

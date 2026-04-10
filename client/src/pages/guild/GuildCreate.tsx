@@ -230,7 +230,7 @@ export default function GuildCreatePage() {
             title="公会创建成功！"
             subTitle={`公会「${createdGuild?.name || ''}」已创建，你已被设为超级管理员。`}
             extra={[
-              <Button type="primary" key="dashboard" onClick={() => navigate('/dashboard')}>
+              <Button type="primary" key="dashboard" onClick={() => navigate('/admin/dashboard')}>
                 进入控制台
               </Button>,
             ]}

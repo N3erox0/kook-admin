@@ -251,7 +251,7 @@ export default function JoinPage() {
             title="公会创建成功！"
             subTitle={`「${createdGuild?.name || ''}」已创建，你已被设为超级管理员`}
             extra={[
-              <Button type="primary" key="go" size="large" onClick={() => navigate('/dashboard')}>
+              <Button type="primary" key="go" size="large" onClick={() => navigate('/admin/dashboard')}>
                 进入管理后台
               </Button>,
             ]}
