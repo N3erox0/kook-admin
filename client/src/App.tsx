@@ -10,6 +10,7 @@ import AuthRoute from '@/components/AuthRoute';
 import HomePage from '@/pages/home';
 import LoginPage from '@/pages/login';
 import JoinPage from '@/pages/join';
+import SSVIPLoginPage from '@/pages/ssvip';
 import GuildSelectPage from '@/pages/guild/GuildSelect';
 import GuildCreatePage from '@/pages/guild/GuildCreate';
 import DashboardPage from '@/pages/dashboard';
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/join" element={<JoinPage />} />
+            <Route path="/ssvip" element={<SSVIPLoginPage />} />
 
             {/* 需登录 */}
             <Route path="/guild/select" element={<AuthRoute><GuildSelectPage /></AuthRoute>} />

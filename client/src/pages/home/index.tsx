@@ -3,7 +3,7 @@ import { Typography, Button, Space, Card, Row, Col } from 'antd';
 import {
   DashboardOutlined, TeamOutlined, AppstoreOutlined,
   SyncOutlined, AlertOutlined, FileTextOutlined,
-  RocketOutlined, KeyOutlined,
+  RocketOutlined, KeyOutlined, LoginOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -49,16 +49,16 @@ export default function HomePage() {
           <Paragraph style={{ color: 'rgba(255,255,255,0.75)', fontSize: 18, marginBottom: 40 }}>
             专为 KOOK 游戏公会打造的一站式装备库存、补装审批与预警管理系统
           </Paragraph>
-          <Space size={16}>
-            <Button type="primary" size="large" icon={<KeyOutlined />}
+          <Space size={16} wrap style={{ justifyContent: 'center' }}>
+            <Button type="primary" size="large" icon={<LoginOutlined />}
               style={{ height: 48, padding: '0 32px', fontSize: 16, borderRadius: 8 }}
+              onClick={() => navigate('/login')}>
+              公会管理员登录
+            </Button>
+            <Button size="large" icon={<KeyOutlined />}
+              style={{ height: 48, padding: '0 32px', fontSize: 16, borderRadius: 8, background: '#faad14', borderColor: '#faad14', color: '#fff' }}
               onClick={() => navigate('/join')}>
               邀请码创建公会
-            </Button>
-            <Button size="large" ghost
-              style={{ height: 48, padding: '0 32px', fontSize: 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}
-              onClick={() => navigate('/login')}>
-              登录管理后台
             </Button>
           </Space>
         </div>
@@ -119,7 +119,7 @@ export default function HomePage() {
           <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
             <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer"
               style={{ color: 'rgba(255,255,255,0.35)' }}>
-              粤ICP备XXXXXXXX号-1
+              粤ICP备2026037673号-1
             </a>
           </Text>
         </Space>
