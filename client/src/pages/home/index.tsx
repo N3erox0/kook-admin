@@ -55,14 +55,6 @@ export default function HomePage() {
           background: 'linear-gradient(180deg, rgba(10,15,26,0.3) 0%, rgba(10,15,26,0.85) 100%)',
         }} />
         <div style={{ position: 'relative', zIndex: 1, maxWidth: 800, margin: '0 auto' }}>
-          <div style={{
-            width: 72, height: 72, borderRadius: 18,
-            background: 'linear-gradient(135deg, #1677ff, #0050b3)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            marginBottom: 24, boxShadow: '0 8px 24px rgba(22,119,255,0.4)',
-          }}>
-            <RocketOutlined style={{ fontSize: 36, color: '#fff' }} />
-          </div>
           <Title style={{ color: '#fff', fontSize: 44, marginBottom: 8, fontWeight: 700 }}>
             KOOK 公会助手
           </Title>
