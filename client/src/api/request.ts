@@ -8,13 +8,19 @@ const request = axios.create({
 });
 
 request.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  const guildId = localStorage.getItem('currentGuildId');
-  if (guildId) {
-    config.headers['X-Guild-Id'] = guildId;
+  // 登录和邀请码验证接口不带 token
+  const noAuthPaths = ['/auth/login', '/auth/refresh', '/guilds/invite-codes/validate'];
+  const isNoAuth = noAuthPaths.some(p => config.url?.includes(p));
+
+  if (!isNoAuth) {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    const guildId = localStorage.getItem('currentGuildId');
+    if (guildId) {
+      config.headers['X-Guild-Id'] = guildId;
+    }
   }
   return config;
 });
