@@ -1,194 +1,195 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Tabs, Switch, Badge } from 'antd';
-import { PlusOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, CheckOutlined, AlertOutlined } from '@ant-design/icons';
-import { getAlertRules, createAlertRule, updateAlertRule, deleteAlertRule, getAlertRecords, resolveAlertRecord } from '@/api/alert';
+import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Switch, Tabs, Popconfirm } from 'antd';
+import { PlusOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
-import { ALERT_RULE_TYPE } from '@/types';
+import request from '@/api/request';
 import dayjs from 'dayjs';
 
-const { Title, Text } = Typography;
+const { Title } = Typography;
 
 export default function AlertPage() {
   const { currentGuildId } = useGuildStore();
-  const guildId = currentGuildId!;
-
-  // 规则
+  const [activeTab, setActiveTab] = useState('01');
   const [rules, setRules] = useState<any[]>([]);
-  const [rulesLoading, setRulesLoading] = useState(false);
-  const [ruleModal, setRuleModal] = useState(false);
-  const [editRule, setEditRule] = useState<any>(null);
-  const [ruleForm] = Form.useForm();
-
-  // 记录
   const [records, setRecords] = useState<any[]>([]);
-  const [recordsTotal, setRecordsTotal] = useState(0);
-  const [recordsLoading, setRecordsLoading] = useState(false);
-  const [recordsPage, setRecordsPage] = useState(1);
-  const [resolvedFilter, setResolvedFilter] = useState<number | undefined>(0);
+  const [loading, setLoading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form] = Form.useForm();
 
-  const fetchRules = async () => {
-    if (!guildId) return;
-    setRulesLoading(true);
-    try { const res: any = await getAlertRules(guildId); setRules(res || []); } catch {} finally { setRulesLoading(false); }
+  const fetchRules = () => {
+    if (!currentGuildId) return;
+    setLoading(true);
+    request.get(`/api/guild/${currentGuildId}/alerts/rules`, { params: { ruleType: activeTab } }).then((res: any) => {
+      setRules(Array.isArray(res) ? res : res?.list || []);
+    }).finally(() => setLoading(false));
   };
 
-  const fetchRecords = async (p = recordsPage) => {
-    if (!guildId) return;
-    setRecordsLoading(true);
+  const fetchRecords = () => {
+    if (!currentGuildId) return;
+    request.get(`/api/guild/${currentGuildId}/alerts/records`, { params: { alertType: activeTab === '01' ? 'below' : 'death' } }).then((res: any) => {
+      setRecords(Array.isArray(res) ? res : res?.list || []);
+    });
+  };
+
+  useEffect(() => { fetchRules(); fetchRecords(); }, [currentGuildId, activeTab]);
+
+  const handleCreate = async (values: any) => {
     try {
-      const res: any = await getAlertRecords(guildId, { page: p, pageSize: 20, isResolved: resolvedFilter });
-      setRecords(res?.list || []);
-      setRecordsTotal(res?.total || 0);
-    } catch {} finally { setRecordsLoading(false); }
-  };
-
-  useEffect(() => { fetchRules(); fetchRecords(1); }, [guildId]);
-  useEffect(() => { setRecordsPage(1); fetchRecords(1); }, [resolvedFilter]);
-
-  const openRuleModal = (rule?: any) => {
-    setEditRule(rule || null);
-    if (rule) ruleForm.setFieldsValue(rule);
-    else ruleForm.resetFields();
-    setRuleModal(true);
-  };
-
-  const handleRuleSave = async (values: any) => {
-    try {
-      if (editRule) {
-        await updateAlertRule(guildId, editRule.id, values);
-        message.success('规则已更新');
-      } else {
-        await createAlertRule(guildId, values);
-        message.success('规则已创建');
-      }
-      setRuleModal(false);
+      await request.post(`/api/guild/${currentGuildId}/alerts/rules`, {
+        ...values,
+        ruleType: activeTab,
+        enabled: true,
+      });
+      message.success('规则创建成功');
+      setModalOpen(false);
+      form.resetFields();
       fetchRules();
     } catch {}
   };
 
-  const handleDeleteRule = async (id: number) => {
-    try { await deleteAlertRule(guildId, id); message.success('已删除'); fetchRules(); } catch {}
+  const handleToggle = async (id: number, enabled: boolean) => {
+    try {
+      await request.put(`/api/guild/${currentGuildId}/alerts/rules/${id}`, { enabled });
+      message.success('状态已更新');
+      fetchRules();
+    } catch {}
   };
 
-  const handleToggleRule = async (id: number, enabled: boolean) => {
-    try { await updateAlertRule(guildId, id, { enabled: enabled ? 1 : 0 }); fetchRules(); } catch {}
+  const handleDelete = async (id: number) => {
+    try {
+      await request.delete(`/api/guild/${currentGuildId}/alerts/rules/${id}`);
+      message.success('规则已删除');
+      fetchRules();
+    } catch {}
   };
 
   const handleResolve = async (id: number) => {
-    try { await resolveAlertRecord(guildId, id); message.success('已标记解决'); fetchRecords(); } catch {}
+    try {
+      await request.put(`/api/guild/${currentGuildId}/alerts/records/${id}/resolve`);
+      message.success('已标记解决');
+      fetchRecords();
+    } catch {}
   };
 
-  const ruleColumns = [
+  // 库存预警规则列表列
+  const inventoryRuleColumns: any[] = [
+    { title: '规则名称', dataIndex: 'ruleName', key: 'ruleName' },
+    { title: '装备名称', dataIndex: 'equipmentName', key: 'equipmentName', render: (v: string) => v || '全部' },
+    { title: '装等范围', dataIndex: 'gearScoreValue', key: 'gearScoreValue', render: (v: string) => v || '-' },
+    { title: '阈值', dataIndex: 'threshold', key: 'threshold', render: (v: number) => <Tag color="orange">低于 {v}</Tag> },
     {
-      title: '类型', dataIndex: 'ruleType', key: 'type', width: 120,
-      render: (v: string) => <Tag color={v === '01' ? 'blue' : 'volcano'}>{ALERT_RULE_TYPE[v] || v}</Tag>,
-    },
-    { title: '规则名称', dataIndex: 'ruleName', key: 'name', ellipsis: true },
-    { title: '装备名称', dataIndex: 'equipmentName', key: 'equip', render: (v: string) => v || '全部' },
-    { title: '装等', dataIndex: 'gearScoreValue', key: 'gs', width: 80, render: (v: string) => v || '-' },
-    { title: '阈值', dataIndex: 'threshold', key: 'th', width: 80, render: (v: number) => <Text strong>{v}</Text> },
-    {
-      title: '状态', key: 'enabled', width: 80,
-      render: (_: any, r: any) => <Switch size="small" checked={r.enabled === 1} onChange={(v) => handleToggleRule(r.id, v)} />,
+      title: '启用', dataIndex: 'enabled', key: 'enabled', width: 80,
+      render: (v: boolean, record: any) => <Switch checked={v} size="small" onChange={(c) => handleToggle(record.id, c)} />,
     },
     {
-      title: '操作', key: 'actions', width: 120,
-      render: (_: any, r: any) => (
-        <Space size="small">
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openRuleModal(r)}>编辑</Button>
-          <Popconfirm title="删除规则？" onConfirm={() => handleDeleteRule(r.id)}>
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
+      title: '操作', key: 'action', width: 80,
+      render: (_: any, record: any) => (
+        <Popconfirm title="确定删除?" onConfirm={() => handleDelete(record.id)}>
+          <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+        </Popconfirm>
       ),
     },
   ];
 
-  const recordColumns = [
+  // 死亡次数预警规则列表列
+  const deathRuleColumns: any[] = [
+    { title: '规则名称', dataIndex: 'ruleName', key: 'ruleName' },
+    { title: '装等', dataIndex: 'gearScoreValue', key: 'gearScoreValue', render: (v: string) => v || '全部' },
+    { title: '次数阈值', dataIndex: 'threshold', key: 'threshold', render: (v: number) => <Tag color="red">≥ {v} 次</Tag> },
     {
-      title: '类型', dataIndex: 'alertType', key: 'type', width: 110,
-      render: (v: string) => <Tag color={v === 'death_count' ? 'volcano' : 'blue'}>{v === 'death_count' ? '死亡次数' : '库存预警'}</Tag>,
-    },
-    { title: '预警内容', dataIndex: 'message', key: 'msg', ellipsis: true },
-    {
-      title: '当前值/阈值', key: 'values', width: 120,
-      render: (_: any, r: any) => <Text type="danger">{r.currentValue}</Text>,
-    },
-    {
-      title: '状态', key: 'resolved', width: 90,
-      render: (_: any, r: any) => r.isResolved ? <Tag color="green">已解决</Tag> : <Tag color="red">未解决</Tag>,
+      title: '启用', dataIndex: 'enabled', key: 'enabled', width: 80,
+      render: (v: boolean, record: any) => <Switch checked={v} size="small" onChange={(c) => handleToggle(record.id, c)} />,
     },
     {
-      title: '时间', dataIndex: 'createdAt', key: 'time', width: 140,
-      render: (v: string) => dayjs(v).format('MM-DD HH:mm'),
-    },
-    {
-      title: '操作', key: 'actions', width: 80,
-      render: (_: any, r: any) => !r.isResolved ? (
-        <Popconfirm title="标记为已解决？" onConfirm={() => handleResolve(r.id)}>
-          <Button size="small" type="link" icon={<CheckOutlined />}>解决</Button>
+      title: '操作', key: 'action', width: 80,
+      render: (_: any, record: any) => (
+        <Popconfirm title="确定删除?" onConfirm={() => handleDelete(record.id)}>
+          <Button type="link" danger size="small" icon={<DeleteOutlined />} />
         </Popconfirm>
-      ) : null,
+      ),
     },
   ];
 
-  const unresolvedCount = records.filter(r => !r.isResolved).length;
+  const recordColumns: any[] = [
+    { title: '预警信息', dataIndex: 'message', key: 'message', ellipsis: true },
+    { title: '当前值', dataIndex: 'currentValue', key: 'currentValue', width: 80 },
+    { title: '阈值', dataIndex: 'thresholdValue', key: 'thresholdValue', width: 80 },
+    {
+      title: '状态', dataIndex: 'isResolved', key: 'isResolved', width: 80,
+      render: (v: number) => v ? <Tag color="green">已解决</Tag> : <Tag color="red">未解决</Tag>,
+    },
+    { title: '时间', dataIndex: 'createdAt', key: 'createdAt', width: 150, render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm') },
+    {
+      title: '操作', key: 'action', width: 80,
+      render: (_: any, record: any) => !record.isResolved && (
+        <Button type="link" size="small" onClick={() => handleResolve(record.id)}>解决</Button>
+      ),
+    },
+  ];
+
+  const tabItems = [
+    {
+      key: '01',
+      label: '库存预警',
+      children: (
+        <div>
+          <Space style={{ marginBottom: 16 }}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setModalOpen(true); }}>新增规则</Button>
+            <Button icon={<ReloadOutlined />} onClick={fetchRules}>刷新</Button>
+          </Space>
+          <Title level={5}>预警规则</Title>
+          <Table columns={inventoryRuleColumns} dataSource={rules} rowKey="id" loading={loading} size="small" pagination={false} />
+          <Title level={5} style={{ marginTop: 24 }}>预警记录</Title>
+          <Table columns={recordColumns} dataSource={records} rowKey="id" size="small" pagination={{ pageSize: 10 }} />
+        </div>
+      ),
+    },
+    {
+      key: '02',
+      label: '死亡次数提醒',
+      children: (
+        <div>
+          <Space style={{ marginBottom: 16 }}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setModalOpen(true); }}>新增规则</Button>
+            <Button icon={<ReloadOutlined />} onClick={fetchRules}>刷新</Button>
+          </Space>
+          <Title level={5}>预警规则</Title>
+          <Table columns={deathRuleColumns} dataSource={rules} rowKey="id" loading={loading} size="small" pagination={false} />
+          <Title level={5} style={{ marginTop: 24 }}>预警记录</Title>
+          <Table columns={recordColumns} dataSource={records} rowKey="id" size="small" pagination={{ pageSize: 10 }} />
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>预警系统</Title>
-        <Button icon={<ReloadOutlined />} onClick={() => { fetchRules(); fetchRecords(); }}>刷新</Button>
-      </div>
+      <Title level={4}>预警设置</Title>
+      <Card>
+        <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
+      </Card>
 
-      <Tabs defaultActiveKey="rules" items={[
-        {
-          key: 'rules',
-          label: '预警规则',
-          children: (
-            <>
-              <div style={{ marginBottom: 12, textAlign: 'right' }}>
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => openRuleModal()}>新增规则</Button>
-              </div>
-              <Table columns={ruleColumns} dataSource={rules} rowKey="id" loading={rulesLoading} size="middle" pagination={false} />
-            </>
-          ),
-        },
-        {
-          key: 'records',
-          label: <Badge count={unresolvedCount} offset={[10, 0]}>预警记录</Badge>,
-          children: (
-            <>
-              <Space style={{ marginBottom: 12 }}>
-                <Select value={resolvedFilter} onChange={setResolvedFilter} style={{ width: 120 }} allowClear placeholder="状态">
-                  <Select.Option value={0}>未解决</Select.Option>
-                  <Select.Option value={1}>已解决</Select.Option>
-                </Select>
-              </Space>
-              <Table columns={recordColumns} dataSource={records} rowKey="id" loading={recordsLoading} size="middle"
-                pagination={{ current: recordsPage, total: recordsTotal, pageSize: 20, showTotal: t => `共 ${t} 条`,
-                  onChange: p => { setRecordsPage(p); fetchRecords(p); } }} />
-            </>
-          ),
-        },
-      ]} />
-
-      {/* 规则弹窗 */}
-      <Modal title={editRule ? '编辑预警规则' : '新增预警规则'} open={ruleModal} onCancel={() => setRuleModal(false)} footer={null} destroyOnClose>
-        <Form form={ruleForm} onFinish={handleRuleSave} layout="vertical" initialValues={{ ruleType: '01', threshold: 50 }}>
-          <Form.Item name="ruleType" label="规则类型" rules={[{ required: true }]}>
-            <Select>
-              <Select.Option value="01">01 - 补装库存预警</Select.Option>
-              <Select.Option value="02">02 - 死亡次数预警</Select.Option>
-            </Select>
+      <Modal
+        title={activeTab === '01' ? '新增库存预警规则' : '新增死亡次数提醒规则'}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onOk={() => form.submit()}
+      >
+        <Form form={form} layout="vertical" onFinish={handleCreate}>
+          <Form.Item name="ruleName" label="规则名称" rules={[{ required: true }]}>
+            <Input placeholder="如：武器库存不足预警" />
           </Form.Item>
-          <Form.Item name="ruleName" label="规则名称" rules={[{ required: true }]}><Input placeholder="如: P8堕神库存预警" /></Form.Item>
-          <Form.Item name="equipmentName" label="装备名称（可选）"><Input placeholder="留空=全部装备" /></Form.Item>
-          <Form.Item name="gearScoreValue" label="装等（如 P8、P4-P8、P9、P12）"><Input placeholder="如 P8 或 P4-P8" /></Form.Item>
-          <Form.Item name="threshold" label="阈值（库存低于/死亡次数≥此值触发）" rules={[{ required: true }]}>
+          {activeTab === '01' && (
+            <Form.Item name="equipmentName" label="装备名称（留空表示全部）">
+              <Input placeholder="如：长剑" />
+            </Form.Item>
+          )}
+          <Form.Item name="gearScoreValue" label="装等（如 P4、P8、P4-P8）">
+            <Input placeholder="如：P8 或 P4-P8" />
+          </Form.Item>
+          <Form.Item name="threshold" label={activeTab === '01' ? '库存阈值（低于此值预警）' : '死亡次数（达到此值提醒）'} rules={[{ required: true }]}>
             <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item><Button type="primary" htmlType="submit" block>保存</Button></Form.Item>
         </Form>
       </Modal>
     </div>

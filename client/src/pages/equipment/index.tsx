@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, HistoryOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin } from 'antd';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, ScanOutlined } from '@ant-design/icons';
 import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
+import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
+import { uploadFile } from '@/api/upload';
 import { useGuildStore } from '@/stores/guild.store';
 import { CATEGORIES, QUALITY_LABELS } from '@/types';
 import dayjs from 'dayjs';
@@ -40,6 +42,14 @@ export default function EquipmentPage() {
   const [logTarget, setLogTarget] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+
+  // OCR 识别入库
+  const [ocrModal, setOcrModal] = useState(false);
+  const [ocrStep, setOcrStep] = useState<'upload' | 'review' | 'done'>('upload');
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrBatchId, setOcrBatchId] = useState<number | null>(null);
+  const [ocrItems, setOcrItems] = useState<any[]>([]);
+  const [ocrImageUrl, setOcrImageUrl] = useState('');
 
   const fetchList = async (p = page, f = filters) => {
     if (!guildId) return;
@@ -167,6 +177,50 @@ export default function EquipmentPage() {
     } catch { setLogs([]); } finally { setLogsLoading(false); }
   };
 
+  // OCR 识别处理
+  const handleOcrUpload = async (file: File) => {
+    setOcrLoading(true);
+    try {
+      const uploadRes: any = await uploadFile(file);
+      const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
+      setOcrImageUrl(imageUrl);
+      const batchRes: any = await createOcrBatch(guildId, { imageUrl });
+      setOcrBatchId(batchRes?.id || batchRes?.batchId);
+      const itemsRes: any = await getOcrBatchDetail(guildId, batchRes?.id || batchRes?.batchId);
+      setOcrItems(Array.isArray(itemsRes) ? itemsRes : itemsRes?.items || itemsRes?.list || []);
+      setOcrStep('review');
+    } catch {
+      message.error('OCR 识别失败');
+    } finally { setOcrLoading(false); }
+    return false;
+  };
+
+  const handleOcrConfirmItem = async (itemId: number) => {
+    try {
+      await confirmOcrItem(guildId, itemId, { status: 'confirmed' });
+      setOcrItems(prev => prev.map(i => i.id === itemId ? { ...i, status: 'confirmed' } : i));
+      message.success('已确认');
+    } catch {}
+  };
+
+  const handleOcrDiscardItem = async (itemId: number) => {
+    try {
+      await confirmOcrItem(guildId, itemId, { status: 'discarded' });
+      setOcrItems(prev => prev.map(i => i.id === itemId ? { ...i, status: 'discarded' } : i));
+    } catch {}
+  };
+
+  const handleOcrCommit = async () => {
+    if (!ocrBatchId) return;
+    setOcrLoading(true);
+    try {
+      await saveOcrToInventory(guildId, ocrBatchId);
+      message.success('OCR 识别结果已写入库存');
+      setOcrStep('done');
+      fetchList();
+    } catch {} finally { setOcrLoading(false); }
+  };
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
@@ -217,6 +271,7 @@ export default function EquipmentPage() {
           <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
             <Button icon={<UploadOutlined />}>Excel/CSV导入</Button>
           </Upload>
+          <Button icon={<ScanOutlined />} onClick={() => { setOcrModal(true); setOcrStep('upload'); setOcrItems([]); setOcrBatchId(null); }}>OCR识别入库</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
         </Space>
       </div>
@@ -314,6 +369,75 @@ export default function EquipmentPage() {
         )}
         {logs.length === 0 && !logsLoading && <Text type="secondary">暂无变动记录</Text>}
       </Drawer>
+
+      {/* OCR 识别入库 Modal */}
+      <Modal
+        title="OCR 智能识别入库"
+        open={ocrModal}
+        onCancel={() => setOcrModal(false)}
+        width={700}
+        footer={ocrStep === 'review' ? (
+          <Space>
+            <Button onClick={() => setOcrModal(false)}>取消</Button>
+            <Button type="primary" loading={ocrLoading} onClick={handleOcrCommit}
+              disabled={ocrItems.filter(i => i.status === 'confirmed').length === 0}>
+              确认入库 ({ocrItems.filter(i => i.status === 'confirmed').length} 条)
+            </Button>
+          </Space>
+        ) : ocrStep === 'done' ? (
+          <Button type="primary" onClick={() => setOcrModal(false)}>完成</Button>
+        ) : null}
+      >
+        {ocrStep === 'upload' && (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            {ocrLoading ? (
+              <Spin tip="正在识别中..." size="large" />
+            ) : (
+              <Upload.Dragger accept="image/*" showUploadList={false} beforeUpload={handleOcrUpload}>
+                <p><ScanOutlined style={{ fontSize: 48, color: '#1677ff' }} /></p>
+                <p>点击或拖拽上传装备截图</p>
+                <p style={{ color: '#999' }}>支持 JPG/PNG 格式</p>
+              </Upload.Dragger>
+            )}
+          </div>
+        )}
+
+        {ocrStep === 'review' && (
+          <div>
+            {ocrImageUrl && <Image src={ocrImageUrl} style={{ maxHeight: 150, marginBottom: 12 }} />}
+            <Table
+              dataSource={ocrItems}
+              rowKey="id"
+              size="small"
+              pagination={false}
+              columns={[
+                { title: '装备名称', dataIndex: 'recognizedName', key: 'name' },
+                { title: '匹配结果', dataIndex: 'matchedCatalogName', key: 'match', render: (v: string) => v || <Tag color="red">未匹配</Tag> },
+                { title: '数量', dataIndex: 'quantity', key: 'qty', width: 60 },
+                {
+                  title: '状态', dataIndex: 'status', key: 'status', width: 80,
+                  render: (v: string) => v === 'confirmed' ? <Tag color="green">已确认</Tag> : v === 'discarded' ? <Tag color="red">已丢弃</Tag> : <Tag>待确认</Tag>,
+                },
+                {
+                  title: '操作', key: 'action', width: 120,
+                  render: (_: any, record: any) => record.status === 'pending' ? (
+                    <Space size="small">
+                      <Button size="small" type="link" onClick={() => handleOcrConfirmItem(record.id)}>确认</Button>
+                      <Button size="small" type="link" danger onClick={() => handleOcrDiscardItem(record.id)}>丢弃</Button>
+                    </Space>
+                  ) : null,
+                },
+              ]}
+            />
+          </div>
+        )}
+
+        {ocrStep === 'done' && (
+          <div style={{ textAlign: 'center', padding: 24 }}>
+            <Tag color="green" style={{ fontSize: 16, padding: '8px 16px' }}>入库完成</Tag>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

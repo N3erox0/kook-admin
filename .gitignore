@@ -36,5 +36,10 @@ server/uploads/
 # Coverage
 coverage/
 
+# Local-only files (passwords, credentials)
+*.local.*
+*.local.sql
+deploy-v4.sh
+
 # CodeBuddy
 .codebuddy/

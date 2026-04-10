@@ -5,7 +5,6 @@ import {
   DashboardOutlined, TeamOutlined, DatabaseOutlined, AppstoreOutlined,
   SyncOutlined, AlertOutlined, FileTextOutlined, SwapOutlined,
   LogoutOutlined, UserOutlined, KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  ScanOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
@@ -16,15 +15,17 @@ import type { MenuProps } from 'antd';
 const { Header, Sider, Content } = AntLayout;
 const { Text } = Typography;
 
+// SSVIP 仅可见：装备参考库、邀请码管理（控制台仅显示公会数）
+// 超管：全部
+// 库存管理员/补装管理员/普通用户：仅本公会数据
 const allMenuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '控制台', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['super_admin', 'ssvip', 'inventory_admin'] },
-  { key: '/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/equipment/ocr', icon: <ScanOutlined />, label: 'OCR识别入库', roles: ['super_admin', 'inventory_admin'] },
-  { key: '/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'ssvip', 'resupply_staff'] },
-  { key: '/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'ssvip', 'inventory_admin'] },
-  { key: '/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['super_admin', 'ssvip'] },
+  { key: '/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
+  { key: '/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['super_admin', 'ssvip'] },
+  { key: '/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
+  { key: '/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
+  { key: '/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
+  { key: '/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
   { key: '/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin'] },
   { key: '/settings', icon: <SettingOutlined />, label: '公会设置', roles: ['super_admin'] },
 ];
@@ -54,6 +55,8 @@ export default function AppLayout() {
     navigate('/login');
   };
 
+  const isSSVIP = user?.globalRole === 'ssvip';
+
   const userMenuItems: MenuProps['items'] = [
     {
       key: 'role',
@@ -61,12 +64,12 @@ export default function AppLayout() {
       disabled: true,
     },
     { type: 'divider' },
-    {
+    ...(!isSSVIP ? [{
       key: 'switch-guild',
       icon: <SwapOutlined />,
       label: '切换公会',
       onClick: () => navigate('/guild/select'),
-    },
+    }] : []),
     {
       key: 'logout',
       icon: <LogoutOutlined />,
@@ -91,15 +94,15 @@ export default function AppLayout() {
           height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center',
           borderBottom: '1px solid rgba(255,255,255,0.1)', padding: '0 16px',
         }}>
-          {currentGuild?.guildIcon ? (
+          {!isSSVIP && currentGuild?.guildIcon ? (
             <Avatar src={currentGuild.guildIcon} size={32} shape="square" />
           ) : (
             <Avatar icon={<AppstoreOutlined />} size={32} shape="square"
-              style={{ background: '#1890ff' }} />
+              style={{ background: isSSVIP ? '#faad14' : '#1890ff' }} />
           )}
           {!collapsed && (
             <Text strong style={{ color: '#fff', marginLeft: 12, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {currentGuild?.guildName || '装备管理'}
+              {isSSVIP ? 'SSVIP 管理中心' : (currentGuild?.guildName || '装备管理')}
             </Text>
           )}
         </div>
@@ -125,11 +128,11 @@ export default function AppLayout() {
           </div>
 
           <Space size={16}>
-            {user?.globalRole === 'ssvip' && <Tag color="gold">SSVIP</Tag>}
+            {isSSVIP && <Tag color="gold">SSVIP</Tag>}
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <Space style={{ cursor: 'pointer' }}>
                 <Avatar size="small" icon={<UserOutlined />}
-                  style={{ background: '#1890ff' }}>
+                  style={{ background: isSSVIP ? '#faad14' : '#1890ff' }}>
                   {user?.nickname?.[0]}
                 </Avatar>
                 <Text>{user?.nickname || user?.username}</Text>

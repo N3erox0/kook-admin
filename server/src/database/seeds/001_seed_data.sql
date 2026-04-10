@@ -45,7 +45,7 @@ SELECT 3, id FROM `permissions` WHERE `action` IN ('view', 'create', 'use');
 
 -- 初始管理员账号 (部署后请立即修改密码)
 INSERT INTO `users` (`username`, `password_hash`, `nickname`, `status`) VALUES
-('admin', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '系统管理员', 1);
+('admin', '$2b$10$CcbVp.fxpxPxjuGMgh3OzubBeashswDM4fJl8Qbdt4VaVFruROYwi', '系统管理员', 1);
 
 -- 分配超级管理员角色
 INSERT INTO `user_roles` (`user_id`, `role_id`) VALUES (1, 1);

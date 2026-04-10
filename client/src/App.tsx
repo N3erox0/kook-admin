@@ -18,13 +18,11 @@ import ResupplyPage from '@/pages/resupply';
 import AlertPage from '@/pages/alert';
 import LogPage from '@/pages/log';
 import InviteCodePage from '@/pages/invite-codes';
-import OcrPage from '@/pages/ocr';
 import GuildSettingsPage from '@/pages/guild/GuildSettings';
 
 function GuildRoute({ children }: { children: React.ReactNode }) {
   const { currentGuildId } = useGuildStore();
   const { user } = useAuthStore();
-  // SSVIP 无需选公会也可以进入（查看所有公会模式）
   if (!currentGuildId && user?.globalRole !== 'ssvip') {
     return <Navigate to="/guild/select" replace />;
   }
@@ -69,7 +67,6 @@ export default function App() {
               <Route path="members" element={<MemberPage />} />
               <Route path="catalog" element={<CatalogPage />} />
               <Route path="equipment" element={<EquipmentPage />} />
-              <Route path="equipment/ocr" element={<OcrPage />} />
               <Route path="resupply" element={<ResupplyPage />} />
               <Route path="alerts" element={<AlertPage />} />
               <Route path="invite-codes" element={<InviteCodePage />} />

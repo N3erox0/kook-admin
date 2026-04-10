@@ -1,104 +1,168 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, Input, Select, message } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { ReloadOutlined } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
-import { ROLE_LABELS } from '@/types';
 import request from '@/api/request';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
 
-const STATUS_COLORS: Record<string, string> = { active: 'green', left: 'default' };
+const ROLE_OPTIONS = [
+  { value: 'super_admin', label: '超级管理员' },
+  { value: 'inventory_admin', label: '库存管理员' },
+  { value: 'resupply_staff', label: '补装管理员' },
+  { value: 'normal', label: '普通用户' },
+];
+
+const ROLE_COLORS: Record<string, string> = {
+  super_admin: 'red',
+  inventory_admin: 'blue',
+  resupply_staff: 'green',
+  normal: 'default',
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: '超级管理员',
+  inventory_admin: '库存管理员',
+  resupply_staff: '补装管理员',
+  normal: '普通用户',
+};
 
 export default function MemberPage() {
-  const { currentGuildId } = useGuildStore();
-  const guildId = currentGuildId!;
-  const [list, setList] = useState<any[]>([]);
-  const [total, setTotal] = useState(0);
+  const { currentGuildId, currentGuildRole } = useGuildStore();
   const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [keyword, setKeyword] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string | undefined>('active');
+  const [statusFilter, setStatusFilter] = useState<string>('');
 
-  const fetchList = async (p = page) => {
-    if (!guildId) return;
+  const isSuperAdmin = currentGuildRole === 'super_admin';
+
+  const fetchData = () => {
+    if (!currentGuildId) return;
     setLoading(true);
-    try {
-      const res: any = await request.get(`/guild/${guildId}/members`, {
-        params: { page: p, pageSize: 50, keyword: keyword || undefined, status: statusFilter },
-      });
-      setList(res?.list || []);
-      setTotal(res?.total || 0);
-    } catch {} finally { setLoading(false); }
+    const params: any = { page, pageSize: 50 };
+    if (keyword) params.keyword = keyword;
+    if (statusFilter) params.status = statusFilter;
+    request.get(`/api/guild/${currentGuildId}/members`, { params }).then((res: any) => {
+      setData(res.list || []);
+      setTotal(res.total || 0);
+    }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchList(1); setPage(1); }, [guildId, statusFilter]);
-
-  const handleSearch = () => { setPage(1); fetchList(1); };
+  useEffect(() => { fetchData(); }, [currentGuildId, page, statusFilter]);
 
   const handleRoleChange = async (memberId: number, role: string) => {
     try {
-      await request.put(`/guild/${guildId}/members/${memberId}/role`, { role });
-      message.success('角色已更新');
-      fetchList();
+      await request.put(`/api/guild/${currentGuildId}/members/${memberId}/role`, { role });
+      message.success('角色修改成功');
+      fetchData();
     } catch {}
   };
 
-  const columns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
-    { title: '昵称', dataIndex: 'nickname', key: 'nick', ellipsis: true },
-    { title: 'KOOK ID', dataIndex: 'kookUserId', key: 'kookId', width: 130, ellipsis: true },
+  const calcDays = (joinedAt: string) => {
+    if (!joinedAt) return '-';
+    return dayjs().diff(dayjs(joinedAt), 'day');
+  };
+
+  const columns: any[] = [
+    {
+      title: '成员昵称', dataIndex: 'nickname', key: 'nickname', width: 160,
+    },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 80,
-      render: (v: string) => <Tag color={STATUS_COLORS[v]}>{v === 'active' ? '在会' : '已离开'}</Tag>,
+      render: (v: string) => v === 'active'
+        ? <Tag color="green">在会</Tag>
+        : <Tag color="red">离开</Tag>,
     },
     {
-      title: '角色', key: 'role', width: 160,
-      render: (_: any, r: any) => (
-        <Select size="small" value={r.role} style={{ width: 140 }}
-          onChange={(v) => handleRoleChange(r.id, v)} disabled={r.status !== 'active'}>
-          {Object.entries(ROLE_LABELS).map(([k, v]) => (
-            <Select.Option key={k} value={k}>{v}</Select.Option>
-          ))}
-        </Select>
-      ),
+      title: '服务器角色', dataIndex: 'kookRoles', key: 'kookRoles', width: 200,
+      render: (roles: any[]) => {
+        if (!roles || !Array.isArray(roles) || roles.length === 0) return <Tag>无</Tag>;
+        return (
+          <Space size={2} wrap>
+            {roles.slice(0, 3).map((r: any, i: number) => (
+              <Tag key={i} color="processing">{typeof r === 'object' ? r.name : r}</Tag>
+            ))}
+            {roles.length > 3 && <Tag>+{roles.length - 3}</Tag>}
+          </Space>
+        );
+      },
     },
     {
-      title: '加入时间', dataIndex: 'joinedAt', key: 'joined', width: 140,
+      title: '系统角色', dataIndex: 'role', key: 'role', width: 150,
+      render: (role: string, record: any) => {
+        if (isSuperAdmin && record.status === 'active') {
+          return (
+            <Select
+              value={role}
+              size="small"
+              style={{ width: 130 }}
+              options={ROLE_OPTIONS}
+              onChange={(v) => handleRoleChange(record.id, v)}
+            />
+          );
+        }
+        return <Tag color={ROLE_COLORS[role]}>{ROLE_LABELS[role] || role}</Tag>;
+      },
+    },
+    {
+      title: '加入时间', dataIndex: 'joinedAt', key: 'joinedAt', width: 110,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-',
     },
     {
-      title: '离开时间', dataIndex: 'leftAt', key: 'left', width: 140,
-      render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-',
+      title: '在会天数', key: 'days', width: 90,
+      render: (_: any, record: any) => {
+        if (record.status !== 'active') return '-';
+        return `${calcDays(record.joinedAt)} 天`;
+      },
     },
     {
-      title: '最后同步', dataIndex: 'lastSyncedAt', key: 'sync', width: 140,
-      render: (v: string) => v ? dayjs(v).format('MM-DD HH:mm') : '-',
+      title: '离开时间', dataIndex: 'leftAt', key: 'leftAt', width: 110,
+      render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-',
     },
   ];
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>成员管理</Title>
-        <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
-      </div>
-
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Space>
-          <Input placeholder="搜索昵称/KOOK ID" prefix={<SearchOutlined />} allowClear
-            value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} style={{ width: 200 }} />
-          <Select value={statusFilter} onChange={setStatusFilter} style={{ width: 100 }} allowClear placeholder="状态">
-            <Select.Option value="active">在会</Select.Option>
-            <Select.Option value="left">已离开</Select.Option>
-          </Select>
-          <Button type="primary" onClick={handleSearch}>查询</Button>
-        </Space>
-      </Card>
-
+      <Title level={4}>成员管理</Title>
       <Card>
-        <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle"
-          pagination={{ current: page, total, pageSize: 50, showTotal: t => `共 ${t} 条`, onChange: p => { setPage(p); fetchList(p); } }} />
+        <Space style={{ marginBottom: 16 }} wrap>
+          <Input.Search
+            placeholder="搜索昵称"
+            allowClear
+            style={{ width: 200 }}
+            onSearch={(v) => { setKeyword(v); setPage(1); fetchData(); }}
+          />
+          <Select
+            placeholder="状态筛选"
+            allowClear
+            style={{ width: 120 }}
+            value={statusFilter || undefined}
+            onChange={(v) => { setStatusFilter(v || ''); setPage(1); }}
+            options={[
+              { value: 'active', label: '在会' },
+              { value: 'left', label: '离开' },
+            ]}
+          />
+          <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+        </Space>
+
+        <Table
+          columns={columns}
+          dataSource={data}
+          rowKey="id"
+          loading={loading}
+          size="small"
+          pagination={{
+            current: page,
+            total,
+            pageSize: 50,
+            showTotal: (t) => `共 ${t} 条`,
+            onChange: (p) => setPage(p),
+          }}
+        />
       </Card>
     </div>
   );
