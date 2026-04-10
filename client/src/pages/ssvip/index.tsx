@@ -51,8 +51,8 @@ export default function SSVIPLoginPage() {
           }}>
             <CrownOutlined style={{ fontSize: 32, color: '#fff' }} />
           </div>
-          <Title level={3} style={{ margin: 0 }}>SSVIP 管理中心</Title>
-          <Text type="secondary">系统超级管理员专属入口</Text>
+          <Title level={3} style={{ margin: 0 }}>SSVIP</Title>
+          <Text type="secondary">22BN公会助手</Text>
         </div>
 
         <Form onFinish={handleLogin} size="large" autoComplete="off">
