@@ -18,10 +18,10 @@ const features = [
 ];
 
 const bannerImages = [
-  'https://i0.hdslb.com/bfs/archive/7e27fe15757f13e5da1467a76c959ab8.png',
-  'https://gimg2.baidu.com/image_search/src=http%3A%2F%2Fpic1.zhimg.com%2Fv2-dcc6a904e6534185ab6ff0baaa33a330_r.jpg',
-  'https://i0.hdslb.com/bfs/article/4903fdb71829e8260ba27f215e3496994a9361ff.jpg',
-  'https://pic3.zhimg.com/v2-1680251563489819_r.jpg',
+  '/images/banner-1.png',
+  '/images/banner-2.webp',
+  '/images/banner-3.jpg',
+  '/images/banner-4.jpg',
 ];
 
 const slogans = [
