@@ -29,7 +29,7 @@ export default function GuildCreatePage() {
     if (!inviteCode.trim()) { message.warning('请输入邀请码'); return; }
     setLoading(true);
     try {
-      const res: any = await request.post('/api/guilds/invite-codes/validate', { code: inviteCode.trim() });
+      const res: any = await request.post('/guilds/invite-codes/validate', { code: inviteCode.trim() });
       if (res.valid) {
         message.success('邀请码验证通过');
         setCurrent(1);
@@ -44,13 +44,12 @@ export default function GuildCreatePage() {
     if (!kookGuildId.trim()) { message.warning('请输入 KOOK 服务器 ID'); return; }
     setLoading(true);
     try {
-      const res: any = await request.get('/api/kook/guild-info', { params: { guild_id: kookGuildId.trim() } });
+      const res: any = await request.get('/kook/guild-info', { params: { guild_id: kookGuildId.trim() } });
       if (res?.data) {
         setGuildInfo(res.data);
-        // 获取频道列表
-        const chRes: any = await request.get('/api/kook/channels', { params: { guild_id: kookGuildId.trim() } });
+        const chRes: any = await request.get('/kook/channels', { params: { guild_id: kookGuildId.trim() } });
         if (chRes?.data) {
-          setChannels(chRes.data.filter((c: any) => c.type === 1)); // 仅文字频道
+          setChannels(chRes.data.filter((c: any) => c.type === 1));
         }
         setCurrent(2);
       } else {
@@ -66,24 +65,22 @@ export default function GuildCreatePage() {
     if (!selectedChannelId) { message.warning('请选择补装频道'); return; }
     setLoading(true);
     try {
-      const res: any = await request.post('/api/guilds', {
+      const res: any = await request.post('/guilds', {
         inviteCode: inviteCode.trim(),
         name: guildInfo?.name || `公会-${kookGuildId}`,
         iconUrl: guildInfo?.icon || '',
         kookGuildId: kookGuildId.trim(),
       });
 
-      // 更新公会配置（补装频道、管理角色）
       if (res?.id) {
-        await request.put(`/api/guilds/${res.id}`, {
+        await request.put(`/guilds/${res.id}`, {
           kookResupplyChannelId: selectedChannelId,
           kookAdminRoleId: kookAdminRoleId || '',
         });
 
         setCreatedGuild(res);
 
-        // 刷新公会列表
-        const profileRes: any = await request.get('/api/auth/profile');
+        const profileRes: any = await request.get('/auth/profile');
         if (profileRes?.guilds) {
           setGuilds(profileRes.guilds);
           selectGuild(res.id);

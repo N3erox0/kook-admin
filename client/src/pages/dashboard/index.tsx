@@ -19,7 +19,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (isSSVIP) {
-      request.get('/api/guilds/all').then((res: any) => {
+      request.get('/guilds/all').then((res: any) => {
         setGuildCount(Array.isArray(res) ? res.length : 0);
       }).catch(() => {});
       return;
