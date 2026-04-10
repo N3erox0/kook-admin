@@ -102,7 +102,7 @@ export default function AppLayout() {
           )}
           {!collapsed && (
             <Text strong style={{ color: '#fff', marginLeft: 12, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {isSSVIP ? 'SSVIP 管理中心' : (currentGuild?.guildName || '装备管理')}
+              {isSSVIP ? 'SSVIP 管理中心' : (currentGuild?.guildName || 'KOOK 公会助手')}
             </Text>
           )}
         </div>

@@ -44,7 +44,7 @@ export default function HomePage() {
             <RocketOutlined style={{ fontSize: 36, color: '#fff' }} />
           </div>
           <Title style={{ color: '#fff', fontSize: 42, marginBottom: 8, fontWeight: 700 }}>
-            KOOK 装备管理后台
+            KOOK 公会助手
           </Title>
           <Paragraph style={{ color: 'rgba(255,255,255,0.75)', fontSize: 18, marginBottom: 40 }}>
             专为 KOOK 游戏公会打造的一站式装备库存、补装审批与预警管理系统
@@ -68,7 +68,7 @@ export default function HomePage() {
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '80px 24px' }}>
         <div style={{ textAlign: 'center', marginBottom: 48 }}>
           <Title level={2}>功能模块</Title>
-          <Text type="secondary" style={{ fontSize: 16 }}>覆盖公会装备管理全流程</Text>
+          <Text type="secondary" style={{ fontSize: 16 }}>覆盖公会管理全流程</Text>
         </div>
         <Row gutter={[24, 24]}>
           {features.map((f, i) => (
@@ -114,7 +114,7 @@ export default function HomePage() {
       }}>
         <Space direction="vertical" size={4}>
           <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
-            KOOK 装备管理后台 &copy; {new Date().getFullYear()}
+            KOOK 公会助手 &copy; {new Date().getFullYear()}
           </Text>
           <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
             <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer"

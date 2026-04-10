@@ -113,8 +113,8 @@ export default function LoginPage() {
           }}>
             <SafetyCertificateOutlined style={{ fontSize: 32, color: '#fff' }} />
           </div>
-          <Title level={3} style={{ margin: 0 }}>装备管理后台</Title>
-          <Text type="secondary">KOOK Equipment Management System</Text>
+          <Title level={3} style={{ margin: 0 }}>KOOK 公会助手</Title>
+          <Text type="secondary">KOOK Guild Assistant</Text>
         </div>
 
         <Tabs items={tabItems} centered />
