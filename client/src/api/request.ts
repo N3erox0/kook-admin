@@ -9,7 +9,7 @@ const request = axios.create({
 
 request.interceptors.request.use((config) => {
   // 登录和邀请码验证接口不带 token
-  const noAuthPaths = ['/auth/login', '/auth/refresh', '/guilds/invite-codes/validate'];
+  const noAuthPaths = ['/auth/login', '/auth/refresh', '/guilds/invite-codes/validate', '/guilds/activate/info', '/guilds/activate', '/auth/kook/oauth-url', '/auth/kook/callback'];
   const isNoAuth = noAuthPaths.some(p => config.url?.includes(p));
 
   if (!isNoAuth) {

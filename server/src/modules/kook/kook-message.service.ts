@@ -5,6 +5,9 @@ import { Guild } from '../guild/entities/guild.entity';
 import { OcrService } from '../ocr/ocr.service';
 import { ResupplyService } from '../resupply/resupply.service';
 import { KookService } from './kook.service';
+import { GuildStatus } from '../../common/constants/enums';
+import { v4 as uuidv4 } from 'uuid';
+import { ConfigService } from '@nestjs/config';
 
 export interface KookWebhookPayload {
   s: number;
@@ -17,6 +20,8 @@ export interface KookWebhookPayload {
     content?: string;
     msg_id?: string;
     extra?: {
+      type?: string;
+      body?: any;
       author?: { id: string; username: string; nickname: string };
       attachments?: { type: string; url: string; name: string }[];
       guild_id?: string;
@@ -27,11 +32,11 @@ export interface KookWebhookPayload {
 
 /** 击杀详情解析结果 */
 interface KillDetailParsed {
-  date: string | null;       // YYYY-MM-DD
-  mapName: string | null;    // 英文字母串
-  gameId: string | null;     // 左侧游戏ID
-  guildName: string | null;  // 公会名
-  isKillDetail: boolean;     // 是否击杀详情图片
+  date: string | null;
+  mapName: string | null;
+  gameId: string | null;
+  guildName: string | null;
+  isKillDetail: boolean;
 }
 
 @Injectable()
@@ -43,6 +48,7 @@ export class KookMessageService {
     private kookService: KookService,
     private ocrService: OcrService,
     private resupplyService: ResupplyService,
+    private configService: ConfigService,
   ) {}
 
   async handleWebhookEvent(payload: KookWebhookPayload): Promise<any> {
@@ -52,6 +58,12 @@ export class KookMessageService {
     if (payload.s !== 0) return { ok: true };
 
     const d = payload.d;
+
+    // ===== 系统事件处理（type=255） =====
+    if (d?.type === 255 && d.extra?.type) {
+      return this.handleSystemEvent(d);
+    }
+
     if (!d?.extra?.guild_id || !d?.author_id) return { ok: true };
 
     const guild = await this.guildRepo.findOne({ where: { kookGuildId: d.extra.guild_id } });
@@ -78,6 +90,129 @@ export class KookMessageService {
     }
 
     return { ok: true };
+  }
+
+  /** 处理系统事件：joined_guild / guild_member_online / exited_guild 等 */
+  private async handleSystemEvent(d: any): Promise<any> {
+    const eventType = d.extra?.type;
+    const body = d.extra?.body || {};
+
+    switch (eventType) {
+      // 模块一：机器人被邀请进入新服务器
+      case 'self_joined_guild': {
+        const guildId = body.guild_id;
+        const userId = body.user_id; // 邀请人
+        if (!guildId) return { ok: true };
+
+        this.logger.log(`[joined_guild] Bot 加入服务器: guild_id=${guildId}, invited_by=${userId}`);
+
+        // 检查是否已存在
+        const existing = await this.guildRepo.findOne({ where: { kookGuildId: guildId } });
+        if (existing) {
+          this.logger.log(`服务器 ${guildId} 已存在（状态=${existing.status}），跳过初始化`);
+          return { ok: true };
+        }
+
+        // 生成激活码
+        const activationCode = uuidv4().replace(/-/g, '').slice(0, 12).toUpperCase();
+        const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
+        const activateLink = `${baseUrl}/join?code=${activationCode}`;
+
+        // 创建 pending 公会
+        const guild = this.guildRepo.create({
+          name: `待激活-${guildId.slice(-6)}`,
+          kookGuildId: guildId,
+          activationCode,
+          invitedByKookUserId: userId || null,
+          status: GuildStatus.PENDING_ACTIVATION,
+        });
+        await this.guildRepo.save(guild);
+
+        // 私信邀请人
+        if (userId) {
+          const msg = `🎉 **公会管理助手已加入你的服务器！**\n\n请点击以下链接完成公会注册：\n${activateLink}\n\n激活码：\`${activationCode}\`\n\n⚠️ 此激活码为一次性使用，仅限首次注册。`;
+          try {
+            await this.kookService.sendDirectMessage(userId, msg);
+            this.logger.log(`激活链接已私信发送给 ${userId}`);
+          } catch (err) {
+            this.logger.error(`发送激活私信失败: ${err}`);
+          }
+        }
+
+        return { ok: true, message: 'Guild pending activation created' };
+      }
+
+      // 模块三：成员加入 KOOK 服务器
+      case 'joined_guild': {
+        const guildKookId = body.guild_id;
+        const memberKookId = body.user_id;
+        if (!guildKookId || !memberKookId) return { ok: true };
+
+        const guild = await this.guildRepo.findOne({ where: { kookGuildId: guildKookId, status: GuildStatus.ACTIVE } });
+        if (!guild) return { ok: true };
+
+        // 自动在 members 表创建记录
+        const { GuildMember } = await import('../member/entities/guild-member.entity');
+        const memberRepo = this.guildRepo.manager.getRepository(GuildMember);
+        const existing = await memberRepo.findOne({ where: { guildId: guild.id, kookUserId: memberKookId } });
+        if (existing) {
+          if (existing.status === 'left') {
+            existing.status = 'active';
+            existing.leftAt = null;
+            existing.joinedAt = new Date();
+            existing.joinSource = 'webhook';
+            existing.lastSyncedAt = new Date();
+            await memberRepo.save(existing);
+            this.logger.log(`[joined_guild] 成员回归: ${memberKookId} → 公会 ${guild.name}`);
+          }
+        } else {
+          // 尝试获取用户昵称
+          let nickname = memberKookId;
+          try {
+            const userInfo = await this.kookService.getUserView(memberKookId, guildKookId, guild.kookBotToken);
+            nickname = userInfo.nickname || userInfo.username || memberKookId;
+          } catch {}
+
+          await memberRepo.save(memberRepo.create({
+            guildId: guild.id,
+            kookUserId: memberKookId,
+            nickname,
+            role: 'normal',
+            status: 'active',
+            joinedAt: new Date(),
+            lastSyncedAt: new Date(),
+            joinSource: 'webhook',
+          }));
+          this.logger.log(`[joined_guild] 新成员加入: ${nickname} → 公会 ${guild.name}`);
+        }
+        return { ok: true };
+      }
+
+      // 模块三：成员离开 KOOK 服务器
+      case 'exited_guild': {
+        const guildKookId = body.guild_id;
+        const memberKookId = body.user_id;
+        if (!guildKookId || !memberKookId) return { ok: true };
+
+        const guild = await this.guildRepo.findOne({ where: { kookGuildId: guildKookId, status: GuildStatus.ACTIVE } });
+        if (!guild) return { ok: true };
+
+        const { GuildMember } = await import('../member/entities/guild-member.entity');
+        const memberRepo = this.guildRepo.manager.getRepository(GuildMember);
+        const member = await memberRepo.findOne({ where: { guildId: guild.id, kookUserId: memberKookId, status: 'active' } });
+        if (member) {
+          member.status = 'left';
+          member.leftAt = new Date();
+          member.lastSyncedAt = new Date();
+          await memberRepo.save(member);
+          this.logger.log(`[exited_guild] 成员离开: ${member.nickname} → 公会 ${guild.name}`);
+        }
+        return { ok: true };
+      }
+
+      default:
+        return { ok: true };
+    }
   }
 
   /** 处理图片消息：判断是否击杀详情 → 对应流程 */

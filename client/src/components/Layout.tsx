@@ -5,7 +5,7 @@ import {
   DashboardOutlined, TeamOutlined, DatabaseOutlined, AppstoreOutlined,
   SyncOutlined, AlertOutlined, FileTextOutlined, SwapOutlined,
   LogoutOutlined, UserOutlined, KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  SettingOutlined,
+  SettingOutlined, PlusOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
@@ -69,6 +69,11 @@ export default function AppLayout() {
       icon: <SwapOutlined />,
       label: '切换公会',
       onClick: () => navigate('/guild/select'),
+    }, {
+      key: 'add-guild',
+      icon: <PlusOutlined />,
+      label: '添加新公会',
+      onClick: () => navigate('/guild/create'),
     }] : []),
     {
       key: 'logout',

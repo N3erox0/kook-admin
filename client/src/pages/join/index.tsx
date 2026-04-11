@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Card, Steps, Form, Input, Button, Typography, message, Result, Space, Alert, List, Avatar, Spin } from 'antd';
-import { KeyOutlined, CloudServerOutlined, CheckCircleOutlined, InfoCircleOutlined, UserOutlined, LockOutlined } from '@ant-design/icons';
+import { Card, Steps, Form, Input, Button, Typography, message, Result, Space, Alert, List, Avatar, Spin, Tag } from 'antd';
+import { KeyOutlined, CloudServerOutlined, CheckCircleOutlined, InfoCircleOutlined, UserOutlined, LockOutlined, LoadingOutlined } from '@ant-design/icons';
 import request from '@/api/request';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
@@ -12,19 +12,87 @@ const { Title, Text, Paragraph } = Typography;
 export default function JoinPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { token, setAuth } = useAuthStore();
+  const { token, setAuth, user } = useAuthStore();
   const { setGuilds, selectGuild } = useGuildStore();
 
   const [current, setCurrent] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const [inviteCode, setInviteCode] = useState(searchParams.get('code') || '');
+  const [inviteCode, setInviteCode] = useState(searchParams.get('code') || searchParams.get('state') || '');
   const [kookGuildId, setKookGuildId] = useState('');
   const [kookAdminRoleId, setKookAdminRoleId] = useState('');
   const [guildInfo, setGuildInfo] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState('');
   const [createdGuild, setCreatedGuild] = useState<any>(null);
+  const [kookUser, setKookUser] = useState<any>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  // 检测 OAuth2 回调（URL 中有 code 参数，且不是邀请码格式）
+  const oauthCode = searchParams.get('code');
+  const isOAuthCallback = oauthCode && oauthCode.length > 20; // KOOK OAuth code 较长
+
+  useEffect(() => {
+    if (isOAuthCallback) {
+      // OAuth2 回调：用 code 换 token
+      handleOAuthCallback(oauthCode);
+    }
+  }, []);
+
+  const handleOAuthCallback = async (code: string) => {
+    setLoading(true);
+    try {
+      const res: any = await request.post('/auth/kook/callback', { code });
+      if (res?.accessToken) {
+        setAuth(res.accessToken, res.user);
+        if (res.guilds) setGuilds(res.guilds);
+        if (res.kookUser) setKookUser(res.kookUser);
+
+        // 如果 state 参数带了邀请码，自动验证
+        const stateCode = searchParams.get('state');
+        if (stateCode) {
+          setInviteCode(stateCode);
+          // 自动验证邀请码
+          try {
+            const valRes: any = await request.post('/guilds/invite-codes/validate', { code: stateCode });
+            if (valRes.valid) {
+              message.success('KOOK 登录成功，邀请码已自动验证');
+              setCurrent(2); // 跳到 KOOK 配置步骤
+            } else {
+              message.warning(valRes.message || '邀请码无效');
+              setCurrent(0);
+            }
+          } catch {
+            setCurrent(0);
+          }
+        } else {
+          message.success('KOOK 登录成功');
+          setCurrent(token ? 2 : 0);
+        }
+      }
+    } catch {
+      message.error('KOOK 授权失败，请重试');
+    } finally { setLoading(false); }
+  };
+
+  // 发起 KOOK OAuth2 登录
+  const handleKookLogin = async () => {
+    setLoading(true);
+    try {
+      const res: any = await request.get('/auth/kook/oauth-url', {
+        params: { invite_code: inviteCode.trim() || undefined },
+      });
+      if (res?.url) {
+        window.location.href = res.url;
+      } else {
+        message.error('获取 KOOK 授权链接失败');
+        setLoading(false);
+      }
+    } catch {
+      message.error('获取 KOOK 授权链接失败');
+      setLoading(false);
+    }
+  };
 
   // 步骤0: 验证邀请码
   const handleValidateCode = async () => {
@@ -41,7 +109,7 @@ export default function JoinPage() {
     } catch {} finally { setLoading(false); }
   };
 
-  // 步骤1: 登录
+  // 步骤1: 账号密码登录
   const handleLogin = async (values: { username: string; password: string }) => {
     setLoading(true);
     try {
@@ -91,25 +159,43 @@ export default function JoinPage() {
           kookAdminRoleId: kookAdminRoleId || '',
         });
         setCreatedGuild(res);
+        setCurrent(4);
+
+        // 异步同步成员
+        setSyncing(true);
+        try {
+          await request.post(`/guild/${res.id}/dashboard/sync-members`);
+        } catch {}
         const profileRes: any = await request.get('/auth/profile');
         if (profileRes?.guilds) {
           setGuilds(profileRes.guilds);
           selectGuild(res.id);
         }
-        setCurrent(4);
+        setSyncing(false);
       }
     } catch {} finally { setLoading(false); }
   };
 
+  if (isOAuthCallback && loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(180deg, #0a1628 0%, #1a2a4a 50%, #0d1b2e 100%)' }}>
+        <Card style={{ width: 400, textAlign: 'center', borderRadius: 16 }}>
+          <Spin size="large" />
+          <Title level={4} style={{ marginTop: 16 }}>正在完成 KOOK 授权...</Title>
+        </Card>
+      </div>
+    );
+  }
+
   const steps = [
     { title: '邀请码' },
-    ...(token ? [] : [{ title: '登录' }]),
+    ...(token ? [] : [{ title: '身份验证' }]),
     { title: 'KOOK 配置' },
     { title: '选择频道' },
     { title: '完成' },
   ];
 
-  const effectiveCurrent = token && current === 1 ? 2 : current;
+  const activeUser = user || kookUser;
 
   return (
     <div style={{
@@ -132,7 +218,23 @@ export default function JoinPage() {
           <Text type="secondary">使用邀请码创建你的 KOOK 公会管理空间</Text>
         </div>
 
-        <Steps current={current > (token ? 3 : 4) ? steps.length - 1 : Math.min(current, steps.length - 1)} items={steps} size="small" style={{ marginBottom: 32 }} />
+        {/* 已登录用户身份展示 */}
+        {activeUser && (
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={
+              <Space>
+                <Text>当前身份：</Text>
+                <Text strong>{activeUser.nickname || activeUser.username}</Text>
+                {activeUser.kookUserId && <Tag color="blue">KOOK</Tag>}
+              </Space>
+            }
+          />
+        )}
+
+        <Steps current={current > steps.length - 1 ? steps.length - 1 : current} items={steps} size="small" style={{ marginBottom: 32 }} />
 
         {/* 步骤0: 邀请码验证 */}
         {current === 0 && (
@@ -152,12 +254,20 @@ export default function JoinPage() {
           </div>
         )}
 
-        {/* 步骤1: 登录（未登录时） */}
+        {/* 步骤1: 身份验证（未登录时） */}
         {current === 1 && !token && (
           <div>
             <Text type="secondary" style={{ display: 'block', marginBottom: 16, textAlign: 'center' }}>
-              邀请码验证通过，请登录后继续
+              邀请码验证通过，请选择登录方式
             </Text>
+
+            <Button type="primary" block size="large" style={{ height: 48, marginBottom: 12, background: '#6b48ff' }}
+              loading={loading} onClick={handleKookLogin}>
+              使用 KOOK 账号登录（推荐）
+            </Button>
+
+            <div style={{ textAlign: 'center', margin: '12px 0', color: '#999' }}>— 或 —</div>
+
             <Form onFinish={handleLogin} size="large" autoComplete="off">
               <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
                 <Input prefix={<UserOutlined />} placeholder="用户名" />
@@ -166,8 +276,8 @@ export default function JoinPage() {
                 <Input.Password prefix={<LockOutlined />} placeholder="密码" />
               </Form.Item>
               <Form.Item>
-                <Button type="primary" htmlType="submit" loading={loading} block style={{ height: 44 }}>
-                  登录并继续
+                <Button type="default" htmlType="submit" loading={loading} block style={{ height: 44 }}>
+                  使用账号密码登录
                 </Button>
               </Form.Item>
             </Form>
@@ -205,7 +315,7 @@ export default function JoinPage() {
           </div>
         )}
 
-        {/* 步骤3: 选择频道 */}
+        {/* 步骤3: 选择频道（显示公会图标和名称） */}
         {current === 3 && (
           <div>
             {guildInfo && (
@@ -239,7 +349,10 @@ export default function JoinPage() {
             ) : <Spin />}
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
               <Button onClick={() => setCurrent(2)}>上一步</Button>
-              <Button type="primary" size="large" loading={loading} onClick={handleCreate}>确认创建公会</Button>
+              <Button type="primary" size="large" loading={loading} onClick={handleCreate}
+                disabled={!selectedChannelId}>
+                确认创建并绑定
+              </Button>
             </Space>
           </div>
         )}
@@ -249,12 +362,23 @@ export default function JoinPage() {
           <Result
             status="success"
             title="公会创建成功！"
-            subTitle={`「${createdGuild?.name || ''}」已创建，你已被设为超级管理员`}
-            extra={[
-              <Button type="primary" key="go" size="large" onClick={() => navigate('/admin/dashboard')}>
-                进入管理后台
-              </Button>,
-            ]}
+            subTitle={
+              syncing
+                ? '正在初始化数据，自动同步频道和成员信息...'
+                : `「${createdGuild?.name || ''}」已创建，你已被设为超级管理员`
+            }
+            extra={
+              syncing ? (
+                <Space>
+                  <LoadingOutlined style={{ fontSize: 24 }} />
+                  <Text>正在同步...</Text>
+                </Space>
+              ) : (
+                <Button type="primary" key="go" size="large" onClick={() => navigate('/admin/dashboard')}>
+                  进入管理后台
+                </Button>
+              )
+            }
           />
         )}
 

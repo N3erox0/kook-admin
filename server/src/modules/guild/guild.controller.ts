@@ -12,9 +12,8 @@ export class GuildController {
 
   // ===== 邀请码管理 =====
 
-  @UseGuards(JwtAuthGuard)
   @Post('invite-codes/validate')
-  @ApiOperation({ summary: '验证邀请码' })
+  @ApiOperation({ summary: '验证邀请码（公开接口）' })
   validateInviteCode(@Body() dto: ValidateInviteCodeDto) {
     return this.guildService.validateInviteCode(dto.code);
   }
@@ -56,6 +55,20 @@ export class GuildController {
   @ApiOperation({ summary: '作废邀请码（兼容旧接口）' })
   disableInviteCode(@Param('id', ParseIntPipe) id: number) {
     return this.guildService.updateInviteCodeStatus(id, { status: 'revoked' });
+  }
+
+  // ===== 公会激活（模块二） =====
+
+  @Get('activate/info')
+  @ApiOperation({ summary: '查询激活码状态（公开接口）' })
+  getActivationInfo(@Query('code') code: string) {
+    return this.guildService.getActivationInfo(code);
+  }
+
+  @Post('activate')
+  @ApiOperation({ summary: '激活公会（原子性创建用户+激活公会+绑定管理员）' })
+  activateGuild(@Body() body: { code: string; username: string; password: string; nickname?: string; kookUserId?: string }) {
+    return this.guildService.activateGuild(body.code, body);
   }
 
   // ===== 公会管理 =====

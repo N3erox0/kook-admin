@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, Get, UseGuards, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshTokenDto } from './dto/login.dto';
@@ -28,5 +28,17 @@ export class AuthController {
   @ApiOperation({ summary: '获取当前用户信息' })
   async getProfile(@CurrentUser('userId') userId: number) {
     return this.authService.getProfile(userId);
+  }
+
+  @Get('kook/oauth-url')
+  @ApiOperation({ summary: '获取 KOOK OAuth2 授权链接' })
+  getKookOAuthUrl(@Query('invite_code') inviteCode?: string) {
+    return { url: this.authService.getKookOAuthUrl(inviteCode) };
+  }
+
+  @Post('kook/callback')
+  @ApiOperation({ summary: 'KOOK OAuth2 回调（用 code 换 token + 用户信息）' })
+  async handleKookCallback(@Body() body: { code: string }) {
+    return this.authService.handleKookCallback(body.code);
   }
 }

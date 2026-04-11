@@ -55,7 +55,7 @@ export default function MemberPage() {
 
   const handleRoleChange = async (memberId: number, role: string) => {
     try {
-      await request.put(`/api/guild/${currentGuildId}/members/${memberId}/role`, { role });
+      await request.put(`/guild/${currentGuildId}/members/${memberId}/role`, { role });
       message.success('角色修改成功');
       fetchData();
     } catch {}
@@ -121,6 +121,19 @@ export default function MemberPage() {
     {
       title: '离开时间', dataIndex: 'leftAt', key: 'leftAt', width: 110,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-',
+    },
+    {
+      title: '加入方式', dataIndex: 'joinSource', key: 'joinSource', width: 100,
+      render: (v: string) => {
+        const labels: Record<string, { text: string; color: string }> = {
+          kook_sync: { text: '自动同步', color: 'blue' },
+          invite_link: { text: '邀请链接', color: 'green' },
+          manual: { text: '手动录入', color: 'orange' },
+          webhook: { text: 'Webhook', color: 'purple' },
+        };
+        const item = labels[v] || { text: v || '-', color: 'default' };
+        return <Tag color={item.color}>{item.text}</Tag>;
+      },
     },
   ];
 

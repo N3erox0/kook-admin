@@ -76,6 +76,21 @@ export enum GlobalRole {
   SSVIP = 'ssvip',  // 系统级SSVIP
 }
 
+// ========== 公会状态 ==========
+export enum GuildStatus {
+  PENDING_ACTIVATION = 0, // 待激活（机器人已入驻但未完成注册）
+  ACTIVE = 1,             // 已激活
+  DISABLED = 2,           // 已禁用
+}
+
+// ========== 成员加入方式 ==========
+export enum MemberJoinSource {
+  KOOK_SYNC = 'kook_sync',       // KOOK自动同步
+  INVITE_LINK = 'invite_link',   // 邀请链接
+  MANUAL = 'manual',             // 手动录入
+  WEBHOOK = 'webhook',           // Webhook事件自动
+}
+
 // ========== 所有部位列表（便于遍历） ==========
 export const ALL_CATEGORIES = [
   EquipmentCategory.WEAPON,

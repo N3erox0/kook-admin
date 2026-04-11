@@ -39,13 +39,19 @@ export class Guild {
   @Column({ type: 'varchar', length: 100, nullable: true, name: 'kook_last_message_id', comment: '消息拉取游标' })
   kookLastMessageId: string;
 
-  @Column({ name: 'owner_user_id', comment: '创建人' })
+  @Column({ name: 'owner_user_id', nullable: true, comment: '创建人（激活后填入）' })
   ownerUserId: number;
 
   @Column({ name: 'invite_code_id', nullable: true, comment: '使用的邀请码' })
   inviteCodeId: number;
 
-  @Column({ type: 'tinyint', default: 1, comment: '状态' })
+  @Column({ type: 'varchar', length: 64, nullable: true, unique: true, name: 'activation_code', comment: '一次性激活码（joined_guild时生成）' })
+  activationCode: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'invited_by_kook_user_id', comment: '邀请人KOOK用户ID' })
+  invitedByKookUserId: string;
+
+  @Column({ type: 'tinyint', default: 0, comment: '状态: 0=pending_activation 1=active 2=disabled' })
   status: number;
 
   @CreateDateColumn({ name: 'created_at' })

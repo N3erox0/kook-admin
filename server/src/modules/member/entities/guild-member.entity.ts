@@ -42,6 +42,9 @@ export class GuildMember {
   @Column({ type: 'datetime', nullable: true, name: 'last_synced_at', comment: '最后同步时间' })
   lastSyncedAt: Date;
 
+  @Column({ type: 'varchar', length: 20, default: 'kook_sync', name: 'join_source', comment: '加入方式: kook_sync/invite_link/manual/webhook' })
+  joinSource: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

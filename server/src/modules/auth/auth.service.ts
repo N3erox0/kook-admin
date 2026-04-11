@@ -5,7 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../user/entities/user.entity';
 import { GuildMember } from '../member/entities/guild-member.entity';
-import { comparePassword } from '../../common/utils/crypto.util';
+import { comparePassword, hashPassword } from '../../common/utils/crypto.util';
 import { LoginDto } from './dto/login.dto';
 
 @Injectable()
@@ -106,6 +106,117 @@ export class AuthService {
       kookUserId: user.kookUserId,
       globalRole: user.globalRole,
       guilds,
+    };
+  }
+
+  /** 获取 KOOK OAuth2 授权链接 */
+  getKookOAuthUrl(inviteCode?: string): string {
+    const clientId = this.configService.get<string>('kook.clientId');
+    const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
+    const redirectUri = encodeURIComponent(`${baseUrl}/join`);
+    const state = inviteCode || '';
+    return `https://www.kookapp.cn/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=get_user_info&state=${state}`;
+  }
+
+  /** KOOK OAuth2 回调：用 code 换 access_token + 获取用户信息 → 创建/关联用户 → 签发JWT */
+  async handleKookCallback(code: string): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    user: any;
+    guilds: any[];
+    kookUser: { id: string; username: string; nickname: string; avatar: string };
+  }> {
+    const clientId = this.configService.get<string>('kook.clientId');
+    const clientSecret = this.configService.get<string>('kook.clientSecret');
+    const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
+    const redirectUri = `${baseUrl}/join`;
+
+    // 1. 用 code 换 access_token
+    const tokenRes = await fetch('https://www.kookapp.cn/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: redirectUri,
+      }),
+    });
+    const tokenData = await tokenRes.json() as any;
+    if (!tokenData.access_token) {
+      throw new UnauthorizedException('KOOK OAuth2 授权失败');
+    }
+
+    // 2. 用 access_token 获取用户信息
+    const userRes = await fetch('https://www.kookapp.cn/api/v3/user/me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const userData = await userRes.json() as any;
+    const kookUser = userData.data || userData;
+    if (!kookUser?.id) {
+      throw new UnauthorizedException('无法获取 KOOK 用户信息');
+    }
+
+    // 3. 查找或创建系统用户
+    let user = await this.userRepo.findOne({ where: { kookUserId: kookUser.id } });
+    if (!user) {
+      // 自动创建用户（用 KOOK ID 作为用户名）
+      user = this.userRepo.create({
+        username: `kook_${kookUser.id}`,
+        passwordHash: await hashPassword(`kook_${kookUser.id}_${Date.now()}`),
+        nickname: kookUser.nickname || kookUser.username,
+        avatar: kookUser.avatar || null,
+        kookUserId: kookUser.id,
+        status: 1,
+      });
+      user = await this.userRepo.save(user);
+    } else {
+      // 更新头像和昵称
+      user.nickname = kookUser.nickname || user.nickname;
+      user.avatar = kookUser.avatar || user.avatar;
+      user.lastLoginAt = new Date();
+      await this.userRepo.save(user);
+    }
+
+    // 4. 查询公会列表
+    const guildMembers = await this.guildMemberRepo.find({
+      where: { userId: user.id, status: 'active' },
+      relations: ['guild'],
+    });
+    const guilds = guildMembers.map((gm) => ({
+      guildId: gm.guildId,
+      guildName: gm.guild?.name,
+      guildIcon: gm.guild?.iconUrl,
+      role: gm.role,
+    }));
+
+    // 5. 签发 JWT
+    const payload = { sub: user.id, username: user.username };
+    const accessToken = this.jwtService.sign(payload);
+    const refreshToken = this.jwtService.sign(payload, {
+      secret: this.configService.get<string>('jwt.refreshSecret'),
+      expiresIn: this.configService.get<string>('jwt.refreshExpiresIn') as any,
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        nickname: user.nickname,
+        avatar: user.avatar,
+        kookUserId: user.kookUserId,
+        globalRole: user.globalRole,
+      },
+      guilds,
+      kookUser: {
+        id: kookUser.id,
+        username: kookUser.username,
+        nickname: kookUser.nickname || kookUser.username,
+        avatar: kookUser.avatar || '',
+      },
     };
   }
 }
