@@ -8,7 +8,7 @@ import { GuildAlertRecord } from '../alert/entities/guild-alert-record.entity';
 import { Guild } from '../guild/entities/guild.entity';
 import { InviteCode } from '../guild/entities/invite-code.entity';
 import { User } from '../user/entities/user.entity';
-import { MemberStatus, ResupplyStatus, InviteCodeStatus } from '../../common/constants/enums';
+import { MemberStatus, ResupplyStatus, InviteCodeStatus, GuildStatus } from '../../common/constants/enums';
 
 @Injectable()
 export class DashboardService {
