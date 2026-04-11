@@ -25,9 +25,32 @@ export class KookController {
   /** KOOK Webhook 回调端点（不加 JWT 认证） */
   @Post('webhook')
   async handleWebhook(@Body() payload: KookWebhookPayload) {
+    // Challenge 验证优先处理（KOOK 配置回调 URL 时的验证请求）
+    if (payload.d?.challenge) {
+      this.logger.log(`[Webhook] Challenge 验证: ${payload.d.challenge}`);
+      return { challenge: payload.d.challenge };
+    }
+
     const configToken = this.configService.get<string>('kook.verifyToken');
     if (configToken && payload.d?.verify_token && payload.d.verify_token !== configToken) {
       this.logger.warn('Webhook verify_token 不匹配');
+      return { code: 403, message: 'Invalid verify_token' };
+    }
+    return this.messageService.handleWebhookEvent(payload);
+  }
+
+  /** KOOK Callback URL（等同于 webhook，KOOK 开放平台配置用） */
+  @Post('callback')
+  async handleCallback(@Body() payload: KookWebhookPayload) {
+    // Challenge 验证优先处理
+    if (payload.d?.challenge) {
+      this.logger.log(`[Callback] Challenge 验证: ${payload.d.challenge}`);
+      return { challenge: payload.d.challenge };
+    }
+
+    const configToken = this.configService.get<string>('kook.verifyToken');
+    if (configToken && payload.d?.verify_token && payload.d.verify_token !== configToken) {
+      this.logger.warn('Callback verify_token 不匹配');
       return { code: 403, message: 'Invalid verify_token' };
     }
     return this.messageService.handleWebhookEvent(payload);
