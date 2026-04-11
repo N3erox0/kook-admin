@@ -6,9 +6,17 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { globalValidationPipe } from './common/pipes/validation.pipe';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { LogService } from './modules/log/log.service';
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+
+  // KOOK Webhook 路径用 raw 解析器（支持 zlib 压缩数据），必须在 json 之前
+  app.use('/api/kook/callback', bodyParser.raw({ type: '*/*', limit: '10mb' }));
+  app.use('/api/kook/webhook', bodyParser.raw({ type: '*/*', limit: '10mb' }));
+  // 其他所有 API 用 JSON 解析器
+  app.use(bodyParser.json({ limit: '10mb' }));
+  app.use(bodyParser.urlencoded({ extended: true }));
 
   // 注意: 大部分 Controller 路径已包含 'api/' 前缀，不再设置全局前缀
   // app.setGlobalPrefix('api');
