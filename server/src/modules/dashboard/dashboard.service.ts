@@ -43,7 +43,7 @@ export class DashboardService {
 
     // 活跃机器人（有 kookBotToken 且 status=1 的公会数）
     const activeBots = await this.guildRepo.createQueryBuilder('g')
-      .where('g.status = 1')
+      .where('g.status = :s', { s: GuildStatus.ACTIVE })
       .andWhere('g.kook_bot_token IS NOT NULL')
       .andWhere('g.kook_bot_token != :empty', { empty: '' })
       .getCount();

@@ -39,7 +39,7 @@ export default function GuildSettingsPage() {
     setChannelsLoading(true);
     try {
       const res: any = await request.get('/kook/channels', { params: { guild_id: guild?.kookGuildId } });
-      setChannels(res?.data || res || []);
+      setChannels(Array.isArray(res) ? res : res || []);
     } catch { setChannels([]); } finally { setChannelsLoading(false); }
   };
 

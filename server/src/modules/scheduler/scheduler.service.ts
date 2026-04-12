@@ -9,6 +9,7 @@ import { KookService } from '../kook/kook.service';
 import { AlertService } from '../alert/alert.service';
 import { ResupplyService } from '../resupply/resupply.service';
 import { ScheduledTask } from './entities/scheduled-task.entity';
+import { GuildStatus } from '../../common/constants/enums';
 
 @Injectable()
 export class SchedulerService {
@@ -45,7 +46,7 @@ export class SchedulerService {
   @Cron('0 0 5 * * *')
   async refreshInventoryAlerts() {
     this.logger.log('定时任务：开始刷新所有公会库存预警（05:00）');
-    const guilds = await this.guildRepo.find({ where: { status: 1 } });
+    const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });
     const startTime = Date.now();
     let totalAlerts = 0;
 

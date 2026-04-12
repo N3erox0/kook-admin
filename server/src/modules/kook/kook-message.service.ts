@@ -66,7 +66,7 @@ export class KookMessageService {
 
     if (!d?.extra?.guild_id || !d?.author_id) return { ok: true };
 
-    const guild = await this.guildRepo.findOne({ where: { kookGuildId: d.extra.guild_id } });
+    const guild = await this.guildRepo.findOne({ where: { kookGuildId: d.extra.guild_id, status: GuildStatus.ACTIVE } });
     if (!guild) return { ok: true };
 
     // 检查是否在监听频道内

@@ -29,7 +29,9 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TransformInterceptor(), new LoggingInterceptor(reflector, logService));
 
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://localhost:3000'],
+    origin: process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',')
+      : ['http://localhost:5173', 'http://localhost:3000'],
     credentials: true,
   });
 
