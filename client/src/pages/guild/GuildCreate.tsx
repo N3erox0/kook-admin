@@ -23,6 +23,8 @@ export default function GuildCreatePage() {
   const [selectedChannelId, setSelectedChannelId] = useState('');
   const [createdGuild, setCreatedGuild] = useState<any>(null);
   const [syncing, setSyncing] = useState(false);
+  const [botGuilds, setBotGuilds] = useState<{ id: string; name: string; icon: string }[]>([]);
+  const [loadingBotGuilds, setLoadingBotGuilds] = useState(false);
 
   // 步骤1：验证邀请码
   const handleValidateCode = async () => {
@@ -33,15 +35,30 @@ export default function GuildCreatePage() {
       if (res.valid) {
         message.success('邀请码验证通过');
         setCurrent(1);
+        // 验证通过后自动加载 Bot 服务器列表
+        fetchBotGuilds();
       } else {
         message.error(res.message || '邀请码无效');
       }
     } catch {} finally { setLoading(false); }
   };
 
-  // 步骤2：获取 KOOK 服务器信息
+  // 获取 Bot 已加入的服务器列表
+  const fetchBotGuilds = async () => {
+    setLoadingBotGuilds(true);
+    try {
+      const res: any = await request.get('/kook/bot-guilds');
+      if (Array.isArray(res)) {
+        setBotGuilds(res);
+      }
+    } catch {
+      message.warning('获取 Bot 服务器列表失败，请手动输入服务器 ID');
+    } finally { setLoadingBotGuilds(false); }
+  };
+
+  // 步骤2：选择/输入服务器后获取详情和频道
   const handleFetchGuild = async () => {
-    if (!kookGuildId.trim()) { message.warning('请输入 KOOK 服务器 ID'); return; }
+    if (!kookGuildId.trim()) { message.warning('请选择或输入 KOOK 服务器 ID'); return; }
     setLoading(true);
     try {
       const res: any = await request.get('/kook/guild-info', { params: { guild_id: kookGuildId.trim() } });
@@ -147,39 +164,78 @@ export default function GuildCreatePage() {
         {/* 步骤2：KOOK 服务器配置 */}
         {current === 1 && (
           <div>
-            <Alert
-              message="如何获取 KOOK ID"
-              description={
-                <div>
-                  <Paragraph>1. 打开 KOOK 客户端 → 设置 → 高级设置 → 开启「开发者模式」</Paragraph>
-                  <Paragraph>2. 右键点击服务器名称 → 复制 ID（即服务器 ID）</Paragraph>
-                  <Paragraph>3. 右键点击管理员角色 → 复制 ID（即角色 ID，可选）</Paragraph>
-                </div>
-              }
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-            <Form layout="vertical">
-              <Form.Item label="KOOK 服务器 ID" required>
-                <Input
-                  size="large"
-                  placeholder="右键服务器名称 → 复制 ID"
-                  value={kookGuildId}
-                  onChange={(e) => setKookGuildId(e.target.value)}
+            {botGuilds.length > 0 ? (
+              <>
+                <Alert
+                  message="选择 Bot 已加入的服务器"
+                  description="以下是 Bot 当前已加入的 KOOK 服务器，请选择要绑定的服务器。如果目标服务器不在列表中，请先将 Bot 邀请进该服务器。"
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
                 />
-              </Form.Item>
-              <Form.Item label="管理员角色 ID（可选，用于消息通知 @角色）">
-                <Input
-                  placeholder="右键角色 → 复制 ID"
-                  value={kookAdminRoleId}
-                  onChange={(e) => setKookAdminRoleId(e.target.value)}
+                <Form layout="vertical">
+                  <Form.Item label="选择 KOOK 服务器" required>
+                    <Select
+                      size="large"
+                      placeholder="请选择服务器"
+                      value={kookGuildId || undefined}
+                      onChange={(value) => setKookGuildId(value)}
+                      loading={loadingBotGuilds}
+                      showSearch
+                      optionFilterProp="label"
+                      options={botGuilds.map((g) => ({
+                        value: g.id,
+                        label: g.name,
+                      }))}
+                    />
+                  </Form.Item>
+                  <Form.Item label="管理员角色 ID（可选，用于消息通知 @角色）">
+                    <Input
+                      placeholder="可在 KOOK 开发者模式中右键角色获取"
+                      value={kookAdminRoleId}
+                      onChange={(e) => setKookAdminRoleId(e.target.value)}
+                    />
+                  </Form.Item>
+                </Form>
+              </>
+            ) : (
+              <>
+                <Alert
+                  message={loadingBotGuilds ? '正在加载 Bot 服务器列表...' : '未获取到 Bot 服务器列表，请手动输入'}
+                  description={
+                    !loadingBotGuilds && (
+                      <div>
+                        <Paragraph>1. 打开 KOOK 客户端 → 设置 → 高级设置 → 开启「开发者模式」</Paragraph>
+                        <Paragraph>2. 右键点击服务器名称 → 复制 ID（即服务器 ID）</Paragraph>
+                      </div>
+                    )
+                  }
+                  type={loadingBotGuilds ? 'info' : 'warning'}
+                  showIcon
+                  style={{ marginBottom: 16 }}
                 />
-              </Form.Item>
-            </Form>
+                <Form layout="vertical">
+                  <Form.Item label="KOOK 服务器 ID" required>
+                    <Input
+                      size="large"
+                      placeholder="右键服务器名称 → 复制 ID"
+                      value={kookGuildId}
+                      onChange={(e) => setKookGuildId(e.target.value)}
+                    />
+                  </Form.Item>
+                  <Form.Item label="管理员角色 ID（可选，用于消息通知 @角色）">
+                    <Input
+                      placeholder="右键角色 → 复制 ID"
+                      value={kookAdminRoleId}
+                      onChange={(e) => setKookAdminRoleId(e.target.value)}
+                    />
+                  </Form.Item>
+                </Form>
+              </>
+            )}
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
               <Button onClick={() => setCurrent(0)}>上一步</Button>
-              <Button type="primary" loading={loading} onClick={handleFetchGuild}>
+              <Button type="primary" loading={loading || loadingBotGuilds} onClick={handleFetchGuild}>
                 获取服务器信息
               </Button>
             </Space>

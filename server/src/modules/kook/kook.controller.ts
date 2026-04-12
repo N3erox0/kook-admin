@@ -111,6 +111,14 @@ export class KookController {
     }
   }
 
+  /** 获取 Bot 已加入的服务器列表（创建公会时下拉选择用） */
+  @Get('bot-guilds')
+  @UseGuards(JwtAuthGuard)
+  async getBotGuilds() {
+    const guilds = await this.kookService.getBotGuildList();
+    return { code: 0, data: guilds };
+  }
+
   /** 获取服务器详情（调试用） */
   @Get('guild-info')
   @UseGuards(JwtAuthGuard)

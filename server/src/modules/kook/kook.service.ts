@@ -61,6 +61,30 @@ export class KookService {
 
   // ==================== 服务器信息 ====================
 
+  /** 获取 Bot 已加入的服务器列表 */
+  async getBotGuildList(token?: string): Promise<{ id: string; name: string; icon: string }[]> {
+    const allGuilds: { id: string; name: string; icon: string }[] = [];
+    let page = 1;
+
+    while (true) {
+      const result = await this.request<KookApiResponse<{ items: any[]; meta: { page: number; page_total: number } }>>(
+        'GET', `/guild/list?page=${page}&page_size=50`, undefined, token,
+      );
+      if (result.code !== 0) {
+        this.logger.error(`获取Bot服务器列表失败: ${result.message}`);
+        break;
+      }
+      for (const g of result.data.items) {
+        allGuilds.push({ id: g.id, name: g.name, icon: g.icon || '' });
+      }
+      if (page >= result.data.meta.page_total) break;
+      page++;
+    }
+
+    this.logger.log(`Bot 已加入 ${allGuilds.length} 个服务器`);
+    return allGuilds;
+  }
+
   /** 获取服务器详情（名称、图标、角色、频道列表） */
   async getGuildView(guildId?: string, token?: string): Promise<KookGuildView> {
     const targetGuild = guildId || this.guildId;
