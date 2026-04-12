@@ -104,6 +104,7 @@ export class GuildService {
       iconUrl: dto.iconUrl || null,
       kookGuildId: dto.kookGuildId,
       ownerUserId: userId,
+      status: GuildStatus.ACTIVE,
     });
     const saved = await this.guildRepo.save(guild);
 

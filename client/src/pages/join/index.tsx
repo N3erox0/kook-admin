@@ -127,11 +127,11 @@ export default function JoinPage() {
     setLoading(true);
     try {
       const res: any = await request.get('/kook/guild-info', { params: { guild_id: kookGuildId.trim() } });
-      if (res?.data) {
-        setGuildInfo(res.data);
+      if (res) {
+        setGuildInfo(res);
         const chRes: any = await request.get('/kook/channels', { params: { guild_id: kookGuildId.trim() } });
-        if (chRes?.data) {
-          setChannels(chRes.data.filter((c: any) => c.type === 1));
+        if (chRes && Array.isArray(chRes)) {
+          setChannels(chRes.filter((c: any) => c.type === 1));
         }
         setCurrent(3);
       } else {

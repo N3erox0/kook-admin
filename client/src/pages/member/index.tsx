@@ -45,7 +45,7 @@ export default function MemberPage() {
     const params: any = { page, pageSize: 50 };
     if (keyword) params.keyword = keyword;
     if (statusFilter) params.status = statusFilter;
-    request.get(`/api/guild/${currentGuildId}/members`, { params }).then((res: any) => {
+    request.get(`/guild/${currentGuildId}/members`, { params }).then((res: any) => {
       setData(res.list || []);
       setTotal(res.total || 0);
     }).finally(() => setLoading(false));

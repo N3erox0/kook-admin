@@ -19,14 +19,14 @@ export default function AlertPage() {
   const fetchRules = () => {
     if (!currentGuildId) return;
     setLoading(true);
-    request.get(`/api/guild/${currentGuildId}/alerts/rules`, { params: { ruleType: activeTab } }).then((res: any) => {
+    request.get(`/guild/${currentGuildId}/alerts/rules`, { params: { ruleType: activeTab } }).then((res: any) => {
       setRules(Array.isArray(res) ? res : res?.list || []);
     }).finally(() => setLoading(false));
   };
 
   const fetchRecords = () => {
     if (!currentGuildId) return;
-    request.get(`/api/guild/${currentGuildId}/alerts/records`, { params: { alertType: activeTab === '01' ? 'below' : 'death' } }).then((res: any) => {
+    request.get(`/guild/${currentGuildId}/alerts/records`, { params: { alertType: activeTab === '01' ? 'below' : 'death' } }).then((res: any) => {
       setRecords(Array.isArray(res) ? res : res?.list || []);
     });
   };
