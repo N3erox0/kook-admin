@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Steps, Form, Input, Button, Typography, message, Result, Space, Alert, List, Avatar, Spin, Select } from 'antd';
+import { Card, Steps, Form, Input, Button, Typography, message, Result, Space, Alert, Avatar, Spin, Select, Checkbox } from 'antd';
 import { KeyOutlined, CloudServerOutlined, CheckCircleOutlined, InfoCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
@@ -20,11 +20,12 @@ export default function GuildCreatePage() {
   const [kookAdminRoleId, setKookAdminRoleId] = useState('');
   const [guildInfo, setGuildInfo] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
-  const [selectedChannelId, setSelectedChannelId] = useState('');
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [createdGuild, setCreatedGuild] = useState<any>(null);
   const [syncing, setSyncing] = useState(false);
   const [botGuilds, setBotGuilds] = useState<{ id: string; name: string; icon: string }[]>([]);
   const [loadingBotGuilds, setLoadingBotGuilds] = useState(false);
+  const [loadingChannels, setLoadingChannels] = useState(false);
 
   // 步骤1：验证邀请码
   const handleValidateCode = async () => {
@@ -35,7 +36,6 @@ export default function GuildCreatePage() {
       if (res.valid) {
         message.success('邀请码验证通过');
         setCurrent(1);
-        // 验证通过后自动加载 Bot 服务器列表
         fetchBotGuilds();
       } else {
         message.error(res.message || '邀请码无效');
@@ -56,30 +56,43 @@ export default function GuildCreatePage() {
     } finally { setLoadingBotGuilds(false); }
   };
 
-  // 步骤2：选择/输入服务器后获取详情和频道
-  const handleFetchGuild = async () => {
-    if (!kookGuildId.trim()) { message.warning('请选择或输入 KOOK 服务器 ID'); return; }
-    setLoading(true);
+  // 选择服务器后自动获取信息和频道列表
+  const handleSelectGuild = async (guildId: string) => {
+    setKookGuildId(guildId);
+    setGuildInfo(null);
+    setChannels([]);
+    setSelectedChannelIds([]);
+    setLoadingChannels(true);
     try {
-      const res: any = await request.get('/kook/guild-info', { params: { guild_id: kookGuildId.trim() } });
-      if (res) {
-        setGuildInfo(res);
-        const chRes: any = await request.get('/kook/channels', { params: { guild_id: kookGuildId.trim() } });
-        if (chRes && Array.isArray(chRes)) {
-          setChannels(chRes.filter((c: any) => c.type === 1));
-        }
-        setCurrent(2);
-      } else {
-        message.error('获取服务器信息失败，请检查服务器 ID');
+      const [infoRes, chRes]: any[] = await Promise.all([
+        request.get('/kook/guild-info', { params: { guild_id: guildId } }),
+        request.get('/kook/channels', { params: { guild_id: guildId } }),
+      ]);
+      if (infoRes) setGuildInfo(infoRes);
+      if (chRes && Array.isArray(chRes)) {
+        setChannels(chRes.filter((c: any) => c.type === 1));
       }
     } catch {
-      message.error('无法连接到 KOOK 服务器，请确认 Bot 已加入该服务器');
-    } finally { setLoading(false); }
+      message.error('获取服务器信息失败');
+    } finally { setLoadingChannels(false); }
   };
 
-  // 步骤3：确认创建 + 自动异步同步
+  // 手动输入模式下点击按钮获取
+  const handleFetchGuild = async () => {
+    if (!kookGuildId.trim()) { message.warning('请输入 KOOK 服务器 ID'); return; }
+    await handleSelectGuild(kookGuildId.trim());
+  };
+
+  // 步骤2 → 步骤3
+  const handleGoToChannels = () => {
+    if (!kookGuildId) { message.warning('请选择服务器'); return; }
+    if (!guildInfo) { message.warning('服务器信息尚未加载'); return; }
+    setCurrent(2);
+  };
+
+  // 步骤3：确认创建
   const handleCreate = async () => {
-    if (!selectedChannelId) { message.warning('请选择补装频道'); return; }
+    if (selectedChannelIds.length === 0) { message.warning('请至少选择一个补装频道'); return; }
     setLoading(true);
     try {
       const res: any = await request.post('/guilds', {
@@ -91,20 +104,19 @@ export default function GuildCreatePage() {
 
       if (res?.id) {
         await request.put(`/guilds/${res.id}`, {
-          kookResupplyChannelId: selectedChannelId,
+          kookListenChannelIds: selectedChannelIds,
+          kookResupplyChannelId: selectedChannelIds[0],
           kookAdminRoleId: kookAdminRoleId || '',
         });
 
         setCreatedGuild(res);
         setCurrent(3);
 
-        // 异步触发数据同步
         setSyncing(true);
         try {
           await request.post(`/guild/${res.id}/dashboard/sync-members`);
         } catch {}
 
-        // 刷新公会列表并自动选中
         const profileRes: any = await request.get('/auth/profile');
         if (profileRes?.guilds) {
           setGuilds(profileRes.guilds);
@@ -113,6 +125,11 @@ export default function GuildCreatePage() {
         setSyncing(false);
       }
     } catch {} finally { setLoading(false); }
+  };
+
+  // 频道全选/取消
+  const handleToggleAll = (checked: boolean) => {
+    setSelectedChannelIds(checked ? channels.map((c) => c.id) : []);
   };
 
   const steps = [
@@ -168,7 +185,7 @@ export default function GuildCreatePage() {
               <>
                 <Alert
                   message="选择 Bot 已加入的服务器"
-                  description="以下是 Bot 当前已加入的 KOOK 服务器，请选择要绑定的服务器。如果目标服务器不在列表中，请先将 Bot 邀请进该服务器。"
+                  description="选择服务器后将自动获取频道列表。如果目标服务器不在列表中，请先将 Bot 邀请进该服务器。"
                   type="info"
                   showIcon
                   style={{ marginBottom: 16 }}
@@ -179,7 +196,7 @@ export default function GuildCreatePage() {
                       size="large"
                       placeholder="请选择服务器"
                       value={kookGuildId || undefined}
-                      onChange={(value) => setKookGuildId(value)}
+                      onChange={handleSelectGuild}
                       loading={loadingBotGuilds}
                       showSearch
                       optionFilterProp="label"
@@ -197,6 +214,24 @@ export default function GuildCreatePage() {
                     />
                   </Form.Item>
                 </Form>
+
+                {/* 选择服务器后显示服务器信息预览 */}
+                {loadingChannels && (
+                  <div style={{ textAlign: 'center', padding: 16 }}>
+                    <Spin tip="正在获取服务器信息..." />
+                  </div>
+                )}
+                {guildInfo && !loadingChannels && (
+                  <Card size="small" style={{ marginBottom: 16 }}>
+                    <Space>
+                      {guildInfo.icon && <Avatar src={guildInfo.icon} size={48} shape="square" />}
+                      <div>
+                        <Title level={5} style={{ margin: 0 }}>{guildInfo.name}</Title>
+                        <Text type="secondary">服务器 ID: {kookGuildId} · {channels.length} 个文字频道</Text>
+                      </div>
+                    </Space>
+                  </Card>
+                )}
               </>
             ) : (
               <>
@@ -235,14 +270,23 @@ export default function GuildCreatePage() {
             )}
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
               <Button onClick={() => setCurrent(0)}>上一步</Button>
-              <Button type="primary" loading={loading || loadingBotGuilds} onClick={handleFetchGuild}>
-                获取服务器信息
-              </Button>
+              {botGuilds.length > 0 ? (
+                <Button type="primary" disabled={!guildInfo || loadingChannels} onClick={handleGoToChannels}>
+                  下一步：选择频道
+                </Button>
+              ) : (
+                <Button type="primary" loading={loading} onClick={async () => {
+                  await handleFetchGuild();
+                  if (guildInfo) setCurrent(2);
+                }}>
+                  获取服务器信息
+                </Button>
+              )}
             </Space>
           </div>
         )}
 
-        {/* 步骤3：选择频道（显示公会图标和名称） */}
+        {/* 步骤3：选择频道（多选） */}
         {current === 2 && (
           <div>
             {guildInfo && (
@@ -257,46 +301,71 @@ export default function GuildCreatePage() {
               </Card>
             )}
 
-            <Title level={5}>选择补装频道</Title>
-            <Text type="secondary" style={{ marginBottom: 8, display: 'block' }}>
-              选择用于接收补装申请消息的文字频道
+            <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <Title level={5} style={{ margin: 0, display: 'inline' }}>选择补装监听频道</Title>
+                <Text type="secondary" style={{ marginLeft: 8 }}>
+                  已选 {selectedChannelIds.length} / {channels.length} 个频道
+                </Text>
+              </div>
+              <Checkbox
+                checked={channels.length > 0 && selectedChannelIds.length === channels.length}
+                indeterminate={selectedChannelIds.length > 0 && selectedChannelIds.length < channels.length}
+                onChange={(e) => handleToggleAll(e.target.checked)}
+              >
+                全选
+              </Checkbox>
+            </div>
+            <Text type="secondary" style={{ marginBottom: 12, display: 'block' }}>
+              选中的频道中的图片消息将被识别为补装申请来源，规则一致
             </Text>
 
             {channels.length > 0 ? (
-              <List
-                bordered
-                size="small"
-                style={{ maxHeight: 250, overflow: 'auto', marginBottom: 16 }}
-                dataSource={channels}
-                renderItem={(ch: any) => (
-                  <List.Item
-                    onClick={() => setSelectedChannelId(ch.id)}
-                    style={{
-                      cursor: 'pointer',
-                      background: selectedChannelId === ch.id ? '#e6f4ff' : undefined,
-                    }}
-                  >
-                    <Space>
-                      <Text># {ch.name}</Text>
-                      {selectedChannelId === ch.id && <CheckCircleOutlined style={{ color: '#1677ff' }} />}
-                    </Space>
-                  </List.Item>
-                )}
-              />
+              <div style={{ maxHeight: 300, overflow: 'auto', border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
+                <Checkbox.Group
+                  value={selectedChannelIds}
+                  onChange={(values) => setSelectedChannelIds(values as string[])}
+                  style={{ width: '100%' }}
+                >
+                  {channels.map((ch: any) => (
+                    <div
+                      key={ch.id}
+                      style={{
+                        padding: '10px 16px',
+                        borderBottom: '1px solid #f0f0f0',
+                        cursor: 'pointer',
+                        background: selectedChannelIds.includes(ch.id) ? '#e6f4ff' : undefined,
+                      }}
+                      onClick={() => {
+                        setSelectedChannelIds((prev) =>
+                          prev.includes(ch.id) ? prev.filter((id) => id !== ch.id) : [...prev, ch.id]
+                        );
+                      }}
+                    >
+                      <Checkbox value={ch.id} onClick={(e) => e.stopPropagation()}>
+                        <Text style={{ marginLeft: 4 }}># {ch.name}</Text>
+                      </Checkbox>
+                    </div>
+                  ))}
+                </Checkbox.Group>
+              </div>
             ) : (
-              <Spin />
+              <div style={{ textAlign: 'center', padding: 24 }}>
+                <Spin tip="加载频道列表..." />
+              </div>
             )}
 
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
               <Button onClick={() => setCurrent(1)}>上一步</Button>
-              <Button type="primary" loading={loading} onClick={handleCreate}>
-                确认创建并绑定
+              <Button type="primary" loading={loading} onClick={handleCreate}
+                disabled={selectedChannelIds.length === 0}>
+                确认创建并绑定（{selectedChannelIds.length} 个频道）
               </Button>
             </Space>
           </div>
         )}
 
-        {/* 步骤4：完成（含同步状态） */}
+        {/* 步骤4：完成 */}
         {current === 3 && (
           <div>
             <Result
@@ -305,7 +374,7 @@ export default function GuildCreatePage() {
               subTitle={
                 syncing
                   ? '正在初始化数据，自动同步频道和成员信息...'
-                  : `公会「${createdGuild?.name || ''}」已创建，你已被设为超级管理员。`
+                  : `公会「${createdGuild?.name || ''}」已创建，已绑定 ${selectedChannelIds.length} 个监听频道。`
               }
               extra={
                 syncing ? (
