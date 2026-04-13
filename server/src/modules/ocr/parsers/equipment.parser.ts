@@ -5,18 +5,11 @@ const ROMAN_MAP: Record<string, number> = {
   'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6, 'VII': 7, 'VIII': 8,
 };
 
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  '武器': ['剑', '刀', '杖', '弓', '枪', '斧', '锤', '法杖', '匕首', '长矛'],
-  '副手': ['盾', '书', '魔导', '箭袋', '圣物', '副手'],
-  '头': ['盔', '帽', '冠', '头盔', '头巾', '兜鍪'],
-  '甲': ['甲', '铠', '袍', '衣', '胸甲', '法袍', '皮甲'],
-  '鞋': ['靴', '鞋', '履'],
-  '坐骑': ['马', '骑', '龙', '飞', '坐骑', '鹰', '虎'],
-  '披风': ['披风', '斗篷', '肩', '披肩'],
-  '药水': ['药水', '药剂', '瓶', '灵药'],
-  '食物': ['肉', '面包', '果', '鱼', '饭', '食物', '馒头'],
-};
-
+/**
+ * 装备文本解析器
+ * 仅负责从 OCR 文字中提取：装备名称、等级、数量、品质
+ * 部位(category)不再通过关键词推断，完全依赖装备参考库匹配带出
+ */
 export class EquipmentParser extends BaseOcrParser {
   supports(imageType: string): boolean {
     return imageType === 'equipment' || imageType === 'default';
@@ -49,7 +42,7 @@ export class EquipmentParser extends BaseOcrParser {
       if (idx >= 0) {
         level = num;
         name = name.replace(roman, '').trim();
-        confidence += 0.1;
+        confidence += 0.15;
         break;
       }
     }
@@ -73,37 +66,24 @@ export class EquipmentParser extends BaseOcrParser {
     if (qualityMatch) {
       quality = parseInt(qualityMatch[1]);
       name = name.replace(qualityMatch[0], '').trim();
-      confidence += 0.1;
+      confidence += 0.15;
     }
 
-    // 4. 清理名称
+    // 4. 清理名称（移除括号等干扰字符）
     name = name.replace(/[【】\[\]()（）]/g, '').trim();
     if (!name || name.length < 1) return null;
 
-    // 5. 自动识别部位
-    const category = this.detectCategory(name);
-    if (category) confidence += 0.1;
-
-    // 6. 计算装等
+    // 5. 计算装等（部位不再由解析器推断，完全依赖参考库匹配）
     const gearScore = (level || 0) + (quality || 0);
 
     return {
       name,
       level: level || undefined,
       quality: quality !== undefined ? quality : undefined,
-      category: category || undefined,
+      // category 不再设置，由 enrichWithCatalog 从参考库带出
       gearScore: gearScore > 0 ? gearScore : undefined,
       quantity: quantity || 1,
       confidence: Math.min(confidence, 1.0),
     };
-  }
-
-  private detectCategory(name: string): string | null {
-    for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-      for (const kw of keywords) {
-        if (name.includes(kw)) return cat;
-      }
-    }
-    return null;
   }
 }

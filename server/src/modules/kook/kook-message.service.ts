@@ -232,7 +232,7 @@ export class KookMessageService {
         // 击杀详情模式：解析装备 → 批量创建补装申请（含去重）
         const enriched = await this.ocrService.enrichWithCatalog(ocrResults);
         const equipments = enriched
-          .filter(e => e.catalogId || e.matchScore > 0.5)
+          .filter(e => e.catalogId && e.matchScore >= 0.8)
           .map(e => ({
             name: e.catalogName || e.name,
             level: e.level,
@@ -244,7 +244,7 @@ export class KookMessageService {
 
         if (equipments.length === 0) {
           await this.kookService.sendDirectMessage(kookUserId,
-            `识别到击杀详情，但未能匹配到装备。请确认图片清晰度。`);
+            `识别到击杀详情，但未能匹配到已预置的装备。请确认装备参考库中已录入对应装备。`);
           return;
         }
 
@@ -265,16 +265,18 @@ export class KookMessageService {
           : `收到击杀详情补装申请：共 ${result.created} 件装备已提交。`;
         await this.kookService.sendDirectMessage(kookUserId, msg);
       } else {
-        // 普通补装模式
+        // 普通补装模式：只处理匹配到参考库的装备
         const enriched = await this.ocrService.enrichWithCatalog(ocrResults);
-        if (enriched.length === 0) {
+        // 过滤：仅保留匹配到参考库的装备（score >= 0.8）
+        const matched = enriched.filter(e => e.catalogId && e.matchScore >= 0.8);
+        if (matched.length === 0) {
           await this.kookService.sendDirectMessage(kookUserId,
-            `未能从截图中识别到装备信息，请确认图片清晰度后重试。`);
+            `未能从截图中匹配到已预置的装备，请确认装备参考库中已录入对应装备和图片。`);
           return;
         }
 
         let createdCount = 0;
-        for (const item of enriched) {
+        for (const item of matched) {
           try {
             const result = await this.resupplyService.create(guild.id, {
               kookUserId,

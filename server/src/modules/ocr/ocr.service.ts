@@ -211,22 +211,46 @@ export class OcrService {
     return this.enrichWithCatalog(items);
   }
 
+  /**
+   * 用参考库丰富 OCR 解析结果
+   * 匹配策略：优先精确匹配名称（score=1.0），其次高阈值模糊匹配（>=0.8）
+   * 部位(category)、等级、品质、装等等属性全部从参考库带出
+   */
   async enrichWithCatalog(items: ParsedEquipment[]): Promise<ParsedEquipment[]> {
     const enriched: ParsedEquipment[] = [];
     for (const item of items) {
       try {
-        const matches = await this.catalogService.findByNameFuzzy(item.name, 0.5);
+        // 使用较高阈值 0.8 进行匹配，确保高准确率
+        const matches = await this.catalogService.findByNameFuzzy(item.name, 0.8);
         if (matches.length > 0) {
-          const best = matches[0];
+          // 优先选择完全精确匹配（score=1.0）的结果
+          let best = matches[0];
+
+          // 如果有多个匹配，优先选 score=1.0 且等级/品质也匹配的
+          if (matches.length > 1) {
+            const exactMatch = matches.find(m =>
+              m.score === 1.0 &&
+              (!item.level || m.item.level === item.level) &&
+              (item.quality === undefined || m.item.quality === item.quality)
+            );
+            if (exactMatch) best = exactMatch;
+            else {
+              // 其次选 score=1.0 的
+              const nameExact = matches.find(m => m.score === 1.0);
+              if (nameExact) best = nameExact;
+            }
+          }
+
+          // 所有属性从参考库带出（参考库数据优先）
           enriched.push({
             ...item,
             catalogId: best.item.id,
             catalogName: best.item.name,
             matchScore: best.score,
-            category: item.category || best.item.category,
-            level: item.level || best.item.level,
-            quality: item.quality ?? best.item.quality,
-            gearScore: item.gearScore || best.item.gearScore,
+            category: best.item.category,
+            level: best.item.level,
+            quality: best.item.quality,
+            gearScore: best.item.gearScore,
           });
         } else {
           enriched.push({ ...item, matchScore: 0 });
@@ -288,9 +312,9 @@ export class OcrService {
 
   private getMockResult(): ParsedEquipment[] {
     return [
-      { name: '堕神奶杖', quality: 3, quantity: 5, confidence: 95 },
-      { name: '挣脱鞋', quality: 2, quantity: 3, confidence: 88 },
-      { name: '冰箱头', quality: 4, quantity: 2, confidence: 92 },
+      { name: '堕神奶杖', quantity: 5, confidence: 0.8 },
+      { name: '挣脱鞋', quantity: 3, confidence: 0.65 },
+      { name: '冰箱头', quantity: 2, confidence: 0.8 },
     ];
   }
 }
