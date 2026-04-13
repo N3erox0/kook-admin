@@ -16,6 +16,8 @@ export const csvImportCatalog = (items: any[]) => request.post('/catalog/csv-imp
 
 export const batchMatchCatalog = (items: any[]) => request.post('/catalog/match', { items });
 
+export const importAlbionCatalog = (minTier = 4) => request.post('/catalog/import-albion', { minTier });
+
 // 图片管理
 export const getCatalogImages = (catalogId: number) => request.get(`/catalog/${catalogId}/images`);
 

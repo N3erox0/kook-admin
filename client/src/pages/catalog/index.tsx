@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined } from '@ant-design/icons';
-import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage } from '@/api/catalog';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog } from '@/api/catalog';
 import { uploadFile } from '@/api/upload';
 import { CATEGORIES, QUALITY_LABELS } from '@/types';
 import type { EquipmentCatalog } from '@/types';
@@ -25,6 +25,7 @@ export default function CatalogPage() {
   const [imageModal, setImageModal] = useState(false);
   const [imageTarget, setImageTarget] = useState<{ id: number; name: string } | null>(null);
   const [images, setImages] = useState<any[]>([]);
+  const [albionImporting, setAlbionImporting] = useState(false);
   const [form] = Form.useForm();
 
   const fetchList = async (p = page, f = filters, ps = pageSize) => {
@@ -73,9 +74,24 @@ export default function CatalogPage() {
 
   // CSV 解析
   const handleCsvFile = (file: File) => {
+    // 检测 xlsx 文件误传
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      message.error('请上传 CSV 格式文件，不支持 Excel (.xlsx/.xls) 格式。可使用 Excel "另存为CSV" 功能转换。');
+      return false;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
+
+      // 检测可能的编码问题（含大量乱码字符）
+      const garbledRatio = (text.match(/[\ufffd\u0000-\u0008\u000e-\u001f]/g) || []).length / text.length;
+      if (garbledRatio > 0.05) {
+        message.error('文件可能不是 UTF-8 编码，请用记事本另存为 UTF-8 编码后重试。如果是 .xlsx 文件请先另存为 CSV。');
+        return;
+      }
+
       const lines = text.split('\n').filter(l => l.trim());
       if (lines.length < 2) { message.error('CSV文件至少需要表头和一行数据'); return; }
       const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
@@ -96,7 +112,7 @@ export default function CatalogPage() {
       setCsvData(rows);
       setCsvModal(true);
     };
-    reader.readAsText(file);
+    reader.readAsText(file, 'UTF-8');
     return false;
   };
 
@@ -154,6 +170,17 @@ export default function CatalogPage() {
     } catch {}
   };
 
+  const handleAlbionImport = async () => {
+    setAlbionImporting(true);
+    try {
+      const res: any = await importAlbionCatalog(4);
+      message.success(`Albion导入完成：新增 ${res.imported}，更新 ${res.updated}，跳过 ${res.skipped}，失败 ${res.failed}（共 ${res.total} 件）`);
+      fetchList();
+    } catch (err: any) {
+      message.error(err?.message || 'Albion导入失败');
+    } finally { setAlbionImporting(false); }
+  };
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
@@ -198,6 +225,11 @@ export default function CatalogPage() {
             <Button icon={<UploadOutlined />}>CSV导入</Button>
           </Upload>
           <a href="/api/catalog/csv-template" download="装备参考库模板.csv" style={{ fontSize: 12 }}>下载CSV模板</a>
+          <Popconfirm title="从 Albion Online 官方API拉取 T4+ 装备数据导入参考库？（约3000+件，耗时约1分钟）" onConfirm={handleAlbionImport} okText="开始导入">
+            <Button icon={<CloudDownloadOutlined />} loading={albionImporting}>
+              {albionImporting ? '导入中...' : '导入Albion装备'}
+            </Button>
+          </Popconfirm>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => handleEdit(null)}>新增装备</Button>
         </Space>
       </div>

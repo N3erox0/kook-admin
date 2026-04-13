@@ -6,6 +6,7 @@ import { CatalogService } from './catalog.service';
 import { CreateCatalogDto, UpdateCatalogDto, QueryCatalogDto, BatchCreateCatalogDto, BatchMatchCatalogDto } from './dto/catalog.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('装备参考库')
 @UseGuards(JwtAuthGuard)
@@ -68,6 +69,16 @@ export class CatalogController {
   @ApiOperation({ summary: 'CSV批量导入装备' })
   csvImport(@Body() body: { items: CreateCatalogDto[] }) {
     return this.catalogService.csvImport(body.items);
+  }
+
+  @Post('import-albion')
+  @OperationLog({ module: 'catalog', action: 'import_albion' })
+  @ApiOperation({ summary: '从 Albion Online API 导入装备参考库' })
+  async importAlbion(@Body() body: { minTier?: number }, @CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new BadRequestException('仅 SSVIP 可执行此操作');
+    }
+    return this.catalogService.importFromAlbion(body.minTier ?? 4);
   }
 
   @Post('match')

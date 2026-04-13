@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined } from '@ant-design/icons';
 import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
 import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
@@ -13,8 +13,9 @@ const { Title, Text } = Typography;
 const QUALITY_COLORS = ['default', 'success', 'processing', 'purple', 'warning'];
 
 export default function EquipmentPage() {
-  const { currentGuildId } = useGuildStore();
+  const { currentGuildId, currentGuildRole } = useGuildStore();
   const guildId = currentGuildId!;
+  const isSuperAdmin = currentGuildRole === 'super_admin';
   const [list, setList] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -290,10 +291,15 @@ export default function EquipmentPage() {
     },
     { title: '位置', dataIndex: 'location', key: 'location', width: 120, ellipsis: true },
     {
-      title: '操作', key: 'actions', width: 80,
+      title: '操作', key: 'actions', width: isSuperAdmin ? 130 : 80,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => openLogs(record)}>日志</Button>
+          {isSuperAdmin && (
+            <Popconfirm title="确认删除该库存记录？" onConfirm={() => handleDelete(record.id)} okText="删除" okButtonProps={{ danger: true }}>
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },

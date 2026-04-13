@@ -67,3 +67,18 @@
 | F-027 | P8+堕神关键词搜索 | completed | 2026-04-13 17:25 | findAll+grouped支持装等+名称组合搜索 |
 | F-028 | 公会补装房间配置 | completed | 2026-04-13 17:25 | guilds.resupply_rooms JSON字段 |
 | F-029 | 数据库迁移SQL | completed | 2026-04-13 17:25 | 009_v2.2_resupply_box.sql |
+| **V2.3** | **待办事项批量实现** | | | |
+| F-030 | 装备库存删除权限修复 | completed | 2026-04-13 18:20 | 恢复super_admin删除按钮(Popconfirm确认)+DeleteOutlined图标 |
+| F-031 | 成员KOOK数据真实化 | completed | 2026-04-13 18:20 | kook-sync同步时角色ID→{role_id,name}映射，前端兼容number[]+object[] |
+| F-032 | 补装合并视图 | completed | 2026-04-13 18:25 | 后端GET merged按用户+截图+日期聚合，前端合并/展开表格切换 |
+| F-033 | OCR识别字段独立化 | completed | 2026-04-13 18:25 | Entity新增kill_date/map_name/game_id/guild_name，createFromKillDetail写入 |
+| F-034 | 预警规则前端页面 | completed | 2026-04-13 18:28 | 规则CRUD+记录查看+解决标记，Tabs切换 |
+| F-035 | 操作日志推送记录TAB | completed | 2026-04-13 18:28 | 改为查询scheduled_tasks执行记录，显示任务名/时间/结果/耗时 |
+| F-036 | CSV编码检测 | completed | 2026-04-13 18:30 | xlsx误传提示+乱码检测(garbledRatio)+UTF-8编码读取 |
+| F-037 | 数据库迁移SQL | completed | 2026-04-13 18:30 | 010_v2.3_resupply_ocr_fields.sql |
+| F-038 | 路由顺序修复 | completed | 2026-04-13 18:45 | resupply.controller merged/grouped移到:id之前避免400 |
+| F-039 | 前端类型补充 | completed | 2026-04-13 18:45 | GuildResupply接口+killDate/mapName/gameId/ocrGuildName |
+| F-040 | 补装详情显示OCR字段 | completed | 2026-04-13 18:45 | Drawer新增击杀日期/地图/游戏ID/公会名行 |
+| F-041 | Albion装备导入后端 | completed | 2026-04-13 19:50 | catalog.service importFromAlbion()+albionId字段+category解析+迁移SQL |
+| F-042 | Albion装备导入前端 | completed | 2026-04-13 19:50 | catalog页"导入Albion装备"按钮+Popconfirm+loading |
+| F-043 | Albion CLI导入脚本 | completed | 2026-04-13 19:50 | scripts/import-albion-data.ts生成SQL INSERT语句 |

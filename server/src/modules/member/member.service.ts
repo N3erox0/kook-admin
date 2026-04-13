@@ -95,7 +95,7 @@ export class MemberService {
     for (const km of kookMembers) {
       const existing = existingMap.get(km.id);
       if (existing) {
-        existing.nickname = km.nickname || existing.nickname;
+        existing.nickname = km.nickname || km['username'] || existing.nickname;
         existing.kookRoles = km.roles;
         existing.lastSyncedAt = new Date();
         if (existing.status === MemberStatus.LEFT) {

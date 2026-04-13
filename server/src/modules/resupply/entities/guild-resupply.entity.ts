@@ -84,6 +84,18 @@ export class GuildResupply {
   @Column({ type: 'varchar', length: 20, nullable: true, name: 'resupply_room', comment: '补装房间（如 1-14, 大厅一, 大厅二）' })
   resupplyRoom: string;
 
+  @Column({ type: 'varchar', length: 10, nullable: true, name: 'kill_date', comment: '击杀日期 YYYY-MM-DD' })
+  killDate: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'map_name', comment: '地图名称' })
+  mapName: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'game_id', comment: '游戏ID' })
+  gameId: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'guild_name', comment: '公会名（OCR识别）' })
+  ocrGuildName: string;
+
   @Index('idx_gr_created')
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

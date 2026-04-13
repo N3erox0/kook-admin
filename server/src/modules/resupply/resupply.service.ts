@@ -171,6 +171,10 @@ export class ResupplyService {
         kookMessageId: data.kookMessageId ? `${data.kookMessageId}_${i}` : null,
         dedupHash: hash,
         resupplyBox: parseResupplyBox(data.kookNickname) || null,
+        killDate: data.killDate || null,
+        mapName: data.mapName || null,
+        gameId: data.gameId || null,
+        ocrGuildName: data.guild || null,
         status: ResupplyStatus.PENDING,
       });
       await this.resupplyRepo.save(r);
@@ -319,6 +323,84 @@ export class ResupplyService {
       .andWhere('guildId = :guildId', { guildId })
       .execute();
     return { updated: dto.ids.length, room: dto.room };
+  }
+
+  /** 合并视图：同一用户+同一截图+同一天的多件装备合并为一行 */
+  async getMergedList(guildId: number, query: QueryResupplyDto) {
+    const page = query.page || 1;
+    const pageSize = query.pageSize || 20;
+
+    // 先正常查询所有记录
+    const qb = this.resupplyRepo.createQueryBuilder('r')
+      .where('r.guildId = :guildId', { guildId });
+
+    if (query.status !== undefined) qb.andWhere('r.status = :s', { s: query.status });
+    if (query.keyword) {
+      const gearScoreMatch = query.keyword.match(/^P(\d+)\s*[+＋]?\s*(.+)/i);
+      if (gearScoreMatch) {
+        qb.andWhere('r.gearScore = :gs', { gs: parseInt(gearScoreMatch[1]) });
+        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${gearScoreMatch[2].trim()}%` });
+      } else {
+        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
+      }
+    }
+    if (query.startDate && query.endDate) {
+      qb.andWhere('r.createdAt BETWEEN :startDate AND :endDate', {
+        startDate: `${query.startDate} 00:00:00`, endDate: `${query.endDate} 23:59:59`,
+      });
+    }
+
+    qb.orderBy('r.createdAt', 'DESC');
+    const allItems = await qb.getMany();
+
+    // 按 kookUserId + screenshotUrl + 日期 分组合并
+    const groups = new Map<string, {
+      key: string;
+      kookUserId: string;
+      kookNickname: string;
+      resupplyBox: string | null;
+      screenshotUrl: string | null;
+      status: number;
+      createdAt: Date;
+      items: GuildResupply[];
+      equipmentSummary: string;
+      totalQuantity: number;
+    }>();
+
+    for (const item of allItems) {
+      const dateKey = item.createdAt ? new Date(item.createdAt).toISOString().slice(0, 10) : 'unknown';
+      const groupKey = `${item.kookUserId || 'manual'}_${item.screenshotUrl || item.id}_${dateKey}`;
+
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          key: groupKey,
+          kookUserId: item.kookUserId,
+          kookNickname: item.kookNickname,
+          resupplyBox: item.resupplyBox,
+          screenshotUrl: item.screenshotUrl,
+          status: item.status,
+          createdAt: item.createdAt,
+          items: [],
+          equipmentSummary: '',
+          totalQuantity: 0,
+        });
+      }
+      const group = groups.get(groupKey)!;
+      group.items.push(item);
+      group.totalQuantity += item.quantity;
+    }
+
+    // 生成摘要
+    const merged = Array.from(groups.values()).map(g => {
+      g.equipmentSummary = g.items.map(i =>
+        `${i.equipmentName}${i.gearScore ? `(P${i.gearScore})` : ''} x${i.quantity}`
+      ).join('、');
+      return g;
+    });
+
+    const total = merged.length;
+    const paged = merged.slice((page - 1) * pageSize, page * pageSize);
+    return { list: paged, total, page, pageSize };
   }
 
   /** 获取待处理记录按装备聚合排序（临时排序视图）

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image, DatePicker } from 'antd';
-import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined } from '@ant-design/icons';
-import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply } from '@/api/resupply';
+import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined } from '@ant-design/icons';
+import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply } from '@/api/resupply';
 import { useGuildStore } from '@/stores/guild.store';
 import { RESUPPLY_STATUS } from '@/types';
 import type { GuildResupply } from '@/types';
@@ -29,6 +29,12 @@ export default function ResupplyPage() {
   const [keyword, setKeyword] = useState('');
   const [dateRange, setDateRange] = useState<[any, any] | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  // 合并视图
+  const [mergedView, setMergedView] = useState(false);
+  const [mergedList, setMergedList] = useState<any[]>([]);
+  const [mergedTotal, setMergedTotal] = useState(0);
+  const [mergedLoading, setMergedLoading] = useState(false);
 
   // 详情
   const [detailDrawer, setDetailDrawer] = useState(false);
@@ -71,7 +77,26 @@ export default function ResupplyPage() {
 
   useEffect(() => { fetchList(1); setPage(1); }, [guildId, statusFilter]);
 
-  const handleSearch = () => { setPage(1); fetchList(1); };
+  const fetchMergedList = async (p = page) => {
+    if (!guildId) return;
+    setMergedLoading(true);
+    try {
+      const params: any = { page: p, pageSize: 20, status: statusFilter, keyword: keyword || undefined };
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.startDate = dateRange[0].format('YYYY-MM-DD');
+        params.endDate = dateRange[1].format('YYYY-MM-DD');
+      }
+      const res: any = await getMergedResupply(guildId, params);
+      setMergedList(res?.list || []);
+      setMergedTotal(res?.total || 0);
+    } catch {} finally { setMergedLoading(false); }
+  };
+
+  const handleSearch = () => {
+    setPage(1);
+    if (mergedView) fetchMergedList(1);
+    else fetchList(1);
+  };
 
   const openDetail = async (id: number) => {
     setDetailDrawer(true);
@@ -200,7 +225,18 @@ export default function ResupplyPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>补装管理</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => mergedView ? fetchMergedList() : fetchList()}>刷新</Button>
+          <Button
+            icon={<MergeCellsOutlined />}
+            type={mergedView ? 'primary' : 'default'}
+            onClick={() => {
+              const next = !mergedView;
+              setMergedView(next);
+              if (next) fetchMergedList(1);
+            }}
+          >
+            {mergedView ? '退出合并' : '合并视图'}
+          </Button>
           {canProcess && <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModal(true)}>手动创建</Button>}
         </Space>
       </div>
@@ -241,12 +277,87 @@ export default function ResupplyPage() {
       </Card>
 
       <Card>
-        <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle" scroll={{ x: 1100 }}
-          rowSelection={canProcess ? { selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]),
-            getCheckboxProps: (r: GuildResupply) => ({ disabled: r.status !== 0 }),
-          } : undefined}
-          pagination={{ current: page, total, pageSize: 20, showTotal: t => `共 ${t} 条`, onChange: p => { setPage(p); fetchList(p); } }}
-        />
+        {mergedView ? (
+          <>
+            <Tag color="blue" style={{ marginBottom: 12 }}>合并视图：同一用户+同一截图+同一天的多件装备合并为一行</Tag>
+            <Table
+              dataSource={mergedList}
+              rowKey="key"
+              loading={mergedLoading}
+              size="middle"
+              scroll={{ x: 1000 }}
+              pagination={{ current: page, total: mergedTotal, pageSize: 20, showTotal: t => `共 ${t} 组`, onChange: p => { setPage(p); fetchMergedList(p); } }}
+              columns={[
+                { title: '申请人', dataIndex: 'kookNickname', key: 'nick', width: 120, ellipsis: true },
+                {
+                  title: '箱子', dataIndex: 'resupplyBox', key: 'box', width: 80,
+                  render: (v: string) => v ? <Tag color="geekblue">{v}</Tag> : '-',
+                },
+                {
+                  title: '装备列表', dataIndex: 'equipmentSummary', key: 'equips',
+                  render: (v: string) => <Text style={{ fontSize: 13 }}>{v}</Text>,
+                },
+                { title: '总数', dataIndex: 'totalQuantity', key: 'qty', width: 60 },
+                {
+                  title: '件数', key: 'count', width: 60,
+                  render: (_: any, r: any) => r.items?.length || 0,
+                },
+                {
+                  title: '状态', key: 'status', width: 90,
+                  render: (_: any, r: any) => <Tag color={STATUS_COLORS[r.status]}>{RESUPPLY_STATUS[r.status]}</Tag>,
+                },
+                {
+                  title: '截图', key: 'screenshot', width: 60,
+                  render: (_: any, r: any) => r.screenshotUrl ? <Image src={r.screenshotUrl} width={32} height={32} style={{ objectFit: 'cover', borderRadius: 4 }} /> : '-',
+                },
+                {
+                  title: '时间', dataIndex: 'createdAt', key: 'time', width: 140,
+                  render: (v: string) => dayjs(v).format('MM-DD HH:mm'),
+                },
+                {
+                  title: '操作', key: 'actions', width: 80,
+                  render: (_: any, r: any) => (
+                    <Button size="small" type="link" icon={<EyeOutlined />}
+                      onClick={() => { if (r.items?.[0]?.id) openDetail(r.items[0].id); }}>详情</Button>
+                  ),
+                },
+              ]}
+              expandable={{
+                expandedRowRender: (record: any) => (
+                  <Table
+                    dataSource={record.items}
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                    columns={[
+                      { title: 'ID', dataIndex: 'id', width: 60 },
+                      { title: '装备', dataIndex: 'equipmentName' },
+                      { title: '装等', key: 'gs', width: 60, render: (_: any, r: any) => r.gearScore ? `P${r.gearScore}` : '-' },
+                      { title: '数量', dataIndex: 'quantity', width: 60 },
+                      {
+                        title: '状态', dataIndex: 'status', width: 90,
+                        render: (s: number) => <Tag color={STATUS_COLORS[s]}>{RESUPPLY_STATUS[s]}</Tag>,
+                      },
+                      {
+                        title: '操作', key: 'actions', width: 100,
+                        render: (_: any, r: any) => (
+                          <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => openDetail(r.id)}>详情</Button>
+                        ),
+                      },
+                    ]}
+                  />
+                ),
+              }}
+            />
+          </>
+        ) : (
+          <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle" scroll={{ x: 1100 }}
+            rowSelection={canProcess ? { selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]),
+              getCheckboxProps: (r: GuildResupply) => ({ disabled: r.status !== 0 }),
+            } : undefined}
+            pagination={{ current: page, total, pageSize: 20, showTotal: t => `共 ${t} 条`, onChange: p => { setPage(p); fetchList(p); } }}
+          />
+        )}
       </Card>
 
       {/* 详情 Drawer */}
@@ -261,6 +372,10 @@ export default function ResupplyPage() {
                 <div><Text strong>数量：</Text>{detail.quantity} | <Text strong>类型：</Text>{detail.applyType}</div>
                 {detail.resupplyBox && <div><Text strong>箱子编号：</Text><Tag color="geekblue">{detail.resupplyBox}</Tag></div>}
                 {detail.resupplyRoom && <div><Text strong>补装房间：</Text><Tag color="volcano">{detail.resupplyRoom}</Tag></div>}
+                {detail.killDate && <div><Text strong>击杀日期：</Text>{detail.killDate}</div>}
+                {detail.mapName && <div><Text strong>地图：</Text>{detail.mapName}</div>}
+                {detail.gameId && <div><Text strong>游戏ID：</Text>{detail.gameId}</div>}
+                {detail.ocrGuildName && <div><Text strong>公会名(OCR)：</Text>{detail.ocrGuildName}</div>}
                 {detail.reason && <div><Text strong>原因/来源：</Text>{detail.reason}</div>}
                 {detail.processRemark && <div><Text strong>处理备注：</Text>{detail.processRemark}</div>}
                 <div><Text strong>申请时间：</Text>{dayjs(detail.createdAt).format('YYYY-MM-DD HH:mm:ss')}</div>

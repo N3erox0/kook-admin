@@ -7,6 +7,8 @@ import { GuildGuard } from '../../common/guards/guild.guard';
 import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
 import { GuildRoles } from '../../common/decorators/guild-roles.decorator';
 import { GuildRole } from '../../common/constants/enums';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 @ApiTags('操作日志')
 @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
@@ -14,7 +16,9 @@ import { GuildRole } from '../../common/constants/enums';
 @ApiBearerAuth()
 @Controller('api/guild/:guildId/logs')
 export class LogController {
-  constructor(private readonly logService: LogService) {}
+  constructor(
+    private readonly logService: LogService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: '操作日志列表（公会隔离）' })
@@ -26,6 +30,12 @@ export class LogController {
   @ApiOperation({ summary: '获取模块列表' })
   getModules(@Param('guildId', ParseIntPipe) guildId: number) {
     return this.logService.getModules(guildId);
+  }
+
+  @Get('scheduled-tasks')
+  @ApiOperation({ summary: '定时任务执行记录' })
+  async getScheduledTasks() {
+    return this.logService.getScheduledTasks();
   }
 }
 

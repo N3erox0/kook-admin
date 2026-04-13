@@ -52,16 +52,16 @@ export default function LogPage() {
     } catch {}
   };
 
-  const fetchPushLogs = async (p = pushPage) => {
+  const fetchPushLogs = async () => {
     setPushLoading(true);
     try {
-      const res: any = await request.get(basePath, { params: { page: p, pageSize: 30, module: 'kook_notify' } });
-      setPushLogs(res?.list || []);
-      setPushTotal(res?.total || 0);
+      const res: any = await request.get(`${basePath}/scheduled-tasks`);
+      setPushLogs(Array.isArray(res) ? res : []);
+      setPushTotal(Array.isArray(res) ? res.length : 0);
     } catch {} finally { setPushLoading(false); }
   };
 
-  useEffect(() => { fetchLogs(1); fetchModules(); fetchPushLogs(1); }, []);
+  useEffect(() => { fetchLogs(1); fetchModules(); fetchPushLogs(); }, []);
   useEffect(() => { setPage(1); fetchLogs(1); }, [moduleFilter]);
 
   const columns = [
@@ -109,8 +109,36 @@ export default function LogPage() {
           key: 'push',
           label: '消息推送记录',
           children: (
-            <Table columns={columns} dataSource={pushLogs} rowKey="id" loading={pushLoading} size="middle"
-              pagination={{ current: pushPage, total: pushTotal, pageSize: 30, showTotal: t => `共 ${t} 条`, onChange: p => { setPushPage(p); fetchPushLogs(p); } }} />
+            <Table
+              dataSource={pushLogs}
+              rowKey="id"
+              loading={pushLoading}
+              size="middle"
+              pagination={false}
+              columns={[
+                { title: '任务名', dataIndex: 'taskName', key: 'name', width: 200,
+                  render: (v: string) => {
+                    const labels: Record<string, string> = {
+                      'kook_member_sync': 'KOOK成员同步',
+                      'inventory_alert': '库存预警推送',
+                      'death_count_alert': '死亡次数预警',
+                      'resupply_reaction': '补装回应表情',
+                    };
+                    return <Tag color="blue">{labels[v] || v}</Tag>;
+                  },
+                },
+                { title: '上次执行', dataIndex: 'lastRunAt', key: 'lastRun', width: 170,
+                  render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+                },
+                { title: '执行结果', dataIndex: 'lastRunResult', key: 'result' },
+                { title: '耗时(ms)', dataIndex: 'durationMs', key: 'duration', width: 100,
+                  render: (v: number) => v ? `${v}ms` : '-',
+                },
+                { title: '状态', dataIndex: 'status', key: 'status', width: 80,
+                  render: (v: number) => v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>,
+                },
+              ]}
+            />
           ),
         },
       ]} />

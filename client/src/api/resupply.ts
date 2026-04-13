@@ -23,3 +23,6 @@ export const batchAssignRoom = (guildId: number, data: { ids: number[]; room: st
 
 export const getGroupedResupply = (guildId: number, keyword?: string) =>
   request.get(`/guild/${guildId}/resupply/grouped`, { params: { keyword } });
+
+export const getMergedResupply = (guildId: number, params?: any) =>
+  request.get(`/guild/${guildId}/resupply/merged`, { params });

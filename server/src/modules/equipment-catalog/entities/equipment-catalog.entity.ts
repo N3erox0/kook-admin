@@ -10,6 +10,10 @@ export class EquipmentCatalog {
   @Column({ type: 'varchar', length: 100, comment: '装备名称' })
   name: string;
 
+  @Index('idx_catalog_albion_id', { unique: true })
+  @Column({ type: 'varchar', length: 100, nullable: true, name: 'albion_id', comment: 'Albion Online UniqueName（如T4_2H_CLAYMORE@2）' })
+  albionId: string;
+
   @Column({ type: 'int', default: 1, comment: '等级 1~8' })
   level: number;
 

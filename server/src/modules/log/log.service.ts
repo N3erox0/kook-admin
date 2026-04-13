@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { OperationLog } from './entities/operation-log.entity';
+import { ScheduledTask } from '../scheduler/entities/scheduled-task.entity';
 import { QueryLogDto } from './dto/log.dto';
 
 @Injectable()
@@ -9,6 +10,8 @@ export class LogService {
   constructor(
     @InjectRepository(OperationLog)
     private logRepo: Repository<OperationLog>,
+    @InjectRepository(ScheduledTask)
+    private taskRepo: Repository<ScheduledTask>,
   ) {}
 
   async findAll(query: QueryLogDto, guildId?: number) {
@@ -47,5 +50,9 @@ export class LogService {
     if (guildId) qb.where('log.guildId = :guildId', { guildId });
     const result = await qb.getRawMany();
     return result.map((r) => r.module);
+  }
+
+  async getScheduledTasks() {
+    return this.taskRepo.find({ order: { lastRunAt: 'DESC' } });
   }
 }

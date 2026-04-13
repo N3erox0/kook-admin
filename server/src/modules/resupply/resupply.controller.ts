@@ -19,6 +19,20 @@ export class ResupplyController {
     return this.resupplyService.findAll(guildId, query);
   }
 
+  @Get('merged')
+  getMerged(@Param('guildId', ParseIntPipe) guildId: number, @Query() query: QueryResupplyDto) {
+    return this.resupplyService.getMergedList(guildId, query);
+  }
+
+  @Get('grouped')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  getGrouped(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Query('keyword') keyword?: string,
+  ) {
+    return this.resupplyService.getGroupedByEquipment(guildId, keyword);
+  }
+
   @Get(':id')
   findOne(@Param('guildId', ParseIntPipe) guildId: number, @Param('id', ParseIntPipe) id: number) {
     return this.resupplyService.findOne(guildId, id);
@@ -70,14 +84,5 @@ export class ResupplyController {
     @Body() dto: BatchAssignRoomDto,
   ) {
     return this.resupplyService.batchAssignRoom(guildId, dto);
-  }
-
-  @Get('grouped')
-  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
-  getGrouped(
-    @Param('guildId', ParseIntPipe) guildId: number,
-    @Query('keyword') keyword?: string,
-  ) {
-    return this.resupplyService.getGroupedByEquipment(guildId, keyword);
   }
 }

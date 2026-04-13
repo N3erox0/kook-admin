@@ -106,6 +106,10 @@ export interface GuildResupply {
   dedupHash: string | null;
   resupplyBox: string | null;
   resupplyRoom: string | null;
+  killDate: string | null;
+  mapName: string | null;
+  gameId: string | null;
+  ocrGuildName: string | null;
   createdAt: string;
   logs?: ResupplyLog[];
 }

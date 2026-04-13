@@ -39,7 +39,11 @@ export class KookSyncService {
       return { added: 0, updated: 0, left: 0 };
     }
 
-    const kookMembers = await this.kookService.getGuildMemberList(guild.kookGuildId, guild.kookBotToken);
+    const [kookMembers, kookRoles] = await Promise.all([
+      this.kookService.getGuildMemberList(guild.kookGuildId, guild.kookBotToken),
+      this.kookService.getGuildRoleList(guild.kookGuildId, guild.kookBotToken),
+    ]);
+    const roleMap = new Map(kookRoles.map(r => [r.role_id, r.name]));
     const existingMembers = await this.memberRepo.find({ where: { guildId: guild.id } });
     const existingMap = new Map(existingMembers.map((m) => [m.kookUserId, m]));
     const kookIdSet = new Set(kookMembers.map((m) => m.id));
@@ -47,10 +51,15 @@ export class KookSyncService {
     let added = 0, updated = 0, left = 0;
 
     for (const km of kookMembers) {
+      // 将角色ID数组映射为 {role_id, name} 对象数组
+      const mappedRoles = (km.roles || []).map(rid => ({
+        role_id: rid,
+        name: roleMap.get(rid) || `角色${rid}`,
+      }));
       const existing = existingMap.get(km.id);
       if (existing) {
-        existing.nickname = km.nickname || existing.nickname;
-        existing.kookRoles = km.roles;
+        existing.nickname = km.nickname || km.username || existing.nickname;
+        existing.kookRoles = mappedRoles;
         existing.lastSyncedAt = new Date();
         if (existing.status === MemberStatus.LEFT) {
           existing.status = MemberStatus.ACTIVE;
@@ -64,7 +73,7 @@ export class KookSyncService {
           guildId: guild.id,
           kookUserId: km.id,
           nickname: km.nickname || km.username,
-          kookRoles: km.roles,
+          kookRoles: mappedRoles,
           role: 'normal',
           status: MemberStatus.ACTIVE,
           joinedAt: new Date(),

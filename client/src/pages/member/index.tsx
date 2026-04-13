@@ -91,7 +91,7 @@ export default function MemberPage() {
         return (
           <Space size={2} wrap>
             {roles.slice(0, 3).map((r: any, i: number) => (
-              <Tag key={i} color="processing">{typeof r === 'object' ? r.name : r}</Tag>
+              <Tag key={i} color="processing">{typeof r === 'object' ? r.name : `角色${r}`}</Tag>
             ))}
             {roles.length > 3 && <Tag>+{roles.length - 3}</Tag>}
           </Space>
