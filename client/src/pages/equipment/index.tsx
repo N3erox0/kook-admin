@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, ScanOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined } from '@ant-design/icons';
 import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
 import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
@@ -42,6 +42,35 @@ export default function EquipmentPage() {
   const [logTarget, setLogTarget] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+
+  // 批量操作
+  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+  const [batchLocationModal, setBatchLocationModal] = useState(false);
+  const [batchLocation, setBatchLocation] = useState('');
+
+  // 行内数量修改（防抖）
+  const handleInlineQuantityChange = async (id: number, val: number) => {
+    try {
+      await updateInventoryFields(guildId, id, { quantity: val });
+      message.success('数量已更新');
+      fetchList();
+    } catch {}
+  };
+
+  // 批量修改位置
+  const handleBatchLocationSave = async () => {
+    if (!batchLocation.trim() || selectedRowKeys.length === 0) return;
+    try {
+      for (const id of selectedRowKeys) {
+        await updateInventoryFields(guildId, id, { location: batchLocation.trim() });
+      }
+      message.success(`已批量更新 ${selectedRowKeys.length} 条记录的位置`);
+      setBatchLocationModal(false);
+      setBatchLocation('');
+      setSelectedRowKeys([]);
+      fetchList();
+    } catch {}
+  };
 
   // OCR 识别入库
   const [ocrModal, setOcrModal] = useState(false);
@@ -229,34 +258,42 @@ export default function EquipmentPage() {
     },
     {
       title: '等级', key: 'level', width: 70,
-      render: (_: any, r: any) => r.catalog ? `Lv.${r.catalog.level}` : '-',
+      render: (_: any, r: any) => r.catalog ? r.catalog.level : '-',
     },
     {
       title: '品质', key: 'quality', width: 70,
-      render: (_: any, r: any) => r.catalog ? <Tag color={QUALITY_COLORS[r.catalog.quality]}>{QUALITY_LABELS[r.catalog.quality]}</Tag> : '-',
+      render: (_: any, r: any) => r.catalog ? r.catalog.quality : '-',
     },
     {
       title: '装等', key: 'gearScore', width: 70,
-      render: (_: any, r: any) => r.catalog ? <Tag>P{r.catalog.gearScore}</Tag> : '-',
+      render: (_: any, r: any) => r.catalog?.gearScore ? `P${r.catalog.gearScore}` : '-',
     },
     {
       title: '部位', key: 'category', width: 80,
       render: (_: any, r: any) => r.catalog?.category || '-',
     },
     {
-      title: '数量', dataIndex: 'quantity', key: 'quantity', width: 80,
-      render: (v: number) => <Text strong style={{ color: v > 0 ? '#52c41a' : '#ff4d4f' }}>{v}</Text>,
+      title: '数量', dataIndex: 'quantity', key: 'quantity', width: 100,
+      render: (v: number, record: any) => (
+        <InputNumber
+          size="small"
+          min={0}
+          value={v}
+          style={{ width: 80 }}
+          onChange={(val) => {
+            if (val !== null && val !== v) {
+              handleInlineQuantityChange(record.id, val);
+            }
+          }}
+        />
+      ),
     },
     { title: '位置', dataIndex: 'location', key: 'location', width: 120, ellipsis: true },
     {
-      title: '操作', key: 'actions', width: 200,
+      title: '操作', key: 'actions', width: 80,
       render: (_: any, record: any) => (
         <Space size="small">
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
           <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => openLogs(record)}>日志</Button>
-          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
         </Space>
       ),
     },
@@ -286,12 +323,12 @@ export default function EquipmentPage() {
           </Form.Item>
           <Form.Item name="level">
             <Select placeholder="等级" allowClear style={{ width: 90 }}>
-              {[1,2,3,4,5,6,7,8].map(l => <Select.Option key={l} value={l}>Lv.{l}</Select.Option>)}
+              {[1,2,3,4,5,6,7,8].map(l => <Select.Option key={l} value={l}>{l}</Select.Option>)}
             </Select>
           </Form.Item>
           <Form.Item name="quality">
             <Select placeholder="品质" allowClear style={{ width: 90 }}>
-              {QUALITY_LABELS.map((q, i) => <Select.Option key={i} value={i}>{q}</Select.Option>)}
+              {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
             </Select>
           </Form.Item>
           <Form.Item><Button type="primary" htmlType="submit">查询</Button></Form.Item>
@@ -299,7 +336,17 @@ export default function EquipmentPage() {
       </Card>
 
       <Card>
+        {selectedRowKeys.length > 0 && (
+          <Space style={{ marginBottom: 12 }}>
+            <Text>已选 {selectedRowKeys.length} 条</Text>
+            <Button size="small" onClick={() => setBatchLocationModal(true)}>批量修改位置</Button>
+          </Space>
+        )}
         <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle"
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys as number[]),
+          }}
           pagination={{ current: page, total, pageSize: 50, showTotal: t => `共 ${t} 条`, onChange: p => { setPage(p); fetchList(p); } }}
         />
       </Card>
@@ -437,6 +484,11 @@ export default function EquipmentPage() {
             <Tag color="green" style={{ fontSize: 16, padding: '8px 16px' }}>入库完成</Tag>
           </div>
         )}
+      </Modal>
+      {/* 批量修改位置 */}
+      <Modal title={`批量修改位置 (${selectedRowKeys.length} 条)`} open={batchLocationModal} onCancel={() => setBatchLocationModal(false)}
+        onOk={handleBatchLocationSave} okText="确认修改">
+        <Input placeholder="输入新位置" value={batchLocation} onChange={e => setBatchLocation(e.target.value)} />
       </Modal>
     </div>
   );

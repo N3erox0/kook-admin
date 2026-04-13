@@ -37,3 +37,25 @@
 | BL-033 | KookNotify新增approved通知 | completed | 2026-04-13 14:34 | kook-notify.service.ts新增notifyResupplyApproved方法 |
 | BL-034 | GuildService事务安全 | completed | 2026-04-13 14:32 | createGuild全流程包裹在事务中，失败自动回滚 |
 | BL-035 | 前端auth.store清理refreshToken | completed | 2026-04-13 14:38 | logout时清理refreshToken |
+| **V2.1** | **测试反馈修复批次** | | | |
+| F-001 | 控制台成员卡片跳转 | completed | 2026-04-13 16:50 | 点击成员总数→成员管理 |
+| F-002 | 控制台装备卡片跳转 | completed | 2026-04-13 16:50 | 点击装备总数→装备库存 |
+| F-003 | 控制台补装卡片跳转 | completed | 2026-04-13 16:50 | 点击待处理→补装审核 |
+| F-004 | 同步成员500错误优化 | completed | 2026-04-13 16:50 | try-catch包裹返回有意义错误信息 |
+| F-005 | 装备参考库菜单隐藏 | completed | 2026-04-13 16:50 | 仅SSVIP可见 |
+| F-006 | 成员管理去掉同步按钮 | completed | 2026-04-13 16:50 | 改为显示上次同步时间 |
+| F-007 | 成员管理系统角色折叠 | completed | 2026-04-13 16:50 | 角色修改折叠进眼睛图标 |
+| F-008 | 成员管理去掉加入方式 | completed | 2026-04-13 16:50 | 默认自动同步 |
+| F-009 | 成员管理系统角色列后移 | completed | 2026-04-13 16:50 | 系统角色+操作放最后 |
+| F-010 | 装备品质仅显示数字 | completed | 2026-04-13 16:50 | 参考库+库存品质改为0-4 |
+| F-011 | 装备参考库分页支持100 | completed | 2026-04-13 16:50 | 支持50/100切换 |
+| F-012 | 装等允许为空 | completed | 2026-04-13 16:50 | 显示'-'代替P0 |
+| F-013 | CSV模板下载 | completed | 2026-04-13 16:50 | 后端/api/catalog/csv-template端点 |
+| F-014 | 库存等级品质纯数字 | completed | 2026-04-13 16:50 | 去掉Lv.和品质文字 |
+| F-015 | 库存数量行内编辑 | completed | 2026-04-13 16:50 | InputNumber直接修改 |
+| F-016 | 库存数量允许0 | completed | 2026-04-13 16:50 | min=0 |
+| F-017 | 库存批量修改位置 | completed | 2026-04-13 16:50 | 行选择+批量位置弹窗 |
+| F-018 | 库存操作列精简 | completed | 2026-04-13 16:50 | 仅保留日志按钮 |
+| F-020 | 补装管理日期范围搜索 | completed | 2026-04-13 16:50 | 后端DTO+Service支持startDate/endDate |
+| F-021 | 创建流程移除管理员角色ID | completed | 2026-04-13 16:50 | GuildCreate+JoinPage移除 |
+| F-022 | 公会设置页重构 | completed | 2026-04-13 16:50 | 基础配置+高级配置折叠 |

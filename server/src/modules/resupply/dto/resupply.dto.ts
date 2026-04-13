@@ -48,4 +48,6 @@ export class QueryResupplyDto {
   @IsOptional() @IsNumber() status?: number;
   @IsOptional() @IsString() keyword?: string;
   @IsOptional() @IsString() applyType?: string;
+  @IsOptional() @IsString() startDate?: string;
+  @IsOptional() @IsString() endDate?: string;
 }

@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseGuards, UseInterceptors, UploadedFile, BadRequestException, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
@@ -16,6 +17,24 @@ export class CatalogController {
   @ApiOperation({ summary: '查询装备参考库列表' })
   findAll(@Query() query: QueryCatalogDto) {
     return this.catalogService.findAll(query);
+  }
+
+  @Get('csv-template')
+  @ApiOperation({ summary: '下载CSV导入模板' })
+  downloadCsvTemplate(@Res() res: Response) {
+    const BOM = '\uFEFF';
+    const header = '装备名称,等级,品质,装等,部位';
+    const examples = [
+      '迅捷之刃,5,3,P8,武器',
+      '守护之盾,4,2,,副手',
+      '风行者头盔,6,4,P10,头',
+      '初级治疗药水,1,0,,药水',
+      '战马坐骑,3,1,,坐骑',
+    ];
+    const csv = BOM + [header, ...examples].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="catalog-template.csv"');
+    res.send(csv);
   }
 
   @Get('search')

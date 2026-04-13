@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image } from 'antd';
+import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image, DatePicker } from 'antd';
 import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply } from '@/api/resupply';
 import { useGuildStore } from '@/stores/guild.store';
@@ -22,6 +22,7 @@ export default function ResupplyPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<number | undefined>(undefined);
   const [keyword, setKeyword] = useState('');
+  const [dateRange, setDateRange] = useState<[any, any] | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   // 详情
@@ -42,7 +43,12 @@ export default function ResupplyPage() {
     if (!guildId) return;
     setLoading(true);
     try {
-      const res: any = await getResupplyList(guildId, { page: p, pageSize: 20, status: statusFilter, keyword: keyword || undefined });
+      const params: any = { page: p, pageSize: 20, status: statusFilter, keyword: keyword || undefined };
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.startDate = dateRange[0].format('YYYY-MM-DD');
+        params.endDate = dateRange[1].format('YYYY-MM-DD');
+      }
+      const res: any = await getResupplyList(guildId, params);
       setList(res?.list || []);
       setTotal(res?.total || 0);
     } catch {} finally { setLoading(false); }
@@ -163,6 +169,11 @@ export default function ResupplyPage() {
             onChange={v => setStatusFilter(v)}>
             {Object.entries(RESUPPLY_STATUS).map(([k, v]) => <Select.Option key={k} value={Number(k)}>{v}</Select.Option>)}
           </Select>
+          <DatePicker.RangePicker
+            value={dateRange}
+            onChange={(dates) => setDateRange(dates as any)}
+            style={{ width: 240 }}
+          />
           <Button type="primary" onClick={handleSearch}>查询</Button>
           {canProcess && selectedIds.length > 0 && (
             <>

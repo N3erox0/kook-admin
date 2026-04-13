@@ -38,10 +38,17 @@ export class DashboardController {
   @UseGuards(JwtAuthGuard, GuildGuard)
   async syncMembers(@Param('guildId', ParseIntPipe) guildId: number) {
     const guild = await this.guildRepo.findOne({ where: { id: guildId } });
-    if (!guild || !guild.kookBotToken || !guild.kookGuildId) {
-      return { success: false, message: '公会未配置 KOOK Bot Token 或服务器 ID' };
+    if (!guild) {
+      return { success: false, message: '公会不存在' };
     }
-    const result = await this.kookSyncService.syncGuildMembers(guild);
-    return { success: true, ...result };
+    if (!guild.kookBotToken || !guild.kookGuildId) {
+      return { success: false, message: '公会未配置 KOOK Bot Token 或服务器 ID，请在公会设置中配置' };
+    }
+    try {
+      const result = await this.kookSyncService.syncGuildMembers(guild);
+      return { success: true, ...result };
+    } catch (err: any) {
+      return { success: false, message: `同步失败：${err.message || '未知错误'}` };
+    }
   }
 }

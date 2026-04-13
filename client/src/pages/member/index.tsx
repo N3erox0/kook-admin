@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, Input, Select, message } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Space, Tag, Typography, Input, Select, message, Tooltip, Popover } from 'antd';
+import { EyeOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
 import request from '@/api/request';
 import dayjs from 'dayjs';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 const ROLE_OPTIONS = [
   { value: 'super_admin', label: '超级管理员' },
@@ -36,6 +36,8 @@ export default function MemberPage() {
   const [page, setPage] = useState(1);
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [expandedRoleId, setExpandedRoleId] = useState<number | null>(null);
 
   const isSuperAdmin = currentGuildRole === 'super_admin';
 
@@ -49,6 +51,11 @@ export default function MemberPage() {
       setData(res.list || []);
       setTotal(res.total || 0);
     }).finally(() => setLoading(false));
+
+    // 获取上次同步时间
+    request.get(`/guild/${currentGuildId}/dashboard/overview`).then((res: any) => {
+      setLastSyncedAt(res?.lastSyncedAt || null);
+    }).catch(() => {});
   };
 
   useEffect(() => { fetchData(); }, [currentGuildId, page, statusFilter]);
@@ -57,6 +64,7 @@ export default function MemberPage() {
     try {
       await request.put(`/guild/${currentGuildId}/members/${memberId}/role`, { role });
       message.success('角色修改成功');
+      setExpandedRoleId(null);
       fetchData();
     } catch {}
   };
@@ -91,21 +99,8 @@ export default function MemberPage() {
       },
     },
     {
-      title: '系统角色', dataIndex: 'role', key: 'role', width: 150,
-      render: (role: string, record: any) => {
-        if (isSuperAdmin && record.status === 'active') {
-          return (
-            <Select
-              value={role}
-              size="small"
-              style={{ width: 130 }}
-              options={ROLE_OPTIONS}
-              onChange={(v) => handleRoleChange(record.id, v)}
-            />
-          );
-        }
-        return <Tag color={ROLE_COLORS[role]}>{ROLE_LABELS[role] || role}</Tag>;
-      },
+      title: '系统角色', dataIndex: 'role', key: 'role', width: 120,
+      render: (role: string) => <Tag color={ROLE_COLORS[role]}>{ROLE_LABELS[role] || role}</Tag>,
     },
     {
       title: '加入时间', dataIndex: 'joinedAt', key: 'joinedAt', width: 110,
@@ -122,24 +117,53 @@ export default function MemberPage() {
       title: '离开时间', dataIndex: 'leftAt', key: 'leftAt', width: 110,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-',
     },
-    {
-      title: '加入方式', dataIndex: 'joinSource', key: 'joinSource', width: 100,
-      render: (v: string) => {
-        const labels: Record<string, { text: string; color: string }> = {
-          kook_sync: { text: '自动同步', color: 'blue' },
-          invite_link: { text: '邀请链接', color: 'green' },
-          manual: { text: '手动录入', color: 'orange' },
-          webhook: { text: 'Webhook', color: 'purple' },
-        };
-        const item = labels[v] || { text: v || '-', color: 'default' };
-        return <Tag color={item.color}>{item.text}</Tag>;
+    ...(isSuperAdmin ? [{
+      title: '操作', key: 'actions', width: 80, fixed: 'right' as const,
+      render: (_: any, record: any) => {
+        if (record.status !== 'active') return null;
+        return (
+          <Popover
+            trigger="click"
+            open={expandedRoleId === record.id}
+            onOpenChange={(open) => setExpandedRoleId(open ? record.id : null)}
+            content={
+              <Space direction="vertical" size="small">
+                <Text strong style={{ fontSize: 12 }}>修改系统角色</Text>
+                {ROLE_OPTIONS.map(opt => (
+                  <Button
+                    key={opt.value}
+                    size="small"
+                    type={record.role === opt.value ? 'primary' : 'default'}
+                    block
+                    onClick={() => handleRoleChange(record.id, opt.value)}
+                    disabled={record.role === opt.value}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </Space>
+            }
+          >
+            <Tooltip title="修改角色">
+              <Button size="small" type="link" icon={<EyeOutlined />} />
+            </Tooltip>
+          </Popover>
+        );
       },
-    },
+    }] : []),
   ];
 
   return (
     <div>
-      <Title level={4}>成员管理</Title>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <Title level={4} style={{ margin: 0 }}>成员管理</Title>
+        <Space>
+          <ClockCircleOutlined style={{ color: '#999' }} />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            上次同步：{lastSyncedAt ? dayjs(lastSyncedAt).format('YYYY-MM-DD HH:mm:ss') : '尚未同步'}
+          </Text>
+        </Space>
+      </div>
       <Card>
         <Space style={{ marginBottom: 16 }} wrap>
           <Input.Search
@@ -159,7 +183,6 @@ export default function MemberPage() {
               { value: 'left', label: '离开' },
             ]}
           />
-          <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
         </Space>
 
         <Table
@@ -168,6 +191,7 @@ export default function MemberPage() {
           rowKey="id"
           loading={loading}
           size="small"
+          scroll={{ x: 900 }}
           pagination={{
             current: page,
             total,

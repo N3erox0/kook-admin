@@ -20,7 +20,6 @@ export default function JoinPage() {
 
   const [inviteCode, setInviteCode] = useState(searchParams.get('code') || searchParams.get('state') || '');
   const [kookGuildId, setKookGuildId] = useState('');
-  const [kookAdminRoleId, setKookAdminRoleId] = useState('');
   const [guildInfo, setGuildInfo] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
@@ -159,7 +158,6 @@ export default function JoinPage() {
         await request.put(`/guilds/${res.id}`, {
           kookListenChannelIds: selectedChannelIds,
           kookResupplyChannelId: selectedChannelIds[0],
-          kookAdminRoleId: kookAdminRoleId || '',
         });
         setCreatedGuild(res);
         setCurrent(4);
@@ -304,10 +302,6 @@ export default function JoinPage() {
               <Form.Item label="KOOK 服务器 ID" required>
                 <Input size="large" placeholder="右键服务器名称 → 复制 ID" value={kookGuildId}
                   onChange={(e) => setKookGuildId(e.target.value)} />
-              </Form.Item>
-              <Form.Item label="管理员角色 ID（可选）">
-                <Input placeholder="右键角色 → 复制 ID" value={kookAdminRoleId}
-                  onChange={(e) => setKookAdminRoleId(e.target.value)} />
               </Form.Item>
             </Form>
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>

@@ -33,6 +33,16 @@ export class ResupplyService {
       qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
     }
     if (query.applyType) qb.andWhere('r.applyType = :at', { at: query.applyType });
+    if (query.startDate && query.endDate) {
+      qb.andWhere('r.createdAt BETWEEN :startDate AND :endDate', {
+        startDate: `${query.startDate} 00:00:00`,
+        endDate: `${query.endDate} 23:59:59`,
+      });
+    } else if (query.startDate) {
+      qb.andWhere('r.createdAt >= :startDate', { startDate: `${query.startDate} 00:00:00` });
+    } else if (query.endDate) {
+      qb.andWhere('r.createdAt <= :endDate', { endDate: `${query.endDate} 23:59:59` });
+    }
 
     qb.orderBy('r.createdAt', 'DESC').skip((page - 1) * pageSize).take(pageSize);
     const [list, total] = await qb.getManyAndCount();

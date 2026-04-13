@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
 import { useAuthStore } from '@/stores/auth.store';
+import { useNavigate } from 'react-router-dom';
 import request from '@/api/request';
 import dayjs from 'dayjs';
 
@@ -144,6 +145,7 @@ function AdminDashboard() {
 
 function GuildDashboard() {
   const { currentGuildId } = useGuildStore();
+  const navigate = useNavigate();
   const guildId = currentGuildId!;
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
@@ -168,10 +170,11 @@ function GuildDashboard() {
         message.success(`同步完成：新增 ${res.added}，更新 ${res.updated}，离开 ${res.left}`);
         fetchData();
       } else {
-        message.warning(res?.message || '同步失败');
+        message.warning(res?.message || '同步失败，请检查公会是否已配置 Bot Token');
       }
-    } catch {
-      message.error('同步请求失败');
+    } catch (err: any) {
+      const errMsg = err?.message || err?.response?.data?.message || '同步请求失败';
+      message.error(`同步失败：${errMsg}`);
     } finally { setSyncing(false); }
   };
 
@@ -218,7 +221,7 @@ function GuildDashboard() {
       {/* A. 核心数据卡片 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={8}>
-          <Card hoverable>
+          <Card hoverable onClick={() => navigate('/admin/members')} style={{ cursor: 'pointer' }}>
             <Statistic
               title={<Space><TeamOutlined /> 成员总数</Space>}
               value={data.totalActive}
@@ -227,7 +230,7 @@ function GuildDashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card hoverable>
+          <Card hoverable onClick={() => navigate('/admin/equipment')} style={{ cursor: 'pointer' }}>
             <Statistic
               title={<Space><AppstoreOutlined /> 装备总数</Space>}
               value={data.totalInventory}
@@ -236,7 +239,7 @@ function GuildDashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card hoverable style={{ cursor: 'pointer' }}>
+          <Card hoverable onClick={() => navigate('/admin/resupply')} style={{ cursor: 'pointer' }}>
             <Statistic
               title={<Space><SyncOutlined /> 待处理补装申请</Space>}
               value={data.pendingResupply}

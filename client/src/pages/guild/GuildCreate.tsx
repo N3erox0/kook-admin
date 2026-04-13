@@ -17,7 +17,6 @@ export default function GuildCreatePage() {
 
   const [inviteCode, setInviteCode] = useState('');
   const [kookGuildId, setKookGuildId] = useState('');
-  const [kookAdminRoleId, setKookAdminRoleId] = useState('');
   const [guildInfo, setGuildInfo] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
@@ -129,7 +128,6 @@ export default function GuildCreatePage() {
         await request.put(`/guilds/${res.id}`, {
           kookListenChannelIds: selectedChannelIds,
           kookResupplyChannelId: selectedChannelIds[0],
-          kookAdminRoleId: kookAdminRoleId || '',
         });
 
         setCreatedGuild(res);
@@ -229,13 +227,6 @@ export default function GuildCreatePage() {
                       }))}
                     />
                   </Form.Item>
-                  <Form.Item label="管理员角色 ID（可选，用于消息通知 @角色）">
-                    <Input
-                      placeholder="可在 KOOK 开发者模式中右键角色获取"
-                      value={kookAdminRoleId}
-                      onChange={(e) => setKookAdminRoleId(e.target.value)}
-                    />
-                  </Form.Item>
                 </Form>
 
                 {/* 选择服务器后显示服务器信息预览 */}
@@ -279,13 +270,6 @@ export default function GuildCreatePage() {
                       placeholder="右键服务器名称 → 复制 ID"
                       value={kookGuildId}
                       onChange={(e) => setKookGuildId(e.target.value)}
-                    />
-                  </Form.Item>
-                  <Form.Item label="管理员角色 ID（可选，用于消息通知 @角色）">
-                    <Input
-                      placeholder="右键角色 → 复制 ID"
-                      value={kookAdminRoleId}
-                      onChange={(e) => setKookAdminRoleId(e.target.value)}
                     />
                   </Form.Item>
                 </Form>

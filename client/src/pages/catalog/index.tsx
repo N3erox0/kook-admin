@@ -15,6 +15,7 @@ export default function CatalogPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [filters, setFilters] = useState<any>({});
   const [editModal, setEditModal] = useState(false);
   const [editItem, setEditItem] = useState<EquipmentCatalog | null>(null);
@@ -26,10 +27,10 @@ export default function CatalogPage() {
   const [images, setImages] = useState<any[]>([]);
   const [form] = Form.useForm();
 
-  const fetchList = async (p = page, f = filters) => {
+  const fetchList = async (p = page, f = filters, ps = pageSize) => {
     setLoading(true);
     try {
-      const res: any = await getCatalogList({ ...f, page: p, pageSize: 50 });
+      const res: any = await getCatalogList({ ...f, page: p, pageSize: ps });
       setList(res?.list || []);
       setTotal(res?.total || 0);
     } catch {} finally { setLoading(false); }
@@ -162,15 +163,15 @@ export default function CatalogPage() {
     { title: '装备名称', dataIndex: 'name', key: 'name', ellipsis: true },
     {
       title: '等级', dataIndex: 'level', key: 'level', width: 70,
-      render: (v: number) => `Lv.${v}`,
+      render: (v: number) => v,
     },
     {
       title: '品质', dataIndex: 'quality', key: 'quality', width: 70,
-      render: (v: number) => <Tag color={QUALITY_COLORS[v]}>{QUALITY_LABELS[v]}</Tag>,
+      render: (v: number) => v,
     },
     {
       title: '装等', dataIndex: 'gearScore', key: 'gearScore', width: 70,
-      render: (v: number) => <Tag>P{v}</Tag>,
+      render: (v: number) => v != null && v > 0 ? `P${v}` : '-',
     },
     { title: '部位', dataIndex: 'category', key: 'category', width: 80 },
     {
@@ -196,6 +197,7 @@ export default function CatalogPage() {
           <Upload accept=".csv" showUploadList={false} beforeUpload={handleCsvFile}>
             <Button icon={<UploadOutlined />}>CSV导入</Button>
           </Upload>
+          <a href="/api/catalog/csv-template" download="装备参考库模板.csv" style={{ fontSize: 12 }}>下载CSV模板</a>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => handleEdit(null)}>新增装备</Button>
         </Space>
       </div>
@@ -211,12 +213,12 @@ export default function CatalogPage() {
           </Form.Item>
           <Form.Item name="level">
             <Select placeholder="等级" allowClear style={{ width: 90 }}>
-              {[1,2,3,4,5,6,7,8].map(l => <Select.Option key={l} value={l}>Lv.{l}</Select.Option>)}
+              {[1,2,3,4,5,6,7,8].map(l => <Select.Option key={l} value={l}>{l}</Select.Option>)}
             </Select>
           </Form.Item>
           <Form.Item name="quality">
             <Select placeholder="品质" allowClear style={{ width: 90 }}>
-              {QUALITY_LABELS.map((q, i) => <Select.Option key={i} value={i}>{q}</Select.Option>)}
+              {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
             </Select>
           </Form.Item>
           <Form.Item><Button type="primary" htmlType="submit">查询</Button></Form.Item>
@@ -225,7 +227,7 @@ export default function CatalogPage() {
 
       <Card>
         <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle"
-          pagination={{ current: page, total, pageSize: 50, showTotal: t => `共 ${t} 条`, onChange: (p) => { setPage(p); fetchList(p); } }}
+          pagination={{ current: page, total, pageSize, showSizeChanger: true, pageSizeOptions: ['50', '100'], showTotal: t => `共 ${t} 条`, onChange: (p, ps) => { setPage(p); if (ps !== pageSize) { setPageSize(ps); fetchList(p, filters, ps); } else { fetchList(p); } } }}
         />
       </Card>
 
@@ -239,7 +241,7 @@ export default function CatalogPage() {
             </Form.Item>
             <Form.Item name="quality" label="品质" rules={[{ required: true }]}>
               <Select style={{ width: 100 }}>
-                {QUALITY_LABELS.map((q, i) => <Select.Option key={i} value={i}>{i} - {q}</Select.Option>)}
+                {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
               </Select>
             </Form.Item>
             <Form.Item name="category" label="部位" rules={[{ required: true }]}>
