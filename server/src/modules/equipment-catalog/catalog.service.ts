@@ -216,10 +216,21 @@ export class CatalogService {
   private static readonly ALBION_ITEMS_URL = 'https://raw.githubusercontent.com/broderickhyman/ao-bin-dumps/master/formatted/items.json';
   private static readonly ALBION_RENDER_URL = 'https://render.albiononline.com/v1/item/{name}.png?size=217';
 
-  private static readonly EQUIP_KEYWORDS = [
+  // 排除规则（优先）
+  private static readonly EXCLUDE_KW = [
+    'GATHER_', '_GATHER', '_ROCK', '_ORE', '_WOOD', '_FIBER', '_HIDE',
+    '_PLANKS', '_METALBAR', '_LEATHER', '_CLOTH', '_STONEBLOCK',
+    '_LEVEL', 'ARTEFACT', 'SKILLBOOK', 'JOURNAL', 'FISH_', 'MOUNTUPGRADE',
+    'FURNITURE', 'UNIQUE_FURNITURE', 'DECORATION', 'FARM', 'SEED',
+    '_RUNE', '_SOUL', '_RELIC', '_SHARD', 'TRASH', 'TOKEN', 'EVENT_',
+    'QUESTITEM', 'LOOTCHEST', 'UNIQUE_UNLOCK', 'VANITY', 'BACKPACK_SKIN',
+    'PAPERDOLL', 'EMOTE', 'FLAG', 'BANNER',
+  ];
+
+  // 包含规则
+  private static readonly INCLUDE_KW = [
     '_HEAD_', '_ARMOR_', '_SHOES_', '_CAPE', '_BAG',
-    '_MAIN_', '_OFF_', '_2H_',
-    '_TRINKET_', '_MOUNT',
+    '_MAIN_', '_OFF_', '_2H_', '_TRINKET_',
     'PLATE_SET', 'LEATHER_SET', 'CLOTH_SET',
     'HELLION', 'MERCENARY', 'ROYAL', 'STALKER', 'SOLDIER',
     'KNIGHT', 'CULTIST', 'DRUID', 'HUNTER', 'MAGE', 'GUARDIAN',
@@ -227,6 +238,8 @@ export class CatalogService {
     'CROSSBOW', 'BOW',
     'STAFF', 'ARCANE', 'CURSED', 'FIRE', 'FROST', 'HOLY', 'NATURE',
     'SHIELD', 'TORCH', 'TOTEM', 'ORB', 'BOOK', 'QUARTERSTAFF',
+    '_MOUNT_', 'MOUNT_',
+    'POTION', 'MEAL', 'SANDWICH', 'STEW', 'PIE', 'SOUP', 'SALAD', 'OMELETTE',
   ];
 
   /** 从 Albion uniqueName 解析装备部位 */
@@ -236,22 +249,35 @@ export class CatalogService {
     if (u.includes('_ARMOR_')) return '甲';
     if (u.includes('_SHOES_')) return '鞋';
     if (u.includes('_CAPE')) return '披风';
-    if (u.includes('_MOUNT')) return '坐骑';
+    if (u.includes('_MOUNT') || u.includes('MOUNT_')) return '坐骑';
+    if (u.includes('POTION')) return '药水';
+    if (u.includes('MEAL') || u.includes('SANDWICH') || u.includes('STEW') || u.includes('PIE') || u.includes('SOUP') || u.includes('SALAD') || u.includes('OMELETTE')) return '食物';
     if (u.includes('_OFF_') || u.includes('SHIELD') || u.includes('TORCH') || u.includes('TOTEM') || u.includes('_ORB') || u.includes('BOOK')) return '副手';
     if (u.includes('_MAIN_') || u.includes('_2H_') || u.includes('SWORD') || u.includes('AXE') || u.includes('HAMMER') || u.includes('SPEAR') || u.includes('DAGGER') || u.includes('CROSSBOW') || u.includes('BOW') || u.includes('STAFF') || u.includes('ARCANE') || u.includes('CURSED') || u.includes('FIRE') || u.includes('FROST') || u.includes('HOLY') || u.includes('NATURE') || u.includes('QUARTERSTAFF')) return '武器';
     if (u.includes('_BAG') || u.includes('_TRINKET_')) return '其他';
     return '其他';
   }
 
-  /** 判断 uniqueName 是否为装备 */
-  private static isEquipment(name: string): boolean {
+  /** 判断 uniqueName 是否为有效物品（排除材料/采集装备） */
+  private static isValidItem(name: string): boolean {
     const u = name.toUpperCase();
-    return CatalogService.EQUIP_KEYWORDS.some(kw => u.includes(kw));
+    if (CatalogService.EXCLUDE_KW.some(kw => u.includes(kw))) return false;
+    return CatalogService.INCLUDE_KW.some(kw => u.includes(kw));
   }
 
   /** 从 uniqueName 提取阶数 */
   private static getTier(name: string): number {
     if (name.length >= 2 && name[0] === 'T' && name[1] >= '0' && name[1] <= '9') return parseInt(name[1]);
+    return 0;
+  }
+
+  /** 解析品质：@N 后缀，如 T8_2H_HALBERD@4 → 4 */
+  private static getQuality(name: string): number {
+    const atIdx = name.indexOf('@');
+    if (atIdx >= 0) {
+      const q = parseInt(name.slice(atIdx + 1));
+      return isNaN(q) ? 0 : Math.min(q, 4);
+    }
     return 0;
   }
 
@@ -273,25 +299,27 @@ export class CatalogService {
     const rawData: any[] = await response.json();
     this.logger.log(`原始数据 ${rawData.length} 条`);
 
-    // 2. 过滤装备
-    const items: { uniqueName: string; zhName: string; enName: string; tier: number; imageUrl: string }[] = [];
+    // 2. 过滤物品（排除材料/采集装备，保留装备/药水/食物/坐骑）
+    const items: { uniqueName: string; zhName: string; enName: string; tier: number; quality: number; imageUrl: string }[] = [];
     for (const r of rawData) {
       const name = r.UniqueName;
       if (!name) continue;
-      if (!CatalogService.isEquipment(name)) continue;
+      if (!CatalogService.isValidItem(name)) continue;
       const tier = CatalogService.getTier(name);
       if (minTier > 0 && tier < minTier) continue;
 
       const lnames = r.LocalizedNames || {};
+      const quality = CatalogService.getQuality(name);
       items.push({
         uniqueName: name,
         zhName: lnames['ZH-CN'] || lnames['ZH-TW'] || '',
         enName: lnames['EN-US'] || '',
         tier,
+        quality,
         imageUrl: CatalogService.ALBION_RENDER_URL.replace('{name}', name),
       });
     }
-    this.logger.log(`过滤后装备 ${items.length} 件`);
+    this.logger.log(`过滤后物品 ${items.length} 件`);
 
     // 3. Upsert 到数据库（以 albionId 去重）
     let imported = 0, updated = 0, skipped = 0, failed = 0;
@@ -303,13 +331,13 @@ export class CatalogService {
         const displayName = item.zhName || item.enName;
         const category = CatalogService.parseCategory(item.uniqueName);
 
-        // 按 albionId 查已有记录
         const existing = await this.catalogRepo.findOne({ where: { albionId: item.uniqueName } });
         if (existing) {
-          // 更新：名称、图片
           let changed = false;
           if (item.zhName && existing.name !== displayName) { existing.name = displayName; changed = true; }
           if (item.imageUrl && existing.imageUrl !== item.imageUrl) { existing.imageUrl = item.imageUrl; changed = true; }
+          if (existing.quality !== item.quality) { existing.quality = item.quality; changed = true; }
+          if (existing.gearScore !== item.tier + item.quality) { existing.gearScore = item.tier + item.quality; changed = true; }
           if (changed) {
             await this.catalogRepo.save(existing);
             updated++;
@@ -324,9 +352,9 @@ export class CatalogService {
           name: displayName,
           albionId: item.uniqueName,
           level: item.tier || 1,
-          quality: 0,
+          quality: item.quality,
           category,
-          gearScore: item.tier,
+          gearScore: item.tier + item.quality,
           imageUrl: item.imageUrl,
           description: `${item.enName} (${item.uniqueName})`,
         });
