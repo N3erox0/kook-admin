@@ -121,7 +121,7 @@ export class AuthService {
     const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
     const redirectUri = encodeURIComponent(`${baseUrl}/join`);
     const state = inviteCode || '';
-    return `https://www.kookapp.cn/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=get_user_info&state=${state}`;
+    return `https://www.kookapp.cn/app/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=get_user_info&state=${state}`;
   }
 
   /** KOOK OAuth2 回调：用 code 换 access_token + 获取用户信息 → 创建/关联用户 → 签发JWT */
@@ -137,11 +137,11 @@ export class AuthService {
     const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
     const redirectUri = `${baseUrl}/join`;
 
-    // 1. 用 code 换 access_token
+    // 1. 用 code 换 access_token（KOOK 文档要求 application/json）
     const tokenRes = await fetch('https://www.kookapp.cn/api/oauth2/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         grant_type: 'authorization_code',
         client_id: clientId,
         client_secret: clientSecret,
@@ -151,7 +151,7 @@ export class AuthService {
     });
     const tokenData = await tokenRes.json() as any;
     if (!tokenData.access_token) {
-      throw new UnauthorizedException('KOOK OAuth2 授权失败');
+      throw new UnauthorizedException(`KOOK OAuth2 授权失败: ${JSON.stringify(tokenData)}`);
     }
 
     // 2. 用 access_token 获取用户信息
