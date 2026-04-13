@@ -17,8 +17,12 @@ const { Title, Text, Paragraph } = Typography;
 // ===== 模块一：系统超管控制台 =====
 
 function AdminDashboard() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [guilds, setGuilds] = useState<any[]>([]);
+  const [guildsLoading, setGuildsLoading] = useState(false);
+  const [expandedGuild, setExpandedGuild] = useState<Record<number, any>>({});
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -28,48 +32,112 @@ function AdminDashboard() {
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const fetchGuilds = useCallback(async () => {
+    setGuildsLoading(true);
+    try {
+      const res: any = await request.get('/guilds/all');
+      setGuilds(res || []);
+    } catch {} finally { setGuildsLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchData(); fetchGuilds(); }, [fetchData, fetchGuilds]);
+
+  // 展开行时加载公会子数据
+  const loadGuildDetail = async (guildId: number) => {
+    if (expandedGuild[guildId]) return;
+    try {
+      const [members, inventory, resupply] = await Promise.all([
+        request.get(`/guild/${guildId}/members`, { params: { pageSize: 5 } }).catch(() => ({ list: [] })),
+        request.get(`/guild/${guildId}/equipment`, { params: { pageSize: 5 } }).catch(() => ({ list: [], total: 0 })),
+        request.get(`/guild/${guildId}/resupply`, { params: { pageSize: 5 } }).catch(() => ({ list: [], total: 0 })),
+      ]);
+      setExpandedGuild(prev => ({ ...prev, [guildId]: { members, inventory, resupply } }));
+    } catch {}
+  };
 
   if (loading || !data) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
 
-  const recentGuildColumns = [
-    { title: '公会名称', dataIndex: 'name', key: 'name', render: (v: string) => <Text strong>{v}</Text> },
-    { title: '管理员', dataIndex: 'ownerName', key: 'ownerName' },
-    { title: '注册时间', dataIndex: 'createdAt', key: 'createdAt', render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm') },
+  const guildColumns = [
+    {
+      title: '公会名称', dataIndex: 'name', key: 'name',
+      render: (v: string, r: any) => (
+        <Space>
+          {r.iconUrl ? <Avatar src={r.iconUrl} size="small" /> : <BankOutlined />}
+          <Text strong>{v}</Text>
+        </Space>
+      ),
+    },
+    { title: 'KOOK服务器ID', dataIndex: 'kookGuildId', key: 'kookGuildId', width: 180, render: (v: string) => v || <Text type="secondary">未绑定</Text> },
+    {
+      title: '状态', dataIndex: 'status', key: 'status', width: 80,
+      render: (v: number) => v === 1 ? <Tag color="green">活跃</Tag> : <Tag color="red">禁用</Tag>,
+    },
+    {
+      title: '邀请码', key: 'inviteCode', width: 120,
+      render: (_: any, r: any) => r.inviteCodeId ? <Tag color="blue">已绑定</Tag> : <Tag>未绑定</Tag>,
+    },
+    { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 140, render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm') },
   ];
 
-  const anomalyColumns = [
-    { title: '公会', dataIndex: 'name', key: 'name' },
-    { title: '异常原因', dataIndex: 'reason', key: 'reason', render: (v: string) => <Tag color="red">{v}</Tag> },
-  ];
+  const renderExpandedRow = (record: any) => {
+    const detail = expandedGuild[record.id];
+    if (!detail) return <Spin size="small" />;
+
+    return (
+      <div style={{ padding: '8px 0' }}>
+        <Row gutter={[16, 12]}>
+          <Col span={8}>
+            <Card size="small" title={<Space><TeamOutlined />成员（前5）</Space>} extra={<Text type="secondary">{(detail.members as any)?.total || (detail.members as any)?.list?.length || 0}人</Text>}>
+              <List size="small" dataSource={(detail.members as any)?.list || []} renderItem={(m: any) => (
+                <List.Item><Text>{m.nickname}</Text><Tag>{m.role}</Tag></List.Item>
+              )} locale={{ emptyText: '无成员' }} />
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card size="small" title={<Space><AppstoreOutlined />库存（前5）</Space>} extra={<Text type="secondary">共{(detail.inventory as any)?.total || 0}件</Text>}>
+              <List size="small" dataSource={(detail.inventory as any)?.list || []} renderItem={(e: any) => (
+                <List.Item><Text>{e.equipmentName}</Text><Tag>x{e.quantity}</Tag></List.Item>
+              )} locale={{ emptyText: '无库存' }} />
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card size="small" title={<Space><SyncOutlined />补装（前5）</Space>} extra={<Text type="secondary">共{(detail.resupply as any)?.total || 0}条</Text>}>
+              <List size="small" dataSource={(detail.resupply as any)?.list || []} renderItem={(r: any) => (
+                <List.Item><Text>{r.equipmentName}</Text><Tag color={r.status === 0 ? 'orange' : 'green'}>{r.status === 0 ? '待处理' : '已处理'}</Tag></List.Item>
+              )} locale={{ emptyText: '无补装' }} />
+            </Card>
+          </Col>
+        </Row>
+      </div>
+    );
+  };
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>系统超管控制台</Title>
-        <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+        <Title level={4} style={{ margin: 0 }}>SSVIP 管理中心</Title>
+        <Button icon={<ReloadOutlined />} onClick={() => { fetchData(); fetchGuilds(); }}>刷新</Button>
       </div>
 
+      {/* 统计卡片 - 可点击跳转 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
-          <Card hoverable>
+          <Card hoverable onClick={() => { /* 滚动到下方公会列表 */ }} style={{ cursor: 'pointer' }}>
             <Statistic
-              title={<Space><BankOutlined /> 公会总数</Space>}
+              title={<Space><BankOutlined /> 注册公会数</Space>}
               value={data.totalGuilds}
               valueStyle={{ color: '#1677ff', fontSize: 32 }}
-              suffix={
-                data.guildsTrend !== 0 && (
-                  <Text style={{ fontSize: 14, color: data.guildsTrend > 0 ? '#52c41a' : '#ff4d4f' }}>
-                    {data.guildsTrend > 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                    {' '}较昨日 {data.guildsTrend > 0 ? '+' : ''}{data.guildsTrend}
-                  </Text>
-                )
-              }
+              suffix={data.guildsTrend !== 0 && (
+                <Text style={{ fontSize: 14, color: data.guildsTrend > 0 ? '#52c41a' : '#ff4d4f' }}>
+                  {data.guildsTrend > 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+                  {' '}{data.guildsTrend > 0 ? '+' : ''}{data.guildsTrend}
+                </Text>
+              )}
             />
           </Card>
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Card hoverable>
+          <Card hoverable onClick={() => navigate('/admin/members')} style={{ cursor: 'pointer' }}>
             <Statistic
               title={<Space><UserOutlined /> 注册用户数</Space>}
               value={data.totalUsers}
@@ -78,65 +146,62 @@ function AdminDashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Card hoverable>
+          <Card hoverable onClick={() => navigate('/admin/invite-codes')} style={{ cursor: 'pointer' }}>
             <Statistic
-              title={<Space><RobotOutlined /> 活跃机器人</Space>}
-              value={data.activeBots}
-              valueStyle={{ color: '#52c41a', fontSize: 32 }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card hoverable>
-            <Statistic
-              title={<Space><KeyOutlined /> 今日核销邀请码</Space>}
+              title={<Space><KeyOutlined /> 邀请码总数</Space>}
               value={data.todayRedeemed}
               valueStyle={{ color: '#faad14', fontSize: 32 }}
             />
+            <Text type="secondary" style={{ fontSize: 12 }}>点击管理邀请码</Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card hoverable onClick={() => navigate('/admin/catalog')} style={{ cursor: 'pointer' }}>
+            <Statistic
+              title={<Space><RobotOutlined /> 装备参考库</Space>}
+              value={data.activeBots}
+              valueStyle={{ color: '#52c41a', fontSize: 32 }}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>点击管理参考库</Text>
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} md={14}>
-          <Card title="最新入驻公会" size="small">
-            <Table
-              columns={recentGuildColumns}
-              dataSource={data.recentGuilds || []}
-              rowKey="id"
-              size="small"
-              pagination={false}
-              locale={{ emptyText: '暂无公会入驻' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} md={10}>
-          <Card
-            title={
-              <Space>
-                <WarningOutlined style={{ color: '#ff4d4f' }} />
-                异常监控
-                {data.anomalyGuilds?.length > 0 && <Badge count={data.anomalyGuilds.length} />}
-              </Space>
-            }
+      {/* 公会列表 - 可展开查看子数据 */}
+      <Card title="公会管理" size="small" style={{ marginTop: 16 }}>
+        <Table
+          columns={guildColumns}
+          dataSource={guilds}
+          rowKey="id"
+          size="small"
+          loading={guildsLoading}
+          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个公会` }}
+          expandable={{
+            expandedRowRender: renderExpandedRow,
+            onExpand: (expanded, record) => { if (expanded) loadGuildDetail(record.id); },
+          }}
+          locale={{ emptyText: '暂无公会' }}
+        />
+      </Card>
+
+      {/* 异常监控 */}
+      {data.anomalyGuilds?.length > 0 && (
+        <Card
+          title={<Space><WarningOutlined style={{ color: '#ff4d4f' }} />异常监控<Badge count={data.anomalyGuilds.length} /></Space>}
+          size="small" style={{ marginTop: 16 }}
+        >
+          <Table
+            columns={[
+              { title: '公会', dataIndex: 'name', key: 'name' },
+              { title: '异常原因', dataIndex: 'reason', key: 'reason', render: (v: string) => <Tag color="red">{v}</Tag> },
+            ]}
+            dataSource={data.anomalyGuilds}
+            rowKey="id"
             size="small"
-          >
-            {data.anomalyGuilds?.length > 0 ? (
-              <Table
-                columns={anomalyColumns}
-                dataSource={data.anomalyGuilds}
-                rowKey="id"
-                size="small"
-                pagination={false}
-              />
-            ) : (
-              <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>
-                <Tag color="green">所有公会运行正常</Tag>
-              </div>
-            )}
-          </Card>
-        </Col>
-      </Row>
+            pagination={false}
+          />
+        </Card>
+      )}
     </div>
   );
 }

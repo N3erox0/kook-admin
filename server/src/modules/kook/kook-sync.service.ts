@@ -18,10 +18,11 @@ export class KookSyncService {
 
   /** 同步服务器基本信息（名称、图标）到 Guild 表 */
   async syncGuildInfo(guild: Guild): Promise<void> {
-    if (!guild.kookBotToken || !guild.kookGuildId) return;
+    if (!guild.kookGuildId || guild.kookGuildId.startsWith('test-')) return;
 
     try {
-      const info = await this.kookService.getGuildView(guild.kookGuildId, guild.kookBotToken);
+      const effectiveToken = this.getEffectiveToken(guild);
+      const info = await this.kookService.getGuildView(guild.kookGuildId, effectiveToken);
       await this.guildRepo.update(guild.id, {
         name: info.name || guild.name,
         iconUrl: info.icon || guild.iconUrl,
@@ -37,16 +38,26 @@ export class KookSyncService {
     return this.guildRepo.findOne({ where: { kookGuildId } });
   }
 
+  /** 获取公会有效 Token（优先公会独立Token，fallback全局Token） */
+  private getEffectiveToken(guild: Guild): string | undefined {
+    // 如果公会 Token 是假数据（test-开头）则忽略
+    if (guild.kookBotToken && !guild.kookBotToken.startsWith('test-')) {
+      return guild.kookBotToken;
+    }
+    return undefined; // 使用全局 Token（KookService 内部 fallback）
+  }
+
   /** 同步成员列表（快照对比，检测加入/离开） */
   async syncGuildMembers(guild: Guild) {
-    if (!guild.kookBotToken || !guild.kookGuildId) {
-      this.logger.warn(`公会 ${guild.name} 未配置 KOOK token/guild_id`);
+    if (!guild.kookGuildId || guild.kookGuildId.startsWith('test-')) {
+      this.logger.warn(`公会 ${guild.name} 未配置有效的 KOOK guild_id（当前值: ${guild.kookGuildId}）`);
       return { added: 0, updated: 0, left: 0 };
     }
 
+    const effectiveToken = this.getEffectiveToken(guild);
     const [kookMembers, kookRoles] = await Promise.all([
-      this.kookService.getGuildMemberList(guild.kookGuildId, guild.kookBotToken),
-      this.kookService.getGuildRoleList(guild.kookGuildId, guild.kookBotToken),
+      this.kookService.getGuildMemberList(guild.kookGuildId, effectiveToken),
+      this.kookService.getGuildRoleList(guild.kookGuildId, effectiveToken),
     ]);
     const roleMap = new Map(kookRoles.map(r => [r.role_id, r.name]));
     const existingMembers = await this.memberRepo.find({ where: { guildId: guild.id } });
@@ -90,6 +101,11 @@ export class KookSyncService {
 
     for (const [kookId, member] of existingMap) {
       if (!kookIdSet.has(kookId) && member.status === MemberStatus.ACTIVE) {
+        // 保护：super_admin 不自动标记为离开（可能是数据源问题而非真正离开）
+        if (member.role === 'super_admin') {
+          this.logger.warn(`[${guild.name}] 超管 ${member.nickname}(${kookId}) 不在KOOK成员列表中，跳过离开标记`);
+          continue;
+        }
         member.status = MemberStatus.LEFT;
         member.leftAt = new Date();
         member.lastSyncedAt = new Date();
