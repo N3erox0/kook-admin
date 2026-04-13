@@ -17,3 +17,9 @@ export const updateResupplyFields = (guildId: number, id: number, data: any) =>
 
 export const batchProcessResupply = (guildId: number, data: { ids: number[]; action: string; remark?: string }) =>
   request.post(`/guild/${guildId}/resupply/batch-process`, data);
+
+export const batchAssignRoom = (guildId: number, data: { ids: number[]; room: string }) =>
+  request.post(`/guild/${guildId}/resupply/batch-assign-room`, data);
+
+export const getGroupedResupply = (guildId: number, keyword?: string) =>
+  request.get(`/guild/${guildId}/resupply/grouped`, { params: { keyword } });

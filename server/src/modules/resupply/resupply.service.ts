@@ -6,9 +6,30 @@ import { GuildResupplyLog } from './entities/guild-resupply-log.entity';
 import { EquipmentService } from '../equipment/equipment.service';
 import { CatalogService } from '../equipment-catalog/catalog.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
-import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, QueryResupplyDto } from './dto/resupply.dto';
+import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto } from './dto/resupply.dto';
 import { ResupplyStatus } from '../../common/constants/enums';
 import * as crypto from 'crypto';
+
+/** 从 KOOK 昵称中提取箱子编号
+ * 格式：房间号-箱子号，如 "玩家A 3-16" → "3-16", "大厅 32" → "大厅32"
+ * 支持: 1-14,12-14, 大厅1, 大厅32, 大厅63
+ */
+function parseResupplyBox(nickname: string): string | null {
+  if (!nickname) return null;
+  // 匹配 "大厅" + 数字
+  const hallMatch = nickname.match(/大厅\s*(\d{1,2})/);
+  if (hallMatch) return `大厅${hallMatch[1]}`;
+  // 匹配 数字-数字（房间-箱子）
+  const roomBoxMatch = nickname.match(/(\d{1,2})-(\d{1,2})/);
+  if (roomBoxMatch) {
+    const room = parseInt(roomBoxMatch[1]);
+    const box = parseInt(roomBoxMatch[2]);
+    if (room >= 1 && room <= 14 && box >= 1 && box <= 64) {
+      return `${room}-${box}`;
+    }
+  }
+  return null;
+}
 
 @Injectable()
 export class ResupplyService {
@@ -30,9 +51,19 @@ export class ResupplyService {
 
     if (query.status !== undefined) qb.andWhere('r.status = :s', { s: query.status });
     if (query.keyword) {
-      qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
+      // 支持 P8+堕神 格式：拆分装等+装备名
+      const gearScoreMatch = query.keyword.match(/^P(\d+)\s*[+＋]?\s*(.+)/i);
+      if (gearScoreMatch) {
+        const gs = parseInt(gearScoreMatch[1]);
+        const name = gearScoreMatch[2].trim();
+        qb.andWhere('r.gearScore = :gs', { gs });
+        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${name}%` });
+      } else {
+        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
+      }
     }
     if (query.applyType) qb.andWhere('r.applyType = :at', { at: query.applyType });
+    if (query.room) qb.andWhere('r.resupplyRoom = :room', { room: query.room });
     if (query.startDate && query.endDate) {
       qb.andWhere('r.createdAt BETWEEN :startDate AND :endDate', {
         startDate: `${query.startDate} 00:00:00`,
@@ -83,6 +114,7 @@ export class ResupplyService {
     const r = this.resupplyRepo.create({
       ...dto,
       guildId,
+      resupplyBox: dto.resupplyBox || parseResupplyBox(dto.kookNickname) || null,
       status: ResupplyStatus.PENDING,
       dedupHash: dto['_dedupHash'] || null,
     });
@@ -138,6 +170,7 @@ export class ResupplyService {
         screenshotUrl: data.screenshotUrl,
         kookMessageId: data.kookMessageId ? `${data.kookMessageId}_${i}` : null,
         dedupHash: hash,
+        resupplyBox: parseResupplyBox(data.kookNickname) || null,
         status: ResupplyStatus.PENDING,
       });
       await this.resupplyRepo.save(r);
@@ -274,6 +307,46 @@ export class ResupplyService {
       .set({ isCounted: 1 })
       .where('id IN (:...ids)', { ids })
       .execute();
+  }
+
+  /** 批量分配补装房间 */
+  async batchAssignRoom(guildId: number, dto: BatchAssignRoomDto) {
+    if (dto.ids.length === 0) return { updated: 0 };
+    await this.resupplyRepo.createQueryBuilder()
+      .update(GuildResupply)
+      .set({ resupplyRoom: dto.room })
+      .where('id IN (:...ids)', { ids: dto.ids })
+      .andWhere('guildId = :guildId', { guildId })
+      .execute();
+    return { updated: dto.ids.length, room: dto.room };
+  }
+
+  /** 获取待处理记录按装备聚合排序（临时排序视图）
+   * 支持关键词过滤（如 P8+堕神）
+   */
+  async getGroupedByEquipment(guildId: number, keyword?: string): Promise<GuildResupply[]> {
+    const qb = this.resupplyRepo.createQueryBuilder('r')
+      .where('r.guildId = :guildId', { guildId })
+      .andWhere('r.status = :s', { s: ResupplyStatus.PENDING });
+
+    if (keyword) {
+      const gearScoreMatch = keyword.match(/^P(\d+)\s*[+＋]?\s*(.+)/i);
+      if (gearScoreMatch) {
+        const gs = parseInt(gearScoreMatch[1]);
+        const name = gearScoreMatch[2].trim();
+        qb.andWhere('r.gearScore = :gs', { gs });
+        qb.andWhere('r.equipmentName LIKE :kw', { kw: `%${name}%` });
+      } else {
+        qb.andWhere('r.equipmentName LIKE :kw', { kw: `%${keyword}%` });
+      }
+    }
+
+    // 按装备名聚合排序：相同装备名排在一起，组内按时间排序
+    qb.orderBy('r.equipmentName', 'ASC')
+      .addOrderBy('r.gearScore', 'DESC')
+      .addOrderBy('r.createdAt', 'ASC');
+
+    return qb.getMany();
   }
 
   private async addLog(guildId: number, resupplyId: number, action: string, from: string | null, to: string, operatorId?: number, operatorName?: string, remark?: string) {

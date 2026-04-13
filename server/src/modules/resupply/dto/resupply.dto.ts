@@ -17,6 +17,7 @@ export class CreateResupplyDto {
   @IsOptional() @IsString() killDate?: string;
   @IsOptional() @IsString() mapName?: string;
   @IsOptional() @IsString() gameId?: string;
+  @IsOptional() @IsString() resupplyBox?: string;
 }
 
 export class ProcessResupplyDto {
@@ -34,12 +35,19 @@ export class UpdateResupplyFieldsDto {
   @IsOptional() @IsInt() quantity?: number;
   @IsOptional() @IsString() applyType?: string;
   @IsOptional() @IsString() reason?: string;
+  @IsOptional() @IsString() resupplyBox?: string;
+  @IsOptional() @IsString() resupplyRoom?: string;
 }
 
 export class BatchProcessDto {
   @IsArray() ids: number[];
   @IsString() action: string;
   @IsOptional() @IsString() remark?: string;
+}
+
+export class BatchAssignRoomDto {
+  @IsArray() ids: number[];
+  @IsString() room: string;
 }
 
 export class QueryResupplyDto {
@@ -50,4 +58,5 @@ export class QueryResupplyDto {
   @IsOptional() @IsString() applyType?: string;
   @IsOptional() @IsString() startDate?: string;
   @IsOptional() @IsString() endDate?: string;
+  @IsOptional() @IsString() room?: string;
 }

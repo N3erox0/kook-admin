@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Body, Param, Query, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
 import { ResupplyService } from './resupply.service';
-import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, QueryResupplyDto } from './dto/resupply.dto';
+import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto } from './dto/resupply.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { GuildGuard } from '../../common/guards/guild.guard';
 import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
@@ -60,5 +60,24 @@ export class ResupplyController {
     @Request() req: any,
   ) {
     return this.resupplyService.batchProcess(guildId, dto, user.sub, req.guildMember?.nickname || user.username);
+  }
+
+  @Post('batch-assign-room')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  @OperationLog({ module: 'resupply', action: 'assign_room' })
+  batchAssignRoom(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Body() dto: BatchAssignRoomDto,
+  ) {
+    return this.resupplyService.batchAssignRoom(guildId, dto);
+  }
+
+  @Get('grouped')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  getGrouped(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Query('keyword') keyword?: string,
+  ) {
+    return this.resupplyService.getGroupedByEquipment(guildId, keyword);
   }
 }

@@ -39,6 +39,9 @@ export class Guild {
   @Column({ type: 'varchar', length: 100, nullable: true, name: 'kook_last_message_id', comment: '消息拉取游标' })
   kookLastMessageId: string;
 
+  @Column({ type: 'json', nullable: true, name: 'resupply_rooms', comment: '补装房间列表（如 ["1","2",...,"14","大厅一","大厅二"]）' })
+  resupplyRooms: string[];
+
   @Column({ name: 'owner_user_id', nullable: true, comment: '创建人（激活后填入）' })
   ownerUserId: number;
 

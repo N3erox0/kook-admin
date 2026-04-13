@@ -59,3 +59,11 @@
 | F-020 | 补装管理日期范围搜索 | completed | 2026-04-13 16:50 | 后端DTO+Service支持startDate/endDate |
 | F-021 | 创建流程移除管理员角色ID | completed | 2026-04-13 16:50 | GuildCreate+JoinPage移除 |
 | F-022 | 公会设置页重构 | completed | 2026-04-13 16:50 | 基础配置+高级配置折叠 |
+| **V2.2** | **补装箱子编号+房间分配+聚合排序** | | | |
+| F-023 | 补装箱子编号字段 | completed | 2026-04-13 17:25 | Entity新增resupplyBox/resupplyRoom，昵称正则提取 |
+| F-024 | 昵称解析箱子号 | completed | 2026-04-13 17:25 | parseResupplyBox支持 数字-数字/大厅+数字 |
+| F-025 | 批量分配补装房间 | completed | 2026-04-13 17:25 | batch-assign-room API + 前端房间选择弹窗 |
+| F-026 | 装备聚合排序视图 | completed | 2026-04-13 17:25 | grouped API按装备名聚合+装等降序 |
+| F-027 | P8+堕神关键词搜索 | completed | 2026-04-13 17:25 | findAll+grouped支持装等+名称组合搜索 |
+| F-028 | 公会补装房间配置 | completed | 2026-04-13 17:25 | guilds.resupply_rooms JSON字段 |
+| F-029 | 数据库迁移SQL | completed | 2026-04-13 17:25 | 009_v2.2_resupply_box.sql |

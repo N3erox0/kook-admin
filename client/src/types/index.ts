@@ -104,6 +104,8 @@ export interface GuildResupply {
   dispatchQuantity: number | null;
   isCounted: number;
   dedupHash: string | null;
+  resupplyBox: string | null;
+  resupplyRoom: string | null;
   createdAt: string;
   logs?: ResupplyLog[];
 }

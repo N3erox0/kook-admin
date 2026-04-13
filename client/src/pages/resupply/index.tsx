@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image, DatePicker } from 'antd';
-import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
-import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply } from '@/api/resupply';
+import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined } from '@ant-design/icons';
+import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply } from '@/api/resupply';
 import { useGuildStore } from '@/stores/guild.store';
 import { RESUPPLY_STATUS } from '@/types';
 import type { GuildResupply } from '@/types';
@@ -10,6 +10,11 @@ import dayjs from 'dayjs';
 const { Title, Text } = Typography;
 
 const STATUS_COLORS: Record<number, string> = { 0: 'orange', 1: 'green', 2: 'red', 3: 'cyan' };
+
+const RESUPPLY_ROOMS = [
+  '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14',
+  '大厅一', '大厅二',
+];
 
 export default function ResupplyPage() {
   const { currentGuildId, currentGuildRole } = useGuildStore();
@@ -38,6 +43,16 @@ export default function ResupplyPage() {
   const [rejectModal, setRejectModal] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+
+  // 需求4：房间分配弹窗
+  const [roomModal, setRoomModal] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<string>('');
+
+  // 需求4：装备聚合排序弹窗
+  const [groupModal, setGroupModal] = useState(false);
+  const [groupKeyword, setGroupKeyword] = useState('');
+  const [groupList, setGroupList] = useState<GuildResupply[]>([]);
+  const [groupLoading, setGroupLoading] = useState(false);
 
   const fetchList = async (p = page) => {
     if (!guildId) return;
@@ -104,20 +119,50 @@ export default function ResupplyPage() {
     } catch {}
   };
 
-  const columns = [
+  // 需求4A：批量分配房间
+  const handleAssignRoom = async () => {
+    if (!selectedRoom || selectedIds.length === 0) { message.warning('请选择房间'); return; }
+    try {
+      const res: any = await batchAssignRoom(guildId, { ids: selectedIds, room: selectedRoom });
+      message.success(`已分配 ${res.updated} 条到房间 ${selectedRoom}`);
+      setRoomModal(false);
+      setSelectedRoom('');
+      setSelectedIds([]);
+      fetchList();
+    } catch {}
+  };
+
+  // 需求4B：打开装备聚合排序视图
+  const handleOpenGroupView = async (kw?: string) => {
+    setGroupLoading(true);
+    setGroupModal(true);
+    try {
+      const res: any = await getGroupedResupply(guildId, kw || groupKeyword || undefined);
+      setGroupList(Array.isArray(res) ? res : []);
+    } catch { setGroupList([]); } finally { setGroupLoading(false); }
+  };
+
+  const columns: any[] = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (s: number) => <Tag color={STATUS_COLORS[s]}>{RESUPPLY_STATUS[s]}</Tag>,
     },
     { title: '申请人', dataIndex: 'kookNickname', key: 'nick', width: 120, ellipsis: true },
+    {
+      title: '箱子', dataIndex: 'resupplyBox', key: 'box', width: 80,
+      render: (v: string) => v ? <Tag color="geekblue">{v}</Tag> : '-',
+    },
     { title: '装备', dataIndex: 'equipmentName', key: 'equip', ellipsis: true },
     {
       title: '装等', key: 'gs', width: 60,
       render: (_: any, r: GuildResupply) => r.gearScore ? <Tag>P{r.gearScore}</Tag> : '-',
     },
     { title: '数量', dataIndex: 'quantity', key: 'qty', width: 60 },
-    { title: '类型', dataIndex: 'applyType', key: 'type', width: 70 },
+    {
+      title: '房间', dataIndex: 'resupplyRoom', key: 'room', width: 70,
+      render: (v: string) => v ? <Tag color="volcano">{v}</Tag> : '-',
+    },
     {
       title: '截图', key: 'screenshot', width: 60,
       render: (_: any, r: GuildResupply) => r.screenshotUrl ? <Image src={r.screenshotUrl} width={32} height={32} style={{ objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }} /> : '-',
@@ -163,8 +208,8 @@ export default function ResupplyPage() {
       {/* 筛选栏 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
-          <Input placeholder="搜索装备/申请人" prefix={<SearchOutlined />} allowClear
-            value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} style={{ width: 200 }} />
+          <Input placeholder="搜索装备/申请人 (支持P8+堕神)" prefix={<SearchOutlined />} allowClear
+            value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} style={{ width: 250 }} />
           <Select placeholder="状态" allowClear style={{ width: 120 }} value={statusFilter}
             onChange={v => setStatusFilter(v)}>
             {Object.entries(RESUPPLY_STATUS).map(([k, v]) => <Select.Option key={k} value={Number(k)}>{v}</Select.Option>)}
@@ -175,18 +220,28 @@ export default function ResupplyPage() {
             style={{ width: 240 }}
           />
           <Button type="primary" onClick={handleSearch}>查询</Button>
-          {canProcess && selectedIds.length > 0 && (
-            <>
-              <Popconfirm title={`批量通过 ${selectedIds.length} 条？`} onConfirm={() => handleBatchProcess('approve')}>
-                <Button type="primary" style={{ background: '#52c41a', borderColor: '#52c41a' }}>批量通过 ({selectedIds.length})</Button>
-              </Popconfirm>
-            </>
-          )}
         </Space>
+        {/* 批量操作栏 */}
+        {canProcess && selectedIds.length > 0 && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: '#f0f5ff', borderRadius: 6 }}>
+            <Space>
+              <Text>已选 {selectedIds.length} 条待处理</Text>
+              <Popconfirm title={`批量通过 ${selectedIds.length} 条？`} onConfirm={() => handleBatchProcess('approve')}>
+                <Button size="small" type="primary" style={{ background: '#52c41a', borderColor: '#52c41a' }}>批量通过</Button>
+              </Popconfirm>
+              <Button size="small" icon={<HomeOutlined />} onClick={() => setRoomModal(true)}>
+                分配补装房间
+              </Button>
+              <Button size="small" icon={<OrderedListOutlined />} onClick={() => handleOpenGroupView()}>
+                装备聚合排序
+              </Button>
+            </Space>
+          </div>
+        )}
       </Card>
 
       <Card>
-        <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle" scroll={{ x: 1000 }}
+        <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle" scroll={{ x: 1100 }}
           rowSelection={canProcess ? { selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]),
             getCheckboxProps: (r: GuildResupply) => ({ disabled: r.status !== 0 }),
           } : undefined}
@@ -204,21 +259,20 @@ export default function ResupplyPage() {
                 <div><Text strong>申请人：</Text>{detail.kookNickname || '-'} ({detail.kookUserId || '-'})</div>
                 <div><Text strong>装备：</Text>{detail.equipmentName} {detail.gearScore ? `P${detail.gearScore}` : ''}</div>
                 <div><Text strong>数量：</Text>{detail.quantity} | <Text strong>类型：</Text>{detail.applyType}</div>
+                {detail.resupplyBox && <div><Text strong>箱子编号：</Text><Tag color="geekblue">{detail.resupplyBox}</Tag></div>}
+                {detail.resupplyRoom && <div><Text strong>补装房间：</Text><Tag color="volcano">{detail.resupplyRoom}</Tag></div>}
                 {detail.reason && <div><Text strong>原因/来源：</Text>{detail.reason}</div>}
                 {detail.processRemark && <div><Text strong>处理备注：</Text>{detail.processRemark}</div>}
                 <div><Text strong>申请时间：</Text>{dayjs(detail.createdAt).format('YYYY-MM-DD HH:mm:ss')}</div>
                 {detail.processedAt && <div><Text strong>处理时间：</Text>{dayjs(detail.processedAt).format('YYYY-MM-DD HH:mm:ss')}</div>}
               </Space>
             </div>
-
             {detail.screenshotUrl && (
               <div style={{ marginBottom: 16 }}>
                 <Text strong>截图：</Text><br />
                 <Image src={detail.screenshotUrl} width={200} style={{ borderRadius: 8, marginTop: 8 }} />
               </div>
             )}
-
-            {/* 操作按钮 */}
             {canProcess && detail.status === 0 && (
               <Space style={{ marginBottom: 16 }}>
                 <Popconfirm title="确认通过？" onConfirm={() => handleProcess(detail.id, 'approve')}>
@@ -233,8 +287,6 @@ export default function ResupplyPage() {
                 <Button icon={<SendOutlined />}>标记发放</Button>
               </Popconfirm>
             )}
-
-            {/* 流转日志 */}
             {detail.logs?.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <Text strong>流转日志</Text>
@@ -272,7 +324,8 @@ export default function ResupplyPage() {
               </Select>
             </Form.Item>
           </Space>
-          <Form.Item name="kookNickname" label="申请人昵称"><Input /></Form.Item>
+          <Form.Item name="kookNickname" label="申请人昵称"><Input placeholder="含箱子编号自动提取，如 玩家A 3-16" /></Form.Item>
+          <Form.Item name="resupplyBox" label="补装箱子编号（留空自动从昵称提取）"><Input placeholder="如 3-16, 大厅32" /></Form.Item>
           <Form.Item name="reason" label="备注"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item><Button type="primary" htmlType="submit" block>创建</Button></Form.Item>
         </Form>
@@ -283,6 +336,75 @@ export default function ResupplyPage() {
         onOk={handleReject} okText="确认驳回" okButtonProps={{ danger: true }}>
         <Input.TextArea rows={3} placeholder="请填写驳回原因（必填）"
           value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
+      </Modal>
+
+      {/* 需求4A：分配补装房间弹窗 */}
+      <Modal title={`分配补装房间 (${selectedIds.length} 条)`} open={roomModal}
+        onCancel={() => { setRoomModal(false); setSelectedRoom(''); }}
+        onOk={handleAssignRoom} okText="确认分配">
+        <Text style={{ display: 'block', marginBottom: 12 }}>选择要分配的补装房间：</Text>
+        <Select
+          value={selectedRoom || undefined}
+          onChange={setSelectedRoom}
+          placeholder="选择房间"
+          style={{ width: '100%' }}
+        >
+          {RESUPPLY_ROOMS.map(r => <Select.Option key={r} value={r}>{r}号房</Select.Option>)}
+        </Select>
+      </Modal>
+
+      {/* 需求4B：装备聚合排序弹窗 */}
+      <Modal
+        title="装备聚合排序（待补装）"
+        open={groupModal}
+        onCancel={() => setGroupModal(false)}
+        width={900}
+        footer={<Button onClick={() => setGroupModal(false)}>关闭</Button>}
+      >
+        <Space style={{ marginBottom: 12 }}>
+          <Input
+            placeholder="关键词（如 P8+堕神）"
+            value={groupKeyword}
+            onChange={e => setGroupKeyword(e.target.value)}
+            onPressEnter={() => handleOpenGroupView(groupKeyword)}
+            style={{ width: 250 }}
+            prefix={<SearchOutlined />}
+          />
+          <Button type="primary" onClick={() => handleOpenGroupView(groupKeyword)}>搜索聚合</Button>
+          <Button onClick={() => { setGroupKeyword(''); handleOpenGroupView(''); }}>清空</Button>
+        </Space>
+        <Table
+          dataSource={groupList}
+          rowKey="id"
+          loading={groupLoading}
+          size="small"
+          pagination={false}
+          scroll={{ y: 500 }}
+          columns={[
+            { title: 'ID', dataIndex: 'id', width: 60 },
+            { title: '申请人', dataIndex: 'kookNickname', width: 120, ellipsis: true },
+            {
+              title: '箱子', dataIndex: 'resupplyBox', width: 80,
+              render: (v: string) => v ? <Tag color="geekblue">{v}</Tag> : '-',
+            },
+            { title: '装备', dataIndex: 'equipmentName', ellipsis: true },
+            {
+              title: '装等', key: 'gs', width: 60,
+              render: (_: any, r: any) => r.gearScore ? `P${r.gearScore}` : '-',
+            },
+            {
+              title: '房间', dataIndex: 'resupplyRoom', width: 70,
+              render: (v: string) => v ? <Tag color="volcano">{v}</Tag> : '-',
+            },
+            {
+              title: '时间', dataIndex: 'createdAt', width: 110,
+              render: (v: string) => dayjs(v).format('MM-DD HH:mm'),
+            },
+          ]}
+        />
+        <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+          共 {groupList.length} 条待补装记录，按装备名聚合+装等降序排列
+        </Text>
       </Modal>
     </div>
   );

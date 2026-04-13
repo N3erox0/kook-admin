@@ -78,6 +78,12 @@ export class GuildResupply {
   @Column({ type: 'varchar', length: 64, nullable: true, name: 'dedup_hash', comment: '去重哈希（图片+日期+人员）' })
   dedupHash: string;
 
+  @Column({ type: 'varchar', length: 30, nullable: true, name: 'resupply_box', comment: '补装箱子编号（如 3-16, 大厅32）' })
+  resupplyBox: string;
+
+  @Column({ type: 'varchar', length: 20, nullable: true, name: 'resupply_room', comment: '补装房间（如 1-14, 大厅一, 大厅二）' })
+  resupplyRoom: string;
+
   @Index('idx_gr_created')
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
