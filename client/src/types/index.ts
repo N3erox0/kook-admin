@@ -161,7 +161,7 @@ export interface User {
 
 // ===== 常量 =====
 export const CATEGORIES = ['武器', '副手', '头', '甲', '鞋', '坐骑', '披风', '药水', '食物', '其他'];
-export const GUILD_ROLES = ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'];
+export const GUILD_ROLES = ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'];
 export const RESUPPLY_STATUS: Record<number, string> = { 0: '待处理', 1: '已通过', 2: '已驳回', 3: '已发放' };
 export const QUALITY_LABELS = ['白', '绿', '蓝', '紫', '橙'];
 

@@ -1,16 +1,20 @@
-import { Controller, Get, Post, Put, Param, Body, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, ParseIntPipe, UseGuards, Query, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { GuildService } from './guild.service';
 import { CreateGuildDto, UpdateGuildDto, ValidateInviteCodeDto, GenerateInviteCodesDto, UpdateMemberRoleDto, UpdateInviteCodeStatusDto } from './dto/guild.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { GuildGuard } from '../../common/guards/guild.guard';
+import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
+import { GuildRoles } from '../../common/decorators/guild-roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { GuildRole } from '../../common/constants/enums';
 
 @ApiTags('公会管理')
 @Controller('api/guilds')
 export class GuildController {
   constructor(private readonly guildService: GuildService) {}
 
-  // ===== 邀请码管理 =====
+  // ===== 邀请码管理（仅 SSVIP 可操作） =====
 
   @Post('invite-codes/validate')
   @ApiOperation({ summary: '验证邀请码（公开接口）' })
@@ -20,40 +24,50 @@ export class GuildController {
 
   @UseGuards(JwtAuthGuard)
   @Post('invite-codes/generate')
-  @ApiOperation({ summary: '批量生成邀请码' })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '批量生成邀请码（仅SSVIP）' })
   generateInviteCodes(@Body() dto: GenerateInviteCodesDto, @CurrentUser() user: any) {
+    this.ensureSSVIP(user);
     return this.guildService.generateInviteCodes(dto, user.sub || user.userId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('invite-codes')
-  @ApiOperation({ summary: '获取所有邀请码列表' })
-  getAllInviteCodes() {
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '获取所有邀请码列表（仅SSVIP）' })
+  getAllInviteCodes(@CurrentUser() user: any) {
+    this.ensureSSVIP(user);
     return this.guildService.getAllInviteCodes();
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('invite-codes/:id')
-  @ApiOperation({ summary: '获取邀请码详情' })
-  getInviteCodeById(@Param('id', ParseIntPipe) id: number) {
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '获取邀请码详情（仅SSVIP）' })
+  getInviteCodeById(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    this.ensureSSVIP(user);
     return this.guildService.getInviteCodeById(id);
   }
 
   @UseGuards(JwtAuthGuard)
   @Put('invite-codes/:id/status')
-  @ApiOperation({ summary: '修改邀请码状态' })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '修改邀请码状态（仅SSVIP）' })
   updateInviteCodeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateInviteCodeStatusDto,
+    @CurrentUser() user: any,
   ) {
+    this.ensureSSVIP(user);
     return this.guildService.updateInviteCodeStatus(id, dto);
   }
 
-  // 向下兼容旧的 disable 接口
   @UseGuards(JwtAuthGuard)
   @Put('invite-codes/:id/disable')
-  @ApiOperation({ summary: '作废邀请码（兼容旧接口）' })
-  disableInviteCode(@Param('id', ParseIntPipe) id: number) {
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '作废邀请码（仅SSVIP，兼容旧接口）' })
+  disableInviteCode(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    this.ensureSSVIP(user);
     return this.guildService.updateInviteCodeStatus(id, { status: 'revoked' });
   }
 
@@ -66,15 +80,21 @@ export class GuildController {
   }
 
   @Post('activate')
-  @ApiOperation({ summary: '激活公会（原子性创建用户+激活公会+绑定管理员）' })
-  activateGuild(@Body() body: { code: string; username: string; password: string; nickname?: string; kookUserId?: string }) {
-    return this.guildService.activateGuild(body.code, body);
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '激活公会（需登录，原子性激活公会+绑定管理员）' })
+  activateGuild(
+    @Body() body: { code: string; nickname?: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.guildService.activateGuildForUser(body.code, user.sub || user.userId, body.nickname);
   }
 
   // ===== 公会管理 =====
 
   @UseGuards(JwtAuthGuard)
   @Post()
+  @ApiBearerAuth()
   @ApiOperation({ summary: '创建公会（需要邀请码）' })
   createGuild(@Body() dto: CreateGuildDto, @CurrentUser() user: any) {
     return this.guildService.createGuild(dto, user.sub || user.userId);
@@ -82,6 +102,7 @@ export class GuildController {
 
   @UseGuards(JwtAuthGuard)
   @Get('my')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '获取我的公会列表' })
   getMyGuilds(@CurrentUser() user: any) {
     return this.guildService.findGuildsByUserId(user.sub || user.userId);
@@ -89,36 +110,51 @@ export class GuildController {
 
   @UseGuards(JwtAuthGuard)
   @Get('all')
-  @ApiOperation({ summary: 'SSVIP: 获取所有公会列表' })
-  getAllGuilds() {
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'SSVIP: 获取所有公会列表（仅SSVIP）' })
+  getAllGuilds(@CurrentUser() user: any) {
+    this.ensureSSVIP(user);
     return this.guildService.findAllGuildsForSSVIP();
   }
 
   @UseGuards(JwtAuthGuard)
   @Get(':id')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '获取公会详情' })
   getGuild(@Param('id', ParseIntPipe) id: number) {
     return this.guildService.findGuildById(id);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
+  @GuildRoles(GuildRole.SUPER_ADMIN)
   @Put(':id')
-  @ApiOperation({ summary: '更新公会信息' })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '更新公会信息（仅超管）' })
   updateGuild(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateGuildDto) {
     return this.guildService.updateGuild(id, dto);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
+  @GuildRoles(GuildRole.SUPER_ADMIN)
   @Put(':id/members/role')
-  @ApiOperation({ summary: '修改成员角色' })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '修改成员角色（仅超管）' })
   updateMemberRole(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateMemberRoleDto) {
     return this.guildService.updateMemberRole(id, dto);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, GuildGuard)
   @Get(':id/members')
+  @ApiBearerAuth()
   @ApiOperation({ summary: '获取公会成员列表' })
   getGuildMembers(@Param('id', ParseIntPipe) id: number) {
     return this.guildService.getGuildMembers(id);
+  }
+
+  /** 内部方法：校验当前用户是否为 SSVIP */
+  private ensureSSVIP(user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new ForbiddenException('仅 SSVIP 可执行此操作');
+    }
   }
 }

@@ -1,9 +1,10 @@
-import { Controller, Post, Get, Body, Query, Req, Res, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Body, Query, Req, Res, UseGuards, Logger, ForbiddenException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { KookSyncService } from './kook-sync.service';
 import { KookService } from './kook.service';
 import { KookMessageService, KookWebhookPayload } from './kook-message.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ConfigService } from '@nestjs/config';
 import * as zlib from 'zlib';
 
@@ -75,11 +76,13 @@ export class KookController {
       return { challenge: payload.d.challenge };
     }
 
-    // verify_token 校验
+    // verify_token 校验 — 配置了 token 时必须匹配
     const configToken = this.configService.get<string>('kook.verifyToken');
-    if (configToken && payload.d?.verify_token && payload.d.verify_token !== configToken) {
-      this.logger.warn('verify_token 不匹配');
-      return { code: 403, message: 'Invalid verify_token' };
+    if (configToken) {
+      if (!payload.d?.verify_token || payload.d.verify_token !== configToken) {
+        this.logger.warn('verify_token 缺失或不匹配');
+        return { code: 403, message: 'Invalid verify_token' };
+      }
     }
 
     return this.messageService.handleWebhookEvent(payload);
@@ -115,49 +118,54 @@ export class KookController {
   @Get('bot-guilds')
   @UseGuards(JwtAuthGuard)
   async getBotGuilds() {
-    const guilds = await this.kookService.getBotGuildList();
-    return { code: 0, data: guilds };
+    return this.kookService.getBotGuildList();
   }
 
-  /** 获取服务器详情（调试用） */
+  /** 获取服务器详情 */
   @Get('guild-info')
   @UseGuards(JwtAuthGuard)
   async getGuildInfo(@Query('guild_id') guildId?: string) {
-    const info = await this.kookService.getGuildView(guildId);
-    return { code: 0, data: info };
+    return this.kookService.getGuildView(guildId);
   }
 
-  /** 获取频道列表（调试用，帮助用户找频道 ID） */
+  /** 获取频道列表 */
   @Get('channels')
   @UseGuards(JwtAuthGuard)
   async getChannels(@Query('guild_id') guildId?: string) {
-    const channels = await this.kookService.getChannelList(guildId);
-    return { code: 0, data: channels };
+    return this.kookService.getChannelList(guildId);
   }
 
-  /** 获取角色列表（调试用，帮助用户找角色 ID） */
+  /** 获取角色列表 */
   @Get('roles')
   @UseGuards(JwtAuthGuard)
   async getRoles(@Query('guild_id') guildId?: string) {
-    const roles = await this.kookService.getGuildRoleList(guildId);
-    return { code: 0, data: roles };
+    return this.kookService.getGuildRoleList(guildId);
   }
 
-  /** 给消息添加表情回应 */
+  /** 给消息添加表情回应（仅管理员） */
   @Post('reaction')
   @UseGuards(JwtAuthGuard)
-  async addReaction(@Body() body: { msg_id: string; emoji: string }) {
+  async addReaction(@Body() body: { msg_id: string; emoji: string }, @CurrentUser() user: any) {
+    this.ensureAdmin(user);
     await this.kookService.addReaction(body.msg_id, body.emoji);
-    return { code: 0, message: '表情回应已添加' };
+    return { message: '表情回应已添加' };
   }
 
-  /** 发送频道消息（支持引用回复） */
+  /** 发送频道消息（仅管理员） */
   @Post('send-message')
   @UseGuards(JwtAuthGuard)
-  async sendMessage(@Body() body: { channel_id: string; content: string; quote?: string; type?: number }) {
+  async sendMessage(@Body() body: { channel_id: string; content: string; quote?: string; type?: number }, @CurrentUser() user: any) {
+    this.ensureAdmin(user);
     const msgId = await this.kookService.sendChannelMessage(
       body.content, body.channel_id, { type: body.type, quote: body.quote },
     );
-    return { code: 0, data: { msg_id: msgId } };
+    return { msg_id: msgId };
+  }
+
+  /** 内部方法：校验是否为 SSVIP 或具有管理权限 */
+  private ensureAdmin(user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new ForbiddenException('仅管理员可执行此操作');
+    }
   }
 }

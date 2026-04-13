@@ -24,15 +24,21 @@ export class GuildGuard implements CanActivate {
 
     const userId = user.userId || user.sub;
 
-    // 先检查是否是公会成员
+    // 先查所有状态的成员（含 left）
     const member = await this.memberRepo.findOne({
-      where: { guildId, userId, status: 'active' },
+      where: { guildId, userId },
     });
 
     if (member) {
       request.guildId = guildId;
       request.guildMember = member;
       request.guildRole = member.role;
+
+      if (member.status === 'left') {
+        // 已离开成员：标记为只读，角色降级为 normal（仅查看）
+        request.guildRole = GuildRole.NORMAL;
+        request.isMemberLeft = true;
+      }
       return true;
     }
 

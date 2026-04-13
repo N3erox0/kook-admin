@@ -48,8 +48,9 @@ export default function GuildCreatePage() {
     setLoadingBotGuilds(true);
     try {
       const res: any = await request.get('/kook/bot-guilds');
-      if (Array.isArray(res)) {
-        setBotGuilds(res);
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      if (Array.isArray(list)) {
+        setBotGuilds(list);
       }
     } catch {
       message.warning('获取 Bot 服务器列表失败，请手动输入服务器 ID');
@@ -68,9 +69,11 @@ export default function GuildCreatePage() {
         request.get('/kook/guild-info', { params: { guild_id: guildId } }),
         request.get('/kook/channels', { params: { guild_id: guildId } }),
       ]);
-      if (infoRes) setGuildInfo(infoRes);
-      if (chRes && Array.isArray(chRes)) {
-        setChannels(chRes.filter((c: any) => c.type === 1));
+      const infoData = infoRes?.data || infoRes;
+      const chData = chRes?.data || chRes;
+      if (infoData) setGuildInfo(infoData);
+      if (Array.isArray(chData)) {
+        setChannels(chData.filter((c: any) => c.type === 1));
       }
     } catch {
       message.error('获取服务器信息失败');
@@ -78,9 +81,29 @@ export default function GuildCreatePage() {
   };
 
   // 手动输入模式下点击按钮获取
-  const handleFetchGuild = async () => {
-    if (!kookGuildId.trim()) { message.warning('请输入 KOOK 服务器 ID'); return; }
-    await handleSelectGuild(kookGuildId.trim());
+  const handleFetchGuild = async (): Promise<boolean> => {
+    if (!kookGuildId.trim()) { message.warning('请输入 KOOK 服务器 ID'); return false; }
+    setLoadingChannels(true);
+    try {
+      const [infoRes, chRes]: any[] = await Promise.all([
+        request.get('/kook/guild-info', { params: { guild_id: kookGuildId.trim() } }),
+        request.get('/kook/channels', { params: { guild_id: kookGuildId.trim() } }),
+      ]);
+      const infoData = infoRes?.data || infoRes;
+      const chData = chRes?.data || chRes;
+      if (infoData) {
+        setGuildInfo(infoData);
+        if (Array.isArray(chData)) {
+          setChannels(chData.filter((c: any) => c.type === 1));
+        }
+        return true;
+      }
+      message.error('获取服务器信息失败');
+      return false;
+    } catch {
+      message.error('获取服务器信息失败');
+      return false;
+    } finally { setLoadingChannels(false); }
   };
 
   // 步骤2 → 步骤3
@@ -276,8 +299,8 @@ export default function GuildCreatePage() {
                 </Button>
               ) : (
                 <Button type="primary" loading={loading} onClick={async () => {
-                  await handleFetchGuild();
-                  if (guildInfo) setCurrent(2);
+                  const success = await handleFetchGuild();
+                  if (success) setCurrent(2);
                 }}>
                   获取服务器信息
                 </Button>

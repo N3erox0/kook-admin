@@ -11,11 +11,12 @@ export class LogService {
     private logRepo: Repository<OperationLog>,
   ) {}
 
-  async findAll(query: QueryLogDto) {
+  async findAll(query: QueryLogDto, guildId?: number) {
     const page = query.page || 1;
     const pageSize = query.pageSize || 20;
     const qb = this.logRepo.createQueryBuilder('log');
 
+    if (guildId) qb.andWhere('log.guildId = :guildId', { guildId });
     if (query.module) qb.andWhere('log.module = :module', { module: query.module });
     if (query.action) qb.andWhere('log.action = :action', { action: query.action });
     if (query.userId) qb.andWhere('log.userId = :userId', { userId: query.userId });
@@ -40,11 +41,11 @@ export class LogService {
     return this.logRepo.save(log);
   }
 
-  async getModules() {
-    const result = await this.logRepo
-      .createQueryBuilder('log')
-      .select('DISTINCT log.module', 'module')
-      .getRawMany();
+  async getModules(guildId?: number) {
+    const qb = this.logRepo.createQueryBuilder('log')
+      .select('DISTINCT log.module', 'module');
+    if (guildId) qb.where('log.guildId = :guildId', { guildId });
+    const result = await qb.getRawMany();
     return result.map((r) => r.module);
   }
 }

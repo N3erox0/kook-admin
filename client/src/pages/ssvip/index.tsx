@@ -23,7 +23,7 @@ export default function SSVIPLoginPage() {
         setLoading(false);
         return;
       }
-      setAuth(res.accessToken, res.user);
+      setAuth(res.accessToken, res.user, res.refreshToken);
       if (res.guilds) setGuilds(res.guilds);
       message.success('SSVIP 登录成功');
       navigate('/admin/dashboard');

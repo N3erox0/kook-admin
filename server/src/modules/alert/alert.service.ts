@@ -129,7 +129,7 @@ export class AlertService {
     const alerts: GuildAlertRecord[] = [];
     const today = new Date().toISOString().slice(0, 10);
 
-    // 按成员名+日期统计补装次数（status=1已通过 或 status=3已发放，且 isCounted=0）
+    // 按成员名+日期统计补装次数（status=1已通过 或 status=3已发放，统计当天数据）
     const stats = await this.resupplyRepo.createQueryBuilder('r')
       .select('r.kookNickname', 'memberName')
       .addSelect('r.kookUserId', 'kookUserId')
@@ -138,7 +138,6 @@ export class AlertService {
       .leftJoin(EquipmentCatalog, 'cat', 'cat.name = r.equipmentName')
       .where('r.guildId = :guildId', { guildId })
       .andWhere('r.status IN (1, 3)')
-      .andWhere('r.isCounted = 0')
       .andWhere('DATE(r.createdAt) = :today', { today })
       .groupBy('r.kookUserId')
       .addGroupBy('r.kookNickname')

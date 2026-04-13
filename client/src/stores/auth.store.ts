@@ -5,7 +5,7 @@ interface AuthState {
   token: string | null;
   user: User | null;
   isAuthenticated: boolean;
-  setAuth: (token: string, user: User) => void;
+  setAuth: (token: string, user: User, refreshToken?: string) => void;
   logout: () => void;
   loadFromStorage: () => void;
 }
@@ -15,14 +15,16 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
 
-  setAuth: (token, user) => {
+  setAuth: (token, user, refreshToken?) => {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
+    if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     set({ token, user, isAuthenticated: true });
   },
 
   logout: () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
     localStorage.removeItem('currentGuildId');
     localStorage.removeItem('currentGuildRole');

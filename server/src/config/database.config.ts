@@ -9,7 +9,7 @@ export const getDatabaseConfig = (configService: ConfigService): TypeOrmModuleOp
   password: configService.get<string>('database.password'),
   database: configService.get<string>('database.database'),
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-  synchronize: configService.get<string>('app.env') === 'development',
+  synchronize: false,
   logging: configService.get<string>('app.env') === 'development',
   charset: 'utf8mb4',
 });

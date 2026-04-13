@@ -18,7 +18,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res: any = await loginApi(values);
-      setAuth(res.accessToken, res.user);
+      setAuth(res.accessToken, res.user, res.refreshToken);
       if (res.guilds && res.guilds.length > 0) {
         setGuilds(res.guilds);
         selectGuild(res.guilds[0].guildId);

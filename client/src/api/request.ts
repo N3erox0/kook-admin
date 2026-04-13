@@ -7,8 +7,18 @@ const request = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+let isRefreshing = false;
+let failedQueue: Array<{ resolve: (token: string) => void; reject: (err: any) => void }> = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) prom.reject(error);
+    else prom.resolve(token!);
+  });
+  failedQueue = [];
+};
+
 request.interceptors.request.use((config) => {
-  // 登录和邀请码验证接口不带 token
   const noAuthPaths = ['/auth/login', '/auth/refresh', '/guilds/invite-codes/validate', '/guilds/activate/info', '/guilds/activate', '/auth/kook/oauth-url', '/auth/kook/callback'];
   const isNoAuth = noAuthPaths.some(p => config.url?.includes(p));
 
@@ -35,9 +45,44 @@ request.interceptors.response.use(
     }
     return res;
   },
-  (error) => {
-    if (error.response?.status === 401) {
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      const refreshToken = localStorage.getItem('refreshToken');
+
+      if (refreshToken) {
+        if (isRefreshing) {
+          return new Promise((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          }).then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return request(originalRequest);
+          });
+        }
+
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          const res = await axios.post('/api/auth/refresh', { refreshToken });
+          const data = res.data?.data || res.data;
+          if (data?.accessToken) {
+            localStorage.setItem('token', data.accessToken);
+            if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
+            originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
+            processQueue(null, data.accessToken);
+            return request(originalRequest);
+          }
+        } catch {
+          processQueue(error, null);
+        } finally {
+          isRefreshing = false;
+        }
+      }
+
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
       localStorage.removeItem('user');
       window.location.href = '/login';
       return Promise.reject(error);

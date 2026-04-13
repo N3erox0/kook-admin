@@ -161,19 +161,32 @@ export class ResupplyService {
         r.processRemark = dto.remark || null;
         r.processedAt = new Date();
 
-        // 需求变更：通过后立即扣减库存-1
+        // 通过后立即扣减库存-1（优先精确匹配 catalogId）
         try {
-          const matches = await this.catalogService.findByNameFuzzy(r.equipmentName, 0.8);
-          if (matches.length > 0) {
-            const catalogId = matches[0].item.id;
+          let catalogId: number | null = null;
+
+          // 优先使用补装申请的 gearScore+equipmentName 精确匹配
+          if (r.equipmentName) {
+            const matches = await this.catalogService.findByNameFuzzy(r.equipmentName, 0.8);
+            if (matches.length > 0) {
+              // 如果有多个匹配项，优先选择 level/quality/gearScore 完全匹配的
+              const exactMatch = matches.find(m =>
+                (!r.level || m.item.level === r.level) &&
+                (!r.quality && r.quality !== 0 || m.item.quality === r.quality) &&
+                (!r.gearScore || m.item.gearScore === r.gearScore)
+              );
+              catalogId = exactMatch ? exactMatch.item.id : matches[0].item.id;
+            }
+          }
+
+          if (catalogId) {
             await this.equipmentService.deductForDispatch(guildId, catalogId, 1, operatorId, operatorName);
-            this.logger.log(`补装通过扣减库存: ${r.equipmentName} -1`);
+            this.logger.log(`补装通过扣减库存: ${r.equipmentName} -1 (catalogId=${catalogId})`);
           } else {
             this.logger.warn(`补装通过但未找到匹配装备: ${r.equipmentName}`);
           }
         } catch (err: any) {
           this.logger.error(`补装扣减库存失败: ${err.message}`);
-          // 库存不足不阻塞通过操作，仅记录警告
         }
         break;
       }
@@ -206,7 +219,9 @@ export class ResupplyService {
       if (dto.action === 'reject' && r.kookUserId) {
         this.kookNotifyService.notifyResupplyRejected(r.kookUserId, r.equipmentName, r.quantity, dto.remark || '');
       } else if (dto.action === 'approve' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyDispatched(r.kookUserId, r.equipmentName, r.quantity);
+        this.kookNotifyService.notifyResupplyApproved(r.kookUserId, r.equipmentName, r.quantity);
+      } else if (dto.action === 'dispatch' && r.kookUserId) {
+        this.kookNotifyService.notifyResupplyDispatched(r.kookUserId, r.equipmentName, r.dispatchQuantity || r.quantity);
       }
       this.kookNotifyService.notifyResupplyStatusChange(
         r.kookNickname || '未知', r.equipmentName, r.quantity, r.status, dto.remark,

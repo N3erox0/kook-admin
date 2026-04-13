@@ -86,56 +86,74 @@ export class GuildService {
   // ===== 公会 =====
 
   async createGuild(dto: CreateGuildDto, userId: number): Promise<Guild> {
-    // 1. 验证邀请码
-    const validation = await this.validateInviteCode(dto.inviteCode);
-    if (!validation.valid) throw new BadRequestException(validation.message);
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
 
-    // 2. 检查公会名是否唯一
-    const nameExists = await this.guildRepo.findOne({ where: { name: dto.name } });
-    if (nameExists) throw new ConflictException('公会名称已被使用');
+    try {
+      // 1. 悲观锁验证邀请码（防止双花）
+      const invite = await qr.manager.findOne(InviteCode, {
+        where: { code: dto.inviteCode },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!invite) throw new BadRequestException('邀请码不存在');
+      if (invite.status !== InviteCodeStatus.ENABLED) {
+        throw new BadRequestException('邀请码无效或已被使用');
+      }
 
-    // 3. 检查 KOOK 服务器 ID 是否已绑定
-    const guildIdExists = await this.guildRepo.findOne({ where: { kookGuildId: dto.kookGuildId } });
-    if (guildIdExists) throw new ConflictException('该 KOOK 服务器已绑定其他公会');
+      // 2. 检查公会名是否唯一
+      const nameExists = await qr.manager.findOne(Guild, { where: { name: dto.name } });
+      if (nameExists) throw new ConflictException('公会名称已被使用');
 
-    // 4. 创建公会
-    const guild = this.guildRepo.create({
-      name: dto.name,
-      iconUrl: dto.iconUrl || null,
-      kookGuildId: dto.kookGuildId,
-      ownerUserId: userId,
-      status: GuildStatus.ACTIVE,
-    });
-    const saved = await this.guildRepo.save(guild);
+      // 3. 检查 KOOK 服务器 ID 是否已绑定
+      const guildIdExists = await qr.manager.findOne(Guild, { where: { kookGuildId: dto.kookGuildId } });
+      if (guildIdExists) throw new ConflictException('该 KOOK 服务器已绑定其他公会');
 
-    // 5. 标记邀请码为已使用，绑定公会
-    const invite = await this.inviteRepo.findOne({ where: { code: dto.inviteCode } });
-    invite.status = InviteCodeStatus.USED;
-    invite.usedByUserId = userId;
-    invite.usedAt = new Date();
-    invite.boundGuildId = saved.id;
-    invite.boundGuildName = saved.name;
-    await this.inviteRepo.save(invite);
+      // 4. 获取用户信息（包含 kookUserId）
+      const user = await qr.manager.findOne(User, { where: { id: userId } });
 
-    // 6. 更新公会的 inviteCodeId
-    saved.inviteCodeId = invite.id;
-    await this.guildRepo.save(saved);
+      // 5. 创建公会
+      const guild = qr.manager.create(Guild, {
+        name: dto.name,
+        iconUrl: dto.iconUrl || null,
+        kookGuildId: dto.kookGuildId,
+        ownerUserId: userId,
+        inviteCodeId: invite.id,
+        status: GuildStatus.ACTIVE,
+      });
+      const saved = await qr.manager.save(guild);
 
-    // 7. 创建人绑定为超级管理员
-    const member = this.memberRepo.create({
-      guildId: saved.id,
-      userId,
-      kookUserId: '',
-      nickname: '创建者',
-      role: GuildRole.SUPER_ADMIN,
-      status: 'active',
-      joinedAt: new Date(),
-      lastSyncedAt: new Date(),
-    });
-    await this.memberRepo.save(member);
+      // 6. 标记邀请码为已使用
+      invite.status = InviteCodeStatus.USED;
+      invite.usedByUserId = userId;
+      invite.usedAt = new Date();
+      invite.boundGuildId = saved.id;
+      invite.boundGuildName = saved.name;
+      await qr.manager.save(invite);
 
-    this.logger.log(`公会创建成功: ${saved.name} (ID: ${saved.id}), 邀请码: ${dto.inviteCode}`);
-    return saved;
+      // 7. 创建人绑定为超级管理员
+      const member = qr.manager.create(GuildMember, {
+        guildId: saved.id,
+        userId,
+        kookUserId: user?.kookUserId || '',
+        nickname: user?.nickname || '创建者',
+        role: GuildRole.SUPER_ADMIN,
+        status: 'active',
+        joinedAt: new Date(),
+        lastSyncedAt: new Date(),
+        joinSource: 'invite_link',
+      });
+      await qr.manager.save(member);
+
+      await qr.commitTransaction();
+      this.logger.log(`公会创建成功: ${saved.name} (ID: ${saved.id}), 邀请码: ${dto.inviteCode}`);
+      return saved;
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
   }
 
   async findAllGuilds(): Promise<Guild[]> {
@@ -150,7 +168,7 @@ export class GuildService {
 
   async findGuildsByUserId(userId: number): Promise<any[]> {
     const members = await this.memberRepo.find({
-      where: { userId, status: 'active' },
+      where: { userId },
       relations: ['guild'],
     });
     return members
@@ -160,6 +178,7 @@ export class GuildService {
         guildName: m.guild?.name,
         guildIcon: m.guild?.iconUrl,
         role: m.role,
+        memberStatus: m.status,
       }));
   }
 
@@ -323,6 +342,62 @@ export class GuildService {
         userId: user.id,
         username: user.username,
         isNewUser: !existingUser,
+      };
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  /** 安全的公会激活（基于已登录用户，无需传入密码） */
+  async activateGuildForUser(code: string, userId: number, nickname?: string): Promise<any> {
+    const guild = await this.guildRepo.findOne({ where: { activationCode: code } });
+    if (!guild) throw new NotFoundException('激活码不存在');
+    if (guild.status === GuildStatus.ACTIVE) throw new ConflictException('该公会已激活');
+
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('用户不存在');
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    try {
+      // 1. 激活公会
+      guild.status = GuildStatus.ACTIVE;
+      guild.ownerUserId = user.id;
+      guild.name = guild.name.startsWith('待激活') ? `公会-${guild.kookGuildId.slice(-6)}` : guild.name;
+      await qr.manager.save(guild);
+
+      // 2. 建立超级管理员关联
+      const existingMember = await qr.manager.findOne(GuildMember, {
+        where: { guildId: guild.id, userId: user.id },
+      });
+      if (!existingMember) {
+        const member = qr.manager.create(GuildMember, {
+          guildId: guild.id,
+          userId: user.id,
+          kookUserId: user.kookUserId || guild.invitedByKookUserId || '',
+          nickname: nickname || user.nickname || user.username,
+          role: GuildRole.SUPER_ADMIN,
+          status: 'active',
+          joinedAt: new Date(),
+          lastSyncedAt: new Date(),
+          joinSource: 'invite_link',
+        });
+        await qr.manager.save(member);
+      }
+
+      await qr.commitTransaction();
+
+      this.logger.log(`公会激活成功: ${guild.name} (ID: ${guild.id}), 管理员: ${user.username}`);
+      return {
+        guildId: guild.id,
+        guildName: guild.name,
+        userId: user.id,
+        username: user.username,
       };
     } catch (err) {
       await qr.rollbackTransaction();

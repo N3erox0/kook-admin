@@ -50,6 +50,24 @@ export class KookNotifyService {
     this.logger.log(`驳回私信已发送 -> ${kookUserId}`);
   }
 
+  /** 审批通过后私信通知申请人 */
+  async notifyResupplyApproved(
+    kookUserId: string,
+    equipmentName: string,
+    quantity: number,
+  ): Promise<void> {
+    if (!kookUserId) {
+      this.logger.warn('申请人无 KOOK ID，跳过私信通知');
+      return;
+    }
+    const message = `**补装申请已通过**\n` +
+      `装备：${equipmentName} x${quantity}\n` +
+      `系统已自动从库存中扣减，请耐心等待发放。`;
+
+    await this.kookService.sendDirectMessage(kookUserId, message);
+    this.logger.log(`审批通过私信已发送 -> ${kookUserId}`);
+  }
+
   /** 发放成功后私信通知申请人 */
   async notifyResupplyDispatched(
     kookUserId: string,

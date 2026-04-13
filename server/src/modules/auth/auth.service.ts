@@ -32,17 +32,20 @@ export class AuthService {
 
     await this.userRepo.update(user.id, { lastLoginAt: new Date() });
 
-    // 获取用户所属公会列表及角色
+    // 获取用户所属公会列表及角色（包含left成员）
     const guildMembers = await this.guildMemberRepo.find({
-      where: { userId: user.id, status: 'active' },
+      where: { userId: user.id },
       relations: ['guild'],
     });
-    const guilds = guildMembers.map((gm) => ({
-      guildId: gm.guildId,
-      guildName: gm.guild?.name,
-      guildIcon: gm.guild?.iconUrl,
-      role: gm.role,
-    }));
+    const guilds = guildMembers
+      .filter((gm) => gm.guild?.status === 1)
+      .map((gm) => ({
+        guildId: gm.guildId,
+        guildName: gm.guild?.name,
+        guildIcon: gm.guild?.iconUrl,
+        role: gm.role,
+        memberStatus: gm.status,
+      }));
 
     const payload = { sub: user.id, username: user.username };
     const accessToken = this.jwtService.sign(payload);
@@ -88,15 +91,18 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('用户不存在');
 
     const guildMembers = await this.guildMemberRepo.find({
-      where: { userId: user.id, status: 'active' },
+      where: { userId: user.id },
       relations: ['guild'],
     });
-    const guilds = guildMembers.map((gm) => ({
-      guildId: gm.guildId,
-      guildName: gm.guild?.name,
-      guildIcon: gm.guild?.iconUrl,
-      role: gm.role,
-    }));
+    const guilds = guildMembers
+      .filter((gm) => gm.guild?.status === 1)
+      .map((gm) => ({
+        guildId: gm.guildId,
+        guildName: gm.guild?.name,
+        guildIcon: gm.guild?.iconUrl,
+        role: gm.role,
+        memberStatus: gm.status,
+      }));
 
     return {
       id: user.id,
@@ -179,17 +185,20 @@ export class AuthService {
       await this.userRepo.save(user);
     }
 
-    // 4. 查询公会列表
+    // 4. 查询公会列表（包含left成员）
     const guildMembers = await this.guildMemberRepo.find({
-      where: { userId: user.id, status: 'active' },
+      where: { userId: user.id },
       relations: ['guild'],
     });
-    const guilds = guildMembers.map((gm) => ({
-      guildId: gm.guildId,
-      guildName: gm.guild?.name,
-      guildIcon: gm.guild?.iconUrl,
-      role: gm.role,
-    }));
+    const guilds = guildMembers
+      .filter((gm) => gm.guild?.status === 1)
+      .map((gm) => ({
+        guildId: gm.guildId,
+        guildName: gm.guild?.name,
+        guildIcon: gm.guild?.iconUrl,
+        role: gm.role,
+        memberStatus: gm.status,
+      }));
 
     // 5. 签发 JWT
     const payload = { sub: user.id, username: user.username };

@@ -23,7 +23,7 @@ export default function JoinPage() {
   const [kookAdminRoleId, setKookAdminRoleId] = useState('');
   const [guildInfo, setGuildInfo] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
-  const [selectedChannelId, setSelectedChannelId] = useState('');
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [createdGuild, setCreatedGuild] = useState<any>(null);
   const [kookUser, setKookUser] = useState<any>(null);
   const [syncing, setSyncing] = useState(false);
@@ -44,7 +44,7 @@ export default function JoinPage() {
     try {
       const res: any = await request.post('/auth/kook/callback', { code });
       if (res?.accessToken) {
-        setAuth(res.accessToken, res.user);
+        setAuth(res.accessToken, res.user, res.refreshToken);
         if (res.guilds) setGuilds(res.guilds);
         if (res.kookUser) setKookUser(res.kookUser);
 
@@ -114,7 +114,7 @@ export default function JoinPage() {
     setLoading(true);
     try {
       const res: any = await loginApi(values);
-      setAuth(res.accessToken, res.user);
+      setAuth(res.accessToken, res.user, res.refreshToken);
       if (res.guilds) setGuilds(res.guilds);
       message.success('登录成功');
       setCurrent(2);
@@ -127,11 +127,13 @@ export default function JoinPage() {
     setLoading(true);
     try {
       const res: any = await request.get('/kook/guild-info', { params: { guild_id: kookGuildId.trim() } });
-      if (res) {
-        setGuildInfo(res);
+      const infoData = res?.data || res;
+      if (infoData) {
+        setGuildInfo(infoData);
         const chRes: any = await request.get('/kook/channels', { params: { guild_id: kookGuildId.trim() } });
-        if (chRes && Array.isArray(chRes)) {
-          setChannels(chRes.filter((c: any) => c.type === 1));
+        const chData = chRes?.data || chRes;
+        if (Array.isArray(chData)) {
+          setChannels(chData.filter((c: any) => c.type === 1));
         }
         setCurrent(3);
       } else {
@@ -144,7 +146,7 @@ export default function JoinPage() {
 
   // 步骤3: 确认创建
   const handleCreate = async () => {
-    if (!selectedChannelId) { message.warning('请选择补装频道'); return; }
+    if (selectedChannelIds.length === 0) { message.warning('请至少选择一个补装频道'); return; }
     setLoading(true);
     try {
       const res: any = await request.post('/guilds', {
@@ -155,13 +157,13 @@ export default function JoinPage() {
       });
       if (res?.id) {
         await request.put(`/guilds/${res.id}`, {
-          kookResupplyChannelId: selectedChannelId,
+          kookListenChannelIds: selectedChannelIds,
+          kookResupplyChannelId: selectedChannelIds[0],
           kookAdminRoleId: kookAdminRoleId || '',
         });
         setCreatedGuild(res);
         setCurrent(4);
 
-        // 异步同步成员
         setSyncing(true);
         try {
           await request.post(`/guild/${res.id}/dashboard/sync-members`);
@@ -315,7 +317,7 @@ export default function JoinPage() {
           </div>
         )}
 
-        {/* 步骤3: 选择频道（显示公会图标和名称） */}
+        {/* 步骤3: 选择频道（多选，与 GuildCreate 一致） */}
         {current === 3 && (
           <div>
             {guildInfo && (
@@ -329,19 +331,24 @@ export default function JoinPage() {
                 </Space>
               </Card>
             )}
-            <Title level={5}>选择补装消息频道</Title>
+            <Title level={5}>选择补装监听频道</Title>
             <Text type="secondary" style={{ marginBottom: 8, display: 'block' }}>
-              系统将监听此频道中的补装申请消息
+              系统将监听选中频道中的补装申请消息（已选 {selectedChannelIds.length} / {channels.length}）
             </Text>
             {channels.length > 0 ? (
               <List bordered size="small" style={{ maxHeight: 240, overflow: 'auto', marginBottom: 16 }}
                 dataSource={channels}
                 renderItem={(ch: any) => (
-                  <List.Item onClick={() => setSelectedChannelId(ch.id)}
-                    style={{ cursor: 'pointer', background: selectedChannelId === ch.id ? '#e6f4ff' : undefined }}>
+                  <List.Item
+                    onClick={() => {
+                      setSelectedChannelIds((prev) =>
+                        prev.includes(ch.id) ? prev.filter((id: string) => id !== ch.id) : [...prev, ch.id]
+                      );
+                    }}
+                    style={{ cursor: 'pointer', background: selectedChannelIds.includes(ch.id) ? '#e6f4ff' : undefined }}>
                     <Space>
                       <Text># {ch.name}</Text>
-                      {selectedChannelId === ch.id && <CheckCircleOutlined style={{ color: '#1677ff' }} />}
+                      {selectedChannelIds.includes(ch.id) && <CheckCircleOutlined style={{ color: '#1677ff' }} />}
                     </Space>
                   </List.Item>
                 )}
@@ -350,8 +357,8 @@ export default function JoinPage() {
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
               <Button onClick={() => setCurrent(2)}>上一步</Button>
               <Button type="primary" size="large" loading={loading} onClick={handleCreate}
-                disabled={!selectedChannelId}>
-                确认创建并绑定
+                disabled={selectedChannelIds.length === 0}>
+                确认创建并绑定（{selectedChannelIds.length} 个频道）
               </Button>
             </Space>
           </div>

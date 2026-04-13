@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, Select, Tabs } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import request from '@/api/request';
+import { useGuildStore } from '@/stores/guild.store';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -18,6 +19,8 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 export default function LogPage() {
+  const { currentGuildId } = useGuildStore();
+  const guildId = currentGuildId;
   const [logs, setLogs] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -31,10 +34,12 @@ export default function LogPage() {
   const [pushLoading, setPushLoading] = useState(false);
   const [pushPage, setPushPage] = useState(1);
 
+  const basePath = guildId ? `/guild/${guildId}/logs` : '/logs';
+
   const fetchLogs = async (p = page) => {
     setLoading(true);
     try {
-      const res: any = await request.get('/logs', { params: { page: p, pageSize: 30, module: moduleFilter } });
+      const res: any = await request.get(basePath, { params: { page: p, pageSize: 30, module: moduleFilter } });
       setLogs(res?.list || []);
       setTotal(res?.total || 0);
     } catch {} finally { setLoading(false); }
@@ -42,7 +47,7 @@ export default function LogPage() {
 
   const fetchModules = async () => {
     try {
-      const res: any = await request.get('/logs/modules');
+      const res: any = await request.get(`${basePath}/modules`);
       setModules(res || []);
     } catch {}
   };
@@ -50,8 +55,7 @@ export default function LogPage() {
   const fetchPushLogs = async (p = pushPage) => {
     setPushLoading(true);
     try {
-      // 推送记录 = module 为 kook_notify 或 action 含 push/notify
-      const res: any = await request.get('/logs', { params: { page: p, pageSize: 30, module: 'kook_notify' } });
+      const res: any = await request.get(basePath, { params: { page: p, pageSize: 30, module: 'kook_notify' } });
       setPushLogs(res?.list || []);
       setPushTotal(res?.total || 0);
     } catch {} finally { setPushLoading(false); }

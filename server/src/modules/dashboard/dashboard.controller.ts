@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Param, ParseIntPipe, UseGuards, ForbiddenException } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { GuildGuard } from '../../common/guards/guild.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { KookSyncService } from '../kook/kook-sync.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -15,10 +16,13 @@ export class DashboardController {
     @InjectRepository(Guild) private guildRepo: Repository<Guild>,
   ) {}
 
-  /** 模块一：系统超管控制台（SSVIP） */
+  /** 模块一：系统超管控制台（仅SSVIP） */
   @Get('admin/dashboard')
   @UseGuards(JwtAuthGuard)
-  getAdminOverview() {
+  getAdminOverview(@CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new ForbiddenException('仅 SSVIP 可访问系统超管控制台');
+    }
     return this.dashboardService.getAdminOverview();
   }
 
