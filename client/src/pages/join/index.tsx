@@ -15,11 +15,18 @@ export default function JoinPage() {
   const { token, setAuth, user } = useAuthStore();
   const { setGuilds, selectGuild } = useGuildStore();
 
-  const [current, setCurrent] = useState(0);
+  // sessionStorage 缓存（页面关闭或注册成功时清除）
+  const CACHE_KEY = 'join_form_cache';
+  const loadCache = (): any => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY) || '{}'); } catch { return {}; } };
+  const saveCache = (patch: Record<string, any>) => { const prev = loadCache(); sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ...prev, ...patch })); };
+  const clearCache = () => sessionStorage.removeItem(CACHE_KEY);
+  const cached = loadCache();
+
+  const [current, setCurrent] = useState(cached.step || 0);
   const [loading, setLoading] = useState(false);
 
-  const [inviteCode, setInviteCode] = useState(searchParams.get('code') || searchParams.get('state') || '');
-  const [kookGuildId, setKookGuildId] = useState('');
+  const [inviteCode, setInviteCode] = useState(searchParams.get('code') || searchParams.get('state') || cached.inviteCode || '');
+  const [kookGuildId, setKookGuildId] = useState(cached.kookGuildId || '');
   const [guildInfo, setGuildInfo] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
@@ -27,14 +34,23 @@ export default function JoinPage() {
   const [kookUser, setKookUser] = useState<any>(null);
   const [syncing, setSyncing] = useState(false);
 
+  // 包装 setter 使其同步缓存
+  const updateInviteCode = (v: string) => { setInviteCode(v); saveCache({ inviteCode: v }); };
+  const updateKookGuildId = (v: string) => { setKookGuildId(v); saveCache({ kookGuildId: v }); };
+  const updateStep = (s: number) => { setCurrent(s); saveCache({ step: s }); };
+
   // 检测 OAuth2 回调（URL 中有 code 参数，且不是邀请码格式）
   const oauthCode = searchParams.get('code');
-  const isOAuthCallback = oauthCode && oauthCode.length > 20; // KOOK OAuth code 较长
+  const isOAuthCallback = oauthCode && oauthCode.length > 20;
 
   useEffect(() => {
     if (isOAuthCallback) {
-      // OAuth2 回调：用 code 换 token
       handleOAuthCallback(oauthCode);
+      return;
+    }
+    // 已登录用户（非OAuth回调）直接跳转到 /guild/create
+    if (token && user && !isOAuthCallback) {
+      navigate('/guild/create', { replace: true });
     }
   }, []);
 
@@ -47,26 +63,31 @@ export default function JoinPage() {
         if (res.guilds) setGuilds(res.guilds);
         if (res.kookUser) setKookUser(res.kookUser);
 
-        // 如果 state 参数带了邀请码，自动验证
+        // 检测是否从新标签页打开（有 window.opener）
+        if (window.opener) {
+          window.opener.postMessage({ type: 'kook-oauth-success', data: res }, '*');
+          window.close();
+          return;
+        }
+
         const stateCode = searchParams.get('state');
         if (stateCode) {
-          setInviteCode(stateCode);
-          // 自动验证邀请码
+          updateInviteCode(stateCode);
           try {
             const valRes: any = await request.post('/guilds/invite-codes/validate', { code: stateCode });
             if (valRes.valid) {
               message.success('KOOK 登录成功，邀请码已自动验证');
-              setCurrent(2); // 跳到 KOOK 配置步骤
+              updateStep(2);
             } else {
               message.warning(valRes.message || '邀请码无效');
-              setCurrent(0);
+              updateStep(0);
             }
           } catch {
-            setCurrent(0);
+            updateStep(0);
           }
         } else {
           message.success('KOOK 登录成功');
-          setCurrent(token ? 2 : 0);
+          updateStep(token ? 2 : 0);
         }
       }
     } catch {
@@ -74,7 +95,7 @@ export default function JoinPage() {
     } finally { setLoading(false); }
   };
 
-  // 发起 KOOK OAuth2 登录
+  // 发起 KOOK OAuth2 登录（新标签页打开）
   const handleKookLogin = async () => {
     setLoading(true);
     try {
@@ -82,7 +103,30 @@ export default function JoinPage() {
         params: { invite_code: inviteCode.trim() || undefined },
       });
       if (res?.url) {
-        window.location.href = res.url;
+        // 新标签页打开 KOOK OAuth
+        const popup = window.open(res.url, '_blank', 'width=600,height=700');
+        // 监听子窗口传回的消息
+        const handler = (event: MessageEvent) => {
+          if (event.data?.type === 'kook-oauth-success') {
+            window.removeEventListener('message', handler);
+            const data = event.data.data;
+            setAuth(data.accessToken, data.user, data.refreshToken);
+            if (data.guilds) setGuilds(data.guilds);
+            if (data.kookUser) setKookUser(data.kookUser);
+            message.success('KOOK 登录成功');
+            setCurrent(2);
+            setLoading(false);
+          }
+        };
+        window.addEventListener('message', handler);
+        // 定时检查子窗口是否关闭
+        const checkClosed = setInterval(() => {
+          if (popup?.closed) {
+            clearInterval(checkClosed);
+            window.removeEventListener('message', handler);
+            setLoading(false);
+          }
+        }, 1000);
       } else {
         message.error('获取 KOOK 授权链接失败');
         setLoading(false);
@@ -116,7 +160,7 @@ export default function JoinPage() {
       setAuth(res.accessToken, res.user, res.refreshToken);
       if (res.guilds) setGuilds(res.guilds);
       message.success('登录成功');
-      setCurrent(2);
+      updateStep(2);
     } catch {} finally { setLoading(false); }
   };
 
@@ -134,7 +178,7 @@ export default function JoinPage() {
         if (Array.isArray(chData)) {
           setChannels(chData.filter((c: any) => c.type === 1));
         }
-        setCurrent(3);
+        updateStep(3);
       } else {
         message.error('获取服务器信息失败，请检查服务器 ID 和 Bot 是否已加入');
       }
@@ -160,7 +204,8 @@ export default function JoinPage() {
           kookResupplyChannelId: selectedChannelIds[0],
         });
         setCreatedGuild(res);
-        setCurrent(4);
+        updateStep(4);
+        clearCache();
 
         setSyncing(true);
         try {
@@ -242,7 +287,7 @@ export default function JoinPage() {
             <Form layout="vertical">
               <Form.Item label="邀请码">
                 <Input size="large" placeholder="请输入邀请码" value={inviteCode}
-                  onChange={(e) => setInviteCode(e.target.value)} onPressEnter={handleValidateCode} />
+                  onChange={(e) => updateInviteCode(e.target.value)} onPressEnter={handleValidateCode} />
               </Form.Item>
             </Form>
             <Button type="primary" block size="large" loading={loading} onClick={handleValidateCode}>
@@ -301,11 +346,11 @@ export default function JoinPage() {
             <Form layout="vertical">
               <Form.Item label="KOOK 服务器 ID" required>
                 <Input size="large" placeholder="右键服务器名称 → 复制 ID" value={kookGuildId}
-                  onChange={(e) => setKookGuildId(e.target.value)} />
+                  onChange={(e) => updateKookGuildId(e.target.value)} />
               </Form.Item>
             </Form>
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <Button onClick={() => setCurrent(0)}>上一步</Button>
+              <Button onClick={() => updateStep(0)}>上一步</Button>
               <Button type="primary" size="large" loading={loading} onClick={handleFetchGuild}>获取服务器信息</Button>
             </Space>
           </div>
@@ -349,7 +394,7 @@ export default function JoinPage() {
               />
             ) : <Spin />}
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <Button onClick={() => setCurrent(2)}>上一步</Button>
+              <Button onClick={() => updateStep(2)}>上一步</Button>
               <Button type="primary" size="large" loading={loading} onClick={handleCreate}
                 disabled={selectedChannelIds.length === 0}>
                 确认创建并绑定（{selectedChannelIds.length} 个频道）

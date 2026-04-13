@@ -194,7 +194,15 @@ export class OcrService {
       return this.getMockResult();
     }
 
-    const ocrTexts = await this.callTencentOcr(imageUrl, secretId, secretKey, region);
+    // 相对路径自动拼接公网域名前缀
+    let fullUrl = imageUrl;
+    if (imageUrl && !imageUrl.startsWith('http')) {
+      const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:3000';
+      fullUrl = `${baseUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+      this.logger.log(`OCR图片URL补全: ${imageUrl} → ${fullUrl}`);
+    }
+
+    const ocrTexts = await this.callTencentOcr(fullUrl, secretId, secretKey, region);
     return this.parser.parse(ocrTexts);
   }
 

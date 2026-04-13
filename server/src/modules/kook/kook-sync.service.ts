@@ -32,6 +32,11 @@ export class KookSyncService {
     }
   }
 
+  /** 根据 KOOK 服务器 ID 查找公会（用于获取公会独立 Token） */
+  async findGuildByKookId(kookGuildId: string): Promise<Guild | null> {
+    return this.guildRepo.findOne({ where: { kookGuildId } });
+  }
+
   /** 同步成员列表（快照对比，检测加入/离开） */
   async syncGuildMembers(guild: Guild) {
     if (!guild.kookBotToken || !guild.kookGuildId) {

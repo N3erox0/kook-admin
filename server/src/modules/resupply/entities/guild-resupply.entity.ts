@@ -96,6 +96,9 @@ export class GuildResupply {
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'guild_name', comment: '公会名（OCR识别）' })
   ocrGuildName: string;
 
+  @Column({ type: 'datetime', nullable: true, name: 'kook_message_time', comment: 'KOOK消息推送时间' })
+  kookMessageTime: Date;
+
   @Index('idx_gr_created')
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

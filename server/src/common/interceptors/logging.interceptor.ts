@@ -38,7 +38,9 @@ export class LoggingInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap({
         next: () => {
+          const guildId = request.guildId || request.params?.guildId ? parseInt(request.params.guildId) : null;
           const logEntry = {
+            guildId: guildId || null,
             userId: user?.userId || user?.sub || user?.id,
             username: user?.username,
             module: meta.module,
@@ -51,7 +53,6 @@ export class LoggingInterceptor implements NestInterceptor {
             userAgent: request.headers['user-agent'],
           };
 
-          // 写入数据库（异步，不阻塞响应）
           if (this.logService) {
             this.logService.create(logEntry).catch((err) => {
               this.logger.error(`写入操作日志失败: ${err.message}`);
@@ -59,7 +60,9 @@ export class LoggingInterceptor implements NestInterceptor {
           }
         },
         error: (err) => {
+          const guildId = request.guildId || request.params?.guildId ? parseInt(request.params.guildId) : null;
           const logEntry = {
+            guildId: guildId || null,
             userId: user?.userId || user?.sub || user?.id,
             username: user?.username,
             module: meta.module,

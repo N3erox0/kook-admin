@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image, DatePicker } from 'antd';
+import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image, DatePicker, AutoComplete } from 'antd';
 import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply } from '@/api/resupply';
+import { searchCatalog } from '@/api/catalog';
 import { useGuildStore } from '@/stores/guild.store';
 import { RESUPPLY_STATUS } from '@/types';
 import type { GuildResupply } from '@/types';
@@ -59,6 +60,31 @@ export default function ResupplyPage() {
   const [groupKeyword, setGroupKeyword] = useState('');
   const [groupList, setGroupList] = useState<GuildResupply[]>([]);
   const [groupLoading, setGroupLoading] = useState(false);
+
+  // F-055: 手动创建装备搜索预置库
+  const [catalogOptions, setCatalogOptions] = useState<any[]>([]);
+  const [selectedCatalogItem, setSelectedCatalogItem] = useState<any>(null);
+  const handleCatalogSearch = async (kw: string) => {
+    if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
+    try {
+      const res: any = await searchCatalog(kw);
+      setCatalogOptions((res || []).map((item: any) => ({
+        value: item.name,
+        label: `${item.name} Lv${item.level} Q${item.quality} ${item.category} (P${item.gearScore})`,
+        item,
+      })));
+    } catch { setCatalogOptions([]); }
+  };
+  const handleCatalogSelect = (_: string, option: any) => {
+    setSelectedCatalogItem(option.item);
+    createForm.setFieldsValue({
+      equipmentName: option.item.name,
+      level: option.item.level,
+      quality: option.item.quality,
+      gearScore: option.item.gearScore,
+      category: option.item.category,
+    });
+  };
 
   const fetchList = async (p = page) => {
     if (!guildId) return;
@@ -175,29 +201,33 @@ export default function ResupplyPage() {
     },
     { title: '申请人', dataIndex: 'kookNickname', key: 'nick', width: 120, ellipsis: true },
     {
-      title: '箱子', dataIndex: 'resupplyBox', key: 'box', width: 80,
-      render: (v: string) => v ? <Tag color="geekblue">{v}</Tag> : '-',
-    },
-    { title: '装备', dataIndex: 'equipmentName', key: 'equip', ellipsis: true },
-    {
-      title: '装等', key: 'gs', width: 60,
-      render: (_: any, r: GuildResupply) => r.gearScore ? <Tag>P{r.gearScore}</Tag> : '-',
-    },
-    { title: '数量', dataIndex: 'quantity', key: 'qty', width: 60 },
-    {
-      title: '房间', dataIndex: 'resupplyRoom', key: 'room', width: 70,
+      title: '补装房间', dataIndex: 'resupplyRoom', key: 'room', width: 80,
       render: (v: string) => v ? <Tag color="volcano">{v}</Tag> : '-',
     },
     {
-      title: '截图', key: 'screenshot', width: 60,
-      render: (_: any, r: GuildResupply) => r.screenshotUrl ? <Image src={r.screenshotUrl} width={32} height={32} style={{ objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }} /> : '-',
+      title: '补装箱子', dataIndex: 'resupplyBox', key: 'box', width: 80,
+      render: (v: string) => v ? <Tag color="geekblue">{v}</Tag> : '-',
     },
     {
-      title: '时间', dataIndex: 'createdAt', key: 'time', width: 140,
-      render: (v: string) => dayjs(v).format('MM-DD HH:mm'),
+      title: '补装类型', dataIndex: 'applyType', key: 'type', width: 100,
+      render: (v: string) => {
+        const colors: Record<string, string> = { '死亡补装': 'red', 'REOC': 'orange', '手动创建': 'blue', '补装': 'red', 'OC碎': 'orange', '其他': 'default' };
+        return <Tag color={colors[v] || 'default'}>{v}</Tag>;
+      },
     },
     {
-      title: '操作', key: 'actions', width: 220, fixed: 'right' as const,
+      title: '待补装备', dataIndex: 'equipmentName', key: 'equip', ellipsis: true,
+      render: (v: string, r: GuildResupply) => (
+        <span>{v}{r.gearScore ? <Tag style={{ marginLeft: 4 }}>P{r.gearScore}</Tag> : ''}</span>
+      ),
+    },
+    { title: '数量', dataIndex: 'quantity', key: 'qty', width: 55 },
+    {
+      title: 'KOOK时间', key: 'kookTime', width: 130,
+      render: (_: any, r: any) => r.kookMessageTime ? dayjs(r.kookMessageTime).format('YYYY-MM-DD HH:mm') : dayjs(r.createdAt).format('MM-DD HH:mm'),
+    },
+    {
+      title: '操作', key: 'actions', width: 200, fixed: 'right' as const,
       render: (_: any, r: GuildResupply) => (
         <Space size="small">
           <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => openDetail(r.id)}>详情</Button>
@@ -241,11 +271,9 @@ export default function ResupplyPage() {
         </Space>
       </div>
 
-      {/* 筛选栏 */}
+      {/* 筛选栏：状态 → 日期 → 关键词 → 装等 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
-          <Input placeholder="搜索装备/申请人 (支持P8+堕神)" prefix={<SearchOutlined />} allowClear
-            value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} style={{ width: 250 }} />
           <Select placeholder="状态" allowClear style={{ width: 120 }} value={statusFilter}
             onChange={v => setStatusFilter(v)}>
             {Object.entries(RESUPPLY_STATUS).map(([k, v]) => <Select.Option key={k} value={Number(k)}>{v}</Select.Option>)}
@@ -255,6 +283,12 @@ export default function ResupplyPage() {
             onChange={(dates) => setDateRange(dates as any)}
             style={{ width: 240 }}
           />
+          <Input placeholder="搜索装备/申请人" prefix={<SearchOutlined />} allowClear
+            value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} style={{ width: 200 }} />
+          <Select placeholder="装等" allowClear style={{ width: 90 }}
+            onChange={(v: number | undefined) => { setKeyword(v ? `P${v}` : ''); }}>
+            {[4,5,6,7,8,9,10,11,12].map(g => <Select.Option key={g} value={g}>P{g}</Select.Option>)}
+          </Select>
           <Button type="primary" onClick={handleSearch}>查询</Button>
         </Space>
         {/* 批量操作栏 */}
@@ -426,16 +460,32 @@ export default function ResupplyPage() {
       </Drawer>
 
       {/* 手动创建弹窗 */}
-      <Modal title="手动创建补装申请" open={createModal} onCancel={() => setCreateModal(false)} footer={null} destroyOnClose>
-        <Form form={createForm} onFinish={handleCreate} layout="vertical" initialValues={{ quantity: 1, applyType: '补装' }}>
-          <Form.Item name="equipmentName" label="装备名称" rules={[{ required: true }]}><Input /></Form.Item>
+      <Modal title="手动创建补装申请" open={createModal} onCancel={() => { setCreateModal(false); setSelectedCatalogItem(null); setCatalogOptions([]); }} footer={null} destroyOnClose>
+        <Form form={createForm} onFinish={(values: any) => {
+          if (!selectedCatalogItem) { message.warning('请从预置装备库中选择装备'); return; }
+          handleCreate(values);
+          }} layout="vertical" initialValues={{ quantity: 1, applyType: '手动创建' }}>
+          <Form.Item name="equipmentName" label="装备名称（搜索预置装备库）" rules={[{ required: true }]}>
+            <AutoComplete
+              options={catalogOptions}
+              onSearch={handleCatalogSearch}
+              onSelect={handleCatalogSelect}
+              placeholder="输入装备名称搜索预置库..."
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+          {selectedCatalogItem && (
+            <div style={{ marginBottom: 12, padding: 8, background: '#f6ffed', borderRadius: 6, fontSize: 12 }}>
+              已选：{selectedCatalogItem.name} | 等级{selectedCatalogItem.level} | 品质{selectedCatalogItem.quality} | P{selectedCatalogItem.gearScore} | {selectedCatalogItem.category}
+            </div>
+          )}
           <Space>
             <Form.Item name="quantity" label="数量" rules={[{ required: true }]}><InputNumber min={1} /></Form.Item>
             <Form.Item name="applyType" label="类型">
-              <Select style={{ width: 120 }}>
-                <Select.Option value="补装">补装</Select.Option>
-                <Select.Option value="OC碎">OC碎</Select.Option>
-                <Select.Option value="其他">其他</Select.Option>
+              <Select style={{ width: 130 }}>
+                <Select.Option value="死亡补装">死亡补装</Select.Option>
+                <Select.Option value="REOC">REOC</Select.Option>
+                <Select.Option value="手动创建">手动创建</Select.Option>
               </Select>
             </Form.Item>
           </Space>

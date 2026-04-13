@@ -52,6 +52,10 @@ export enum UserStatus {
 
 // ========== 补装申请类型 ==========
 export enum ApplyType {
+  DEATH_RESUPPLY = '死亡补装',
+  REOC = 'REOC',
+  MANUAL = '手动创建',
+  // 兼容旧数据
   RESUPPLY = '补装',
   OC_BROKEN = 'OC碎',
   OTHER = '其他',

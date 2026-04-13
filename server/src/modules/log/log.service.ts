@@ -14,12 +14,16 @@ export class LogService {
     private taskRepo: Repository<ScheduledTask>,
   ) {}
 
-  async findAll(query: QueryLogDto, guildId?: number) {
+  async findAll(query: QueryLogDto, guildId?: number | null) {
     const page = query.page || 1;
     const pageSize = query.pageSize || 20;
     const qb = this.logRepo.createQueryBuilder('log');
 
-    if (guildId) qb.andWhere('log.guildId = :guildId', { guildId });
+    if (guildId === null) {
+      qb.andWhere('log.guildId IS NULL');
+    } else if (guildId) {
+      qb.andWhere('log.guildId = :guildId', { guildId });
+    }
     if (query.module) qb.andWhere('log.module = :module', { module: query.module });
     if (query.action) qb.andWhere('log.action = :action', { action: query.action });
     if (query.userId) qb.andWhere('log.userId = :userId', { userId: query.userId });

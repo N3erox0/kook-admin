@@ -128,11 +128,38 @@ export class KookController {
     return this.kookService.getGuildView(guildId);
   }
 
-  /** 获取频道列表 */
+  /** 获取频道列表（优先使用公会独立Token） */
   @Get('channels')
   @UseGuards(JwtAuthGuard)
   async getChannels(@Query('guild_id') guildId?: string) {
+    // 尝试从数据库获取该KOOK服务器绑定的公会Token
+    if (guildId) {
+      const guild = await this.syncService.findGuildByKookId(guildId);
+      if (guild?.kookBotToken) {
+        return this.kookService.getChannelList(guildId, guild.kookBotToken);
+      }
+    }
     return this.kookService.getChannelList(guildId);
+  }
+
+  /** 验证用户在KOOK服务器是否为管理员 */
+  @Post('verify-admin')
+  @UseGuards(JwtAuthGuard)
+  async verifyAdmin(@Body() body: { kookUserId: string; guildId: string }) {
+    try {
+      const userView = await this.kookService.getUserView(body.kookUserId, body.guildId);
+      // KOOK 用户角色列表，检查是否包含管理权限
+      // role_id=0 为默认角色（@全体成员），如果用户有其他角色可能是管理员
+      const roles = userView?.roles || [];
+      const guildView = await this.kookService.getGuildView(body.guildId);
+      // 检查是否为服务器主（master_id）
+      const isMaster = guildView?.user_id === body.kookUserId || (guildView as any)?.master_id === body.kookUserId;
+      // 检查是否有除默认角色外的其他角色（通常管理员会分配角色）
+      const hasAdminRole = roles.length > 1 || roles.some((r: number) => r !== 0);
+      return { isAdmin: isMaster || hasAdminRole, isMaster, roles };
+    } catch (err: any) {
+      return { isAdmin: false, error: err.message };
+    }
   }
 
   /** 获取角色列表 */

@@ -7,8 +7,7 @@ import { GuildGuard } from '../../common/guards/guild.guard';
 import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
 import { GuildRoles } from '../../common/decorators/guild-roles.decorator';
 import { GuildRole } from '../../common/constants/enums';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('操作日志')
 @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
@@ -35,6 +34,31 @@ export class LogController {
   @Get('scheduled-tasks')
   @ApiOperation({ summary: '定时任务执行记录' })
   async getScheduledTasks() {
+    return this.logService.getScheduledTasks();
+  }
+}
+
+/** SSVIP 专属日志控制器（不需要公会上下文） */
+@ApiTags('SSVIP操作日志')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
+@Controller('api/admin/logs')
+export class LogAdminController {
+  constructor(private readonly logService: LogService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'SSVIP操作日志（guild_id IS NULL）' })
+  findAll(@Query() query: QueryLogDto, @CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      return { list: [], total: 0 };
+    }
+    return this.logService.findAll(query, null);
+  }
+
+  @Get('scheduled-tasks')
+  @ApiOperation({ summary: '定时任务执行记录' })
+  async getScheduledTasks(@CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') return [];
     return this.logService.getScheduledTasks();
   }
 }

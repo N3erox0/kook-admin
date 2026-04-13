@@ -5,6 +5,10 @@ export class OperationLog {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @Index('idx_logs_guild')
+  @Column({ type: 'int', nullable: true, name: 'guild_id', comment: '公会ID（SSVIP操作为NULL）' })
+  guildId: number;
+
   @Index('idx_logs_user')
   @Column({ name: 'user_id', nullable: true, comment: '操作人' })
   userId: number;

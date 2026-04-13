@@ -33,6 +33,7 @@ export interface InviteCode {
   boundGuildName: string | null;
   usedAt: string | null;
   createdBy: number | null;
+  createSource: string;
   remark: string | null;
   createdAt: string;
   updatedAt: string;
@@ -110,6 +111,7 @@ export interface GuildResupply {
   mapName: string | null;
   gameId: string | null;
   ocrGuildName: string | null;
+  kookMessageTime: string | null;
   createdAt: string;
   logs?: ResupplyLog[];
 }
@@ -172,10 +174,10 @@ export const RESUPPLY_STATUS: Record<number, string> = { 0: '待处理', 1: '已
 export const QUALITY_LABELS = ['白', '绿', '蓝', '紫', '橙'];
 
 export const INVITE_CODE_STATUS: Record<string, { label: string; color: string }> = {
-  enabled: { label: '启用', color: 'green' },
-  used: { label: '已使用', color: 'blue' },
-  disabled: { label: '未启用', color: 'default' },
-  revoked: { label: '作废', color: 'red' },
+  disabled: { label: '未激活', color: 'default' },
+  enabled: { label: '已启用', color: 'green' },
+  used: { label: '已激活', color: 'blue' },
+  revoked: { label: '无效', color: 'red' },
 };
 
 export const ROLE_LABELS: Record<string, string> = {

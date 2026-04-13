@@ -22,11 +22,11 @@ const allMenuItems = [
   { key: '/admin/dashboard', icon: <DashboardOutlined />, label: '控制台', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['ssvip'] },
-  { key: '/admin/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
-  { key: '/admin/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
-  { key: '/admin/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
+  { key: '/admin/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
+  { key: '/admin/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'ssvip', 'resupply_staff'] },
+  { key: '/admin/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'ssvip', 'inventory_admin'] },
   { key: '/admin/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
-  { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin'] },
+  { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin', 'ssvip'] },
   { key: '/admin/settings', icon: <SettingOutlined />, label: '公会设置', roles: ['super_admin'] },
 ];
 
@@ -38,7 +38,9 @@ export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
 
   const currentGuild = guilds.find((g) => g.guildId === currentGuildId);
-  const effectiveRole = currentGuildRole || user?.globalRole || '';
+  // SSVIP 用户始终使用 globalRole，不被公会角色覆盖
+  const isSSVIP = user?.globalRole === 'ssvip';
+  const effectiveRole = isSSVIP ? 'ssvip' : (currentGuildRole || user?.globalRole || '');
   const currentPath = location.pathname;
   const selectedKey = allMenuItems.find(m => currentPath === m.key)?.key
     || '/admin/' + location.pathname.split('/').slice(2).join('/');
@@ -54,8 +56,6 @@ export default function AppLayout() {
     logout();
     navigate('/login');
   };
-
-  const isSSVIP = user?.globalRole === 'ssvip';
 
   const userMenuItems: MenuProps['items'] = [
     {

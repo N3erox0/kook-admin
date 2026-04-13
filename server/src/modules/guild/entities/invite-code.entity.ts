@@ -26,6 +26,9 @@ export class InviteCode {
   @Column({ name: 'created_by', nullable: true, comment: '创建人ID' })
   createdBy: number;
 
+  @Column({ type: 'varchar', length: 10, default: '01', name: 'create_source', comment: '创建途径: 01系统手动 02BOT自动' })
+  createSource: string;
+
   @Column({ type: 'varchar', length: 200, nullable: true, comment: '备注' })
   remark: string;
 

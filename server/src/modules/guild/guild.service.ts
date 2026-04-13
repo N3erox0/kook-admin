@@ -39,21 +39,43 @@ export class GuildService {
     return { valid: true, message: '邀请码有效' };
   }
 
+  // 12位随机邀请码字符集（排除 I/O/o/l 避免混淆）
+  private static readonly INVITE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789';
+
+  private generateInviteCode12(): string {
+    const chars = GuildService.INVITE_CHARSET;
+    let code = '';
+    for (let i = 0; i < 12; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
   /** 批量生成邀请码 */
   async generateInviteCodes(dto: GenerateInviteCodesDto, userId: number): Promise<InviteCode[]> {
     const codes: InviteCode[] = [];
-    const prefix = dto.prefix || 'KOOK';
-    for (let i = 0; i < dto.count; i++) {
-      const code = `${prefix}-${uuidv4().slice(0, 8).toUpperCase()}`;
+    const count = dto.count || 1;
+    for (let i = 0; i < count; i++) {
+      // 确保唯一性
+      let code: string;
+      let attempts = 0;
+      do {
+        code = this.generateInviteCode12();
+        const exists = await this.inviteRepo.findOne({ where: { code } });
+        if (!exists) break;
+        attempts++;
+      } while (attempts < 10);
+
       const invite = this.inviteRepo.create({
         code,
-        status: InviteCodeStatus.DISABLED, // 默认未启用，需手动启用
+        status: InviteCodeStatus.DISABLED,
         createdBy: userId,
+        createSource: '01',
         remark: dto.remark || null,
       });
       codes.push(await this.inviteRepo.save(invite));
     }
-    this.logger.log(`生成 ${dto.count} 个邀请码, 操作人: ${userId}`);
+    this.logger.log(`生成 ${count} 个邀请码, 操作人: ${userId}`);
     return codes;
   }
 

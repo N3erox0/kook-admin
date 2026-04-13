@@ -1,45 +1,60 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Tag, Space, Modal, Form, InputNumber, Input, Typography, message, Popconfirm, Tooltip } from 'antd';
-import { PlusOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Tag, Space, Modal, Form, Input, Typography, message, Popconfirm, Tooltip, Select, Drawer } from 'antd';
+import { PlusOutlined, CopyOutlined, ReloadOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
 import { getAllInviteCodes, generateInviteCodes, updateInviteCodeStatus } from '@/api/guild';
-import { INVITE_CODE_STATUS } from '@/types';
+import { useNavigate } from 'react-router-dom';
 import type { InviteCode } from '@/types';
 import dayjs from 'dayjs';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
+
+const STATUS_MAP: Record<string, { label: string; color: string }> = {
+  disabled: { label: '未激活', color: 'default' },
+  enabled: { label: '已启用', color: 'green' },
+  used: { label: '已激活', color: 'blue' },
+  revoked: { label: '无效', color: 'red' },
+};
+
+const SOURCE_MAP: Record<string, { label: string; color: string }> = {
+  '01': { label: '系统手动', color: 'cyan' },
+  '02': { label: 'BOT自动', color: 'purple' },
+};
 
 export default function InviteCodePage() {
+  const navigate = useNavigate();
   const [codes, setCodes] = useState<InviteCode[]>([]);
+  const [filteredCodes, setFilteredCodes] = useState<InviteCode[]>([]);
   const [loading, setLoading] = useState(false);
-  const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [generateLoading, setGenerateLoading] = useState(false);
-  const [form] = Form.useForm();
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [detailDrawer, setDetailDrawer] = useState(false);
+  const [detailItem, setDetailItem] = useState<InviteCode | null>(null);
 
   const fetchCodes = async () => {
     setLoading(true);
     try {
       const res: any = await getAllInviteCodes();
-      setCodes(res || []);
-    } catch {
-    } finally {
-      setLoading(false);
-    }
+      const list = res || [];
+      setCodes(list);
+      applyFilter(list, statusFilter);
+    } catch {} finally { setLoading(false); }
+  };
+
+  const applyFilter = (list: InviteCode[], status?: string) => {
+    if (!status) setFilteredCodes(list);
+    else setFilteredCodes(list.filter(c => c.status === status));
   };
 
   useEffect(() => { fetchCodes(); }, []);
+  useEffect(() => { applyFilter(codes, statusFilter); }, [statusFilter]);
 
-  const handleGenerate = async (values: { count: number; prefix?: string; remark?: string }) => {
+  const handleGenerate = async () => {
     setGenerateLoading(true);
     try {
-      await generateInviteCodes(values);
-      message.success(`成功生成 ${values.count} 个邀请码`);
-      setGenerateModalOpen(false);
-      form.resetFields();
+      await generateInviteCodes({ count: 1 });
+      message.success('邀请码已生成');
       fetchCodes();
-    } catch {
-    } finally {
-      setGenerateLoading(false);
-    }
+    } catch {} finally { setGenerateLoading(false); }
   };
 
   const handleStatusChange = async (id: number, status: string) => {
@@ -47,22 +62,24 @@ export default function InviteCodePage() {
       await updateInviteCodeStatus(id, status);
       message.success('状态更新成功');
       fetchCodes();
-    } catch {
-    }
+    } catch {}
   };
 
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code).then(() => message.success('已复制'));
   };
 
+  const openDetail = (record: InviteCode) => {
+    setDetailItem(record);
+    setDetailDrawer(true);
+  };
+
   const columns = [
     {
-      title: '邀请码',
-      dataIndex: 'code',
-      key: 'code',
+      title: '邀请码', dataIndex: 'code', key: 'code', width: 180,
       render: (code: string) => (
         <Space>
-          <code style={{ fontSize: 13, fontWeight: 600 }}>{code}</code>
+          <code style={{ fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>{code}</code>
           <Tooltip title="复制">
             <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyCode(code)} />
           </Tooltip>
@@ -70,69 +87,48 @@ export default function InviteCodePage() {
       ),
     },
     {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
+      title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (status: string) => {
-        const info = INVITE_CODE_STATUS[status] || { label: status, color: 'default' };
+        const info = STATUS_MAP[status] || { label: status, color: 'default' };
         return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
     {
-      title: '绑定公会',
-      dataIndex: 'boundGuildName',
-      key: 'boundGuildName',
-      render: (name: string | null) => name || '-',
+      title: '创建途径', dataIndex: 'createSource', key: 'source', width: 100,
+      render: (v: string) => {
+        const info = SOURCE_MAP[v] || { label: v || '未知', color: 'default' };
+        return <Tag color={info.color}>{info.label}</Tag>;
+      },
     },
     {
-      title: '备注',
-      dataIndex: 'remark',
-      key: 'remark',
-      render: (v: string | null) => v || '-',
+      title: '绑定公会', dataIndex: 'boundGuildName', key: 'guild', width: 140,
+      render: (name: string | null) => name ? <Text strong>{name}</Text> : <Text type="secondary">-</Text>,
     },
     {
-      title: '创建时间',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
-      width: 170,
+      title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 150,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-',
     },
     {
-      title: '使用时间',
-      dataIndex: 'usedAt',
-      key: 'usedAt',
-      width: 170,
+      title: '使用时间', dataIndex: 'usedAt', key: 'usedAt', width: 150,
       render: (v: string | null) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-',
     },
     {
-      title: '操作',
-      key: 'actions',
-      width: 200,
-      render: (_: any, record: InviteCode) => {
-        if (record.status === 'used') {
-          return <Tag>已使用（不可修改）</Tag>;
-        }
-        return (
-          <Space size="small">
-            {record.status !== 'enabled' && (
-              <Popconfirm title="确认启用此邀请码？" onConfirm={() => handleStatusChange(record.id, 'enabled')}>
-                <Button size="small" type="link">启用</Button>
-              </Popconfirm>
-            )}
-            {record.status !== 'disabled' && record.status !== 'revoked' && (
-              <Popconfirm title="确认停用此邀请码？" onConfirm={() => handleStatusChange(record.id, 'disabled')}>
-                <Button size="small" type="link">停用</Button>
-              </Popconfirm>
-            )}
-            {record.status !== 'revoked' && (
-              <Popconfirm title="确认作废此邀请码？作废后不可恢复" onConfirm={() => handleStatusChange(record.id, 'revoked')}>
-                <Button size="small" type="link" danger>作废</Button>
-              </Popconfirm>
-            )}
-          </Space>
-        );
-      },
+      title: '操作', key: 'actions', width: 160, fixed: 'right' as const,
+      render: (_: any, record: InviteCode) => (
+        <Space size="small">
+          <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => openDetail(record)}>详情</Button>
+          {record.status !== 'used' && record.status !== 'revoked' && (
+            <Popconfirm title="确认标记为无效？无效后不可恢复" onConfirm={() => handleStatusChange(record.id, 'revoked')}>
+              <Button size="small" type="link" danger>标记无效</Button>
+            </Popconfirm>
+          )}
+          {record.status === 'disabled' && (
+            <Popconfirm title="确认启用此邀请码？" onConfirm={() => handleStatusChange(record.id, 'enabled')}>
+              <Button size="small" type="link">启用</Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
     },
   ];
 
@@ -141,47 +137,54 @@ export default function InviteCodePage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>邀请码管理</Title>
         <Space>
+          <Select placeholder="状态筛选" allowClear style={{ width: 130 }} value={statusFilter}
+            onChange={v => setStatusFilter(v)}>
+            {Object.entries(STATUS_MAP).map(([k, v]) => <Select.Option key={k} value={k}>{v.label}</Select.Option>)}
+          </Select>
           <Button icon={<ReloadOutlined />} onClick={fetchCodes}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setGenerateModalOpen(true)}>
-            生成邀请码
-          </Button>
+          <Popconfirm title="确认生成一个新的12位邀请码？" onConfirm={handleGenerate}>
+            <Button type="primary" icon={<PlusOutlined />} loading={generateLoading}>生成邀请码</Button>
+          </Popconfirm>
         </Space>
       </div>
 
       <Card>
         <Table
           columns={columns}
-          dataSource={codes}
+          dataSource={filteredCodes}
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
           size="middle"
+          scroll={{ x: 1000 }}
         />
       </Card>
 
-      <Modal
-        title="生成邀请码"
-        open={generateModalOpen}
-        onCancel={() => { setGenerateModalOpen(false); form.resetFields(); }}
-        footer={null}
-      >
-        <Form form={form} onFinish={handleGenerate} layout="vertical" initialValues={{ count: 5, prefix: 'KOOK' }}>
-          <Form.Item name="count" label="生成数量" rules={[{ required: true }]}>
-            <InputNumber min={1} max={100} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="prefix" label="编码前缀">
-            <Input placeholder="默认 KOOK" />
-          </Form.Item>
-          <Form.Item name="remark" label="备注">
-            <Input.TextArea rows={2} placeholder="可选" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={generateLoading} block>
-              生成
-            </Button>
-          </Form.Item>
-        </Form>
-      </Modal>
+      {/* 详情 Drawer */}
+      <Drawer title="邀请码详情" open={detailDrawer} onClose={() => setDetailDrawer(false)} width={420}>
+        {detailItem && (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div><Text strong>邀请码：</Text><code style={{ fontSize: 16, fontWeight: 600 }}>{detailItem.code}</code></div>
+            <div><Text strong>状态：</Text><Tag color={STATUS_MAP[detailItem.status]?.color}>{STATUS_MAP[detailItem.status]?.label || detailItem.status}</Tag></div>
+            <div><Text strong>创建途径：</Text><Tag color={SOURCE_MAP[(detailItem as any).createSource]?.color}>{SOURCE_MAP[(detailItem as any).createSource]?.label || '未知'}</Tag></div>
+            <div><Text strong>创建时间：</Text>{dayjs(detailItem.createdAt).format('YYYY-MM-DD HH:mm:ss')}</div>
+            {detailItem.usedAt && <div><Text strong>使用时间：</Text>{dayjs(detailItem.usedAt).format('YYYY-MM-DD HH:mm:ss')}</div>}
+            {detailItem.remark && <div><Text strong>备注：</Text>{detailItem.remark}</div>}
+
+            {detailItem.status === 'used' && detailItem.boundGuildName && (
+              <Card size="small" style={{ background: '#f6ffed', borderColor: '#b7eb8f' }}>
+                <div><Text strong>已绑定公会：</Text><Text>{detailItem.boundGuildName}</Text></div>
+                {detailItem.boundGuildId && (
+                  <Button type="link" icon={<LinkOutlined />} style={{ padding: 0, marginTop: 8 }}
+                    onClick={() => { setDetailDrawer(false); navigate('/admin/dashboard'); }}>
+                    查看该公会详情
+                  </Button>
+                )}
+              </Card>
+            )}
+          </Space>
+        )}
+      </Drawer>
     </div>
   );
 }

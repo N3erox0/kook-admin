@@ -7,12 +7,13 @@ import { KookMessageService } from './kook-message.service';
 import { KookController } from './kook.controller';
 import { GuildMember } from '../member/entities/guild-member.entity';
 import { Guild } from '../guild/entities/guild.entity';
+import { InviteCode } from '../guild/entities/invite-code.entity';
 import { OcrModule } from '../ocr/ocr.module';
 import { ResupplyModule } from '../resupply/resupply.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([GuildMember, Guild]),
+    TypeOrmModule.forFeature([GuildMember, Guild, InviteCode]),
     OcrModule,
     forwardRef(() => ResupplyModule),
   ],

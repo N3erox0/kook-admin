@@ -43,7 +43,17 @@ export default function GuildSettingsPage() {
     } catch { setChannels([]); } finally { setChannelsLoading(false); }
   };
 
-  useEffect(() => { fetchGuild(); }, [guildId]);
+  useEffect(() => {
+    fetchGuild().then(() => {
+      // 自动加载频道列表
+      if (guild?.kookGuildId) fetchChannels();
+    });
+  }, [guildId]);
+
+  // guild变化后也自动拉频道
+  useEffect(() => {
+    if (guild?.kookGuildId && channels.length === 0) fetchChannels();
+  }, [guild?.kookGuildId]);
 
   const handleSave = async (values: any) => {
     setSaving(true);

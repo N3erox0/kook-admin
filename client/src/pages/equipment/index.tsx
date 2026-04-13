@@ -289,7 +289,25 @@ export default function EquipmentPage() {
         />
       ),
     },
-    { title: '位置', dataIndex: 'location', key: 'location', width: 120, ellipsis: true },
+    {
+      title: '位置', dataIndex: 'location', key: 'location', width: 150,
+      render: (v: string, record: any) => (
+        <Input
+          size="small"
+          defaultValue={v || ''}
+          style={{ width: 130 }}
+          onBlur={(e) => {
+            const newVal = e.target.value.trim();
+            if (newVal !== (v || '')) {
+              updateInventoryFields(guildId, record.id, { location: newVal })
+                .then(() => { message.success('位置已更新'); fetchList(); })
+                .catch(() => {});
+            }
+          }}
+          onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+        />
+      ),
+    },
     {
       title: '操作', key: 'actions', width: isSuperAdmin ? 130 : 80,
       render: (_: any, record: any) => (
@@ -335,6 +353,11 @@ export default function EquipmentPage() {
           <Form.Item name="quality">
             <Select placeholder="品质" allowClear style={{ width: 90 }}>
               {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
+            </Select>
+          </Form.Item>
+          <Form.Item name="gearScore">
+            <Select placeholder="装等" allowClear style={{ width: 90 }}>
+              {[4,5,6,7,8,9,10,11,12].map(g => <Select.Option key={g} value={g}>P{g}</Select.Option>)}
             </Select>
           </Form.Item>
           <Form.Item><Button type="primary" htmlType="submit">查询</Button></Form.Item>
