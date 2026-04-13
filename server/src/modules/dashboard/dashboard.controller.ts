@@ -41,8 +41,8 @@ export class DashboardController {
     if (!guild) {
       return { success: false, message: '公会不存在' };
     }
-    if (!guild.kookBotToken || !guild.kookGuildId) {
-      return { success: false, message: '公会未配置 KOOK Bot Token 或服务器 ID，请在公会设置中配置' };
+    if (!guild.kookGuildId || guild.kookGuildId.startsWith('test-')) {
+      return { success: false, message: '公会未配置有效的 KOOK 服务器 ID，请在公会设置中配置' };
     }
     try {
       const result = await this.kookSyncService.syncGuildMembers(guild);

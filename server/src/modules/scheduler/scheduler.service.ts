@@ -33,7 +33,7 @@ export class SchedulerService {
     const startTime = Date.now();
 
     for (const guild of guilds) {
-      if (!guild.kookBotToken || !guild.kookGuildId) continue;
+      if (!guild.kookGuildId || guild.kookGuildId.startsWith('test-')) continue;
       this.logger.log(`同步公会: ${guild.name}`);
       await this.kookSyncService.syncGuildInfo(guild);
       await this.kookSyncService.syncGuildMembers(guild);

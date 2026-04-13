@@ -82,3 +82,13 @@
 | F-041 | Albion装备导入后端 | completed | 2026-04-13 19:50 | catalog.service importFromAlbion()+albionId字段+category解析+迁移SQL |
 | F-042 | Albion装备导入前端 | completed | 2026-04-13 19:50 | catalog页"导入Albion装备"按钮+Popconfirm+loading |
 | F-043 | Albion CLI导入脚本 | completed | 2026-04-13 19:50 | scripts/import-albion-data.ts生成SQL INSERT语句 |
+| T-001 | syncMembers Token fallback | completed | 2026-04-13 22:40 | 优先公会Token，假Token(test-)fallback全局Token |
+| T-003 | syncMembers超管保护 | completed | 2026-04-13 22:40 | 标记离开时跳过super_admin角色，防误标 |
+| T-006 | SSVIP控制台卡片跳转 | completed | 2026-04-13 22:40 | 公会数/用户/邀请码/参考库卡片onClick跳转 |
+| T-007 | SSVIP控制台重构 | completed | 2026-04-13 22:40 | 公会列表Table+expandable展开成员/库存/补装 |
+| T-008 | Albion过滤规则优化 | completed | 2026-04-13 23:00 | 排除材料/采集/技能书/鱼等，保留装备/药水/食物/坐骑 |
+| T-009 | Albion品质解析 | completed | 2026-04-13 23:00 | @N后缀→quality，gearScore=tier+quality |
+| T-011 | KOOK OAuth URL修复 | completed | 2026-04-13 23:19 | /oauth2/authorize→/app/oauth2/authorize |
+| T-012 | KOOK OAuth Token交换格式 | completed | 2026-04-13 23:19 | Content-Type改为application/json |
+| T-013 | dashboard syncMembers前置检查修复 | completed | 2026-04-13 23:24 | 去掉kookBotToken必填检查，与kook-sync一致 |
+| T-014 | scheduler定时任务前置检查修复 | completed | 2026-04-13 23:24 | 去掉kookBotToken必填检查，与kook-sync一致 |
