@@ -46,7 +46,7 @@ export default function InviteCodePage() {
   };
 
   useEffect(() => { fetchCodes(); }, []);
-  useEffect(() => { applyFilter(codes, statusFilter); }, [statusFilter]);
+  useEffect(() => { applyFilter(codes, statusFilter); }, [statusFilter, codes]);
 
   const handleGenerate = async () => {
     setGenerateLoading(true);
@@ -62,7 +62,9 @@ export default function InviteCodePage() {
       await updateInviteCodeStatus(id, status);
       message.success('状态更新成功');
       fetchCodes();
-    } catch {}
+    } catch (err: any) {
+      message.error(err?.message || '状态更新失败');
+    }
   };
 
   const copyCode = (code: string) => {

@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'kook-admin-server',
-      script: 'dist/main.js',
+      script: 'dist/src/main.js',
       cwd: '/opt/kook-admin/server',
       instances: 1,
       autorestart: true,

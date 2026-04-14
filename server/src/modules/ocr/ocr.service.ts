@@ -21,6 +21,7 @@ export class OcrService {
     private configService: ConfigService,
     private catalogService: CatalogService,
     private equipmentService: EquipmentService,
+    private imageMatchService: ImageMatchService,
   ) {}
 
   /** 创建 OCR 识别批次并执行识别 */
@@ -42,11 +43,41 @@ export class OcrService {
     return saved;
   }
 
-  /** 执行 OCR 识别并创建 item 记录 */
+  /** 执行 OCR 识别并创建 item 记录（优先图片相似度匹配，fallback文字OCR） */
   private async processRecognition(batch: OcrRecognitionBatch): Promise<void> {
     try {
-      const raw = await this.recognizeImage(batch.imageUrl);
-      const enriched = await this.enrichWithCatalog(raw);
+      let enriched: ParsedEquipment[] = [];
+
+      // 优先尝试图片相似度匹配
+      try {
+        const imageBuffer = await this.fetchImageBuffer(batch.imageUrl);
+        if (imageBuffer) {
+          const matches = await this.imageMatchService.matchFromScreenshot(imageBuffer);
+          if (matches.length > 0) {
+            enriched = matches.map(m => ({
+              name: m.catalogName,
+              catalogId: m.catalogId,
+              catalogName: m.catalogName,
+              level: m.level,
+              quality: m.quality,
+              category: m.category,
+              gearScore: m.gearScore,
+              quantity: 1,
+              confidence: m.confidence,
+              matchScore: m.confidence,
+            }));
+            this.logger.log(`图片相似度匹配成功: ${matches.length} 件装备`);
+          }
+        }
+      } catch (imgErr: any) {
+        this.logger.warn(`图片相似度匹配失败，fallback 文字 OCR: ${imgErr.message}`);
+      }
+
+      // 如果图片匹配无结果，fallback 文字 OCR
+      if (enriched.length === 0) {
+        const raw = await this.recognizeImage(batch.imageUrl);
+        enriched = await this.enrichWithCatalog(raw);
+      }
 
       const items: OcrRecognitionItem[] = [];
       for (const eq of enriched) {
@@ -70,8 +101,9 @@ export class OcrService {
 
       await this.itemRepo.save(items);
 
-      batch.status = 'recognized';
+      batch.status = items.length > 0 ? 'recognized' : 'failed';
       batch.totalItems = items.length;
+      batch.errorMessage = items.length === 0 ? '未识别到装备，请确认上传的是装备截图或参考库已初始化图片指纹' : null;
       await this.batchRepo.save(batch);
 
       this.logger.log(`OCR批次 ${batch.batchNo} 识别完成, ${items.length} 件装备`);
@@ -79,6 +111,22 @@ export class OcrService {
       batch.status = 'failed';
       batch.errorMessage = err.message;
       await this.batchRepo.save(batch);
+    }
+  }
+
+  /** 下载图片为 Buffer */
+  private async fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
+    let fullUrl = imageUrl;
+    if (imageUrl && !imageUrl.startsWith('http')) {
+      const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:3000';
+      fullUrl = `${baseUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+    try {
+      const response = await fetch(fullUrl, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return null;
+      return Buffer.from(await response.arrayBuffer());
+    } catch {
+      return null;
     }
   }
 

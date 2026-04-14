@@ -219,10 +219,11 @@ export default function ResupplyPage() {
       },
     },
     {
-      title: '待补装备', dataIndex: 'equipmentIds', key: 'equip', ellipsis: true,
-      render: (v: string) => {
-        if (!v) return '-';
-        const ids = v.split(',').filter(Boolean);
+      title: '待补装备', key: 'equip', ellipsis: true,
+      render: (_: any, r: any) => {
+        if (r.equipmentNames) return <span>{r.equipmentNames}</span>;
+        if (!r.equipmentIds) return '-';
+        const ids = r.equipmentIds.split(',').filter(Boolean);
         return <span>{ids.length}件装备 (ID: {ids.slice(0, 3).join(',')}{ ids.length > 3 ? '...' : '' })</span>;
       },
     },

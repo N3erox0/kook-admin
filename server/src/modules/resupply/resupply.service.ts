@@ -5,6 +5,7 @@ import { GuildResupply } from './entities/guild-resupply.entity';
 import { GuildResupplyLog } from './entities/guild-resupply-log.entity';
 import { EquipmentService } from '../equipment/equipment.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
+import { CatalogService } from '../equipment-catalog/catalog.service';
 import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto } from './dto/resupply.dto';
 import { ResupplyStatus } from '../../common/constants/enums';
 import * as crypto from 'crypto';
@@ -66,7 +67,39 @@ export class ResupplyService {
 
     qb.orderBy('r.createdAt', 'DESC').skip((page - 1) * pageSize).take(pageSize);
     const [list, total] = await qb.getManyAndCount();
-    return { list, total, page, pageSize };
+
+    // 解析 equipmentIds → 装备名称
+    const enrichedList = await this.enrichEquipmentNames(list);
+    return { list: enrichedList, total, page, pageSize };
+  }
+
+  /** 将补装记录中的 equipmentIds (逗号分隔catalog ID) 解析为装备名称 */
+  private async enrichEquipmentNames(items: GuildResupply[]): Promise<any[]> {
+    const allIds = new Set<number>();
+    for (const item of items) {
+      if (item.equipmentIds) {
+        item.equipmentIds.split(',').filter(Boolean).map(Number).forEach(id => { if (!isNaN(id)) allIds.add(id); });
+      }
+    }
+    if (allIds.size === 0) return items;
+
+    // 批量查询 catalog 名称
+    const catalogMap = new Map<number, { name: string; level: number; quality: number; gearScore: number; category: string }>();
+    for (const id of allIds) {
+      try {
+        const cat = await this.catalogService.findById(id);
+        if (cat) catalogMap.set(id, { name: cat.name, level: cat.level, quality: cat.quality, gearScore: cat.gearScore, category: cat.category });
+      } catch {}
+    }
+
+    return items.map(item => {
+      const ids = (item.equipmentIds || '').split(',').filter(Boolean).map(Number);
+      const names = ids.map(id => {
+        const cat = catalogMap.get(id);
+        return cat ? `${cat.level}${cat.quality}${cat.name} P${cat.gearScore}` : `ID:${id}`;
+      });
+      return { ...item, equipmentNames: names.join('、'), equipmentDetails: ids.map(id => catalogMap.get(id) || null) };
+    });
   }
 
   async findOne(guildId: number, id: number) {

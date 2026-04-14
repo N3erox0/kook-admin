@@ -1,6 +1,7 @@
 import { Controller, Post, Get, Put, Body, Param, Query, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { OcrService } from './ocr.service';
+import { ImageMatchService } from './image-match.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { GuildGuard } from '../../common/guards/guild.guard';
 import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
@@ -13,7 +14,10 @@ import { GuildRole } from '../../common/constants/enums';
 @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
 @Controller('api/guild/:guildId/ocr')
 export class OcrController {
-  constructor(private readonly ocrService: OcrService) {}
+  constructor(
+    private readonly ocrService: OcrService,
+    private readonly imageMatchService: ImageMatchService,
+  ) {}
 
   @Post('batch')
   @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
@@ -26,9 +30,16 @@ export class OcrController {
     @Request() req: any,
   ) {
     return this.ocrService.createBatch(
-      guildId, body.imageUrl, body.imageType || 'inventory',
+      guildId, body.imageUrl, body.imageType || 'equipment',
       user.sub || user.userId, req.guildMember?.nickname || user.username,
     );
+  }
+
+  @Post('generate-phash')
+  @GuildRoles(GuildRole.SUPER_ADMIN)
+  @ApiOperation({ summary: '批量生成装备图片指纹(pHash)' })
+  generatePhash() {
+    return this.imageMatchService.batchGeneratePhash();
   }
 
   @Get('batches')

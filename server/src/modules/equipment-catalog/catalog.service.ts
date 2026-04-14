@@ -203,10 +203,12 @@ export class CatalogService {
   }
 
   /** 搜索装备（模糊匹配，用于库存录入下拉） */
-  async search(keyword: string, limit = 50) {
+  async search(keyword: string, limit = 200) {
     return this.catalogRepo.createQueryBuilder('c')
       .where('c.name LIKE :kw', { kw: `%${keyword}%` })
-      .orderBy('c.name', 'ASC')
+      .orderBy('c.level', 'ASC')
+      .addOrderBy('c.quality', 'ASC')
+      .addOrderBy('c.name', 'ASC')
       .take(limit)
       .getMany();
   }
@@ -216,15 +218,16 @@ export class CatalogService {
   private static readonly ALBION_ITEMS_URL = 'https://raw.githubusercontent.com/broderickhyman/ao-bin-dumps/master/formatted/items.json';
   private static readonly ALBION_RENDER_URL = 'https://render.albiononline.com/v1/item/{name}.png?size=217';
 
-  // 排除规则（优先）
+  // 排除规则（优先）— 注意：_LEATHER/_CLOTH 改为精确材料匹配，避免误杀皮甲/布甲装备
   private static readonly EXCLUDE_KW = [
     'GATHER_', '_GATHER', '_ROCK', '_ORE', '_WOOD', '_FIBER', '_HIDE',
-    '_PLANKS', '_METALBAR', '_LEATHER', '_CLOTH', '_STONEBLOCK',
+    '_PLANKS', '_METALBAR', '_STONEBLOCK',
+    'LEATHER_ROYAL', 'CLOTH_ROYAL',
     '_LEVEL', 'ARTEFACT', 'SKILLBOOK', 'JOURNAL', 'FISH_', 'MOUNTUPGRADE',
     'FURNITURE', 'UNIQUE_FURNITURE', 'DECORATION', 'FARM', 'SEED',
     '_RUNE', '_SOUL', '_RELIC', '_SHARD', 'TRASH', 'TOKEN', 'EVENT_',
     'QUESTITEM', 'LOOTCHEST', 'UNIQUE_UNLOCK', 'VANITY', 'BACKPACK_SKIN',
-    'PAPERDOLL', 'EMOTE', 'FLAG', 'BANNER',
+    'PAPERDOLL', 'EMOTE', 'FLAG', 'BANNER', 'CREST',
   ];
 
   // 包含规则
@@ -262,6 +265,8 @@ export class CatalogService {
   private static isValidItem(name: string): boolean {
     const u = name.toUpperCase();
     if (CatalogService.EXCLUDE_KW.some(kw => u.includes(kw))) return false;
+    // 额外排除纯材料：T*_LEATHER 和 T*_CLOTH（不含 _SET/_HEAD/_ARMOR/_SHOES 等装备后缀）
+    if (/^T\d+_LEATHER$/.test(u) || /^T\d+_CLOTH$/.test(u)) return false;
     return CatalogService.INCLUDE_KW.some(kw => u.includes(kw));
   }
 
@@ -283,8 +288,8 @@ export class CatalogService {
 
   /**
    * 从 Albion Online 公开 API 拉取装备数据并导入参考库
+   * 每件装备自动生成 Q0~Q4 共5个品质变体，确保覆盖装等 40~84
    * @param minTier 最低阶数（0=全部，建议4）
-   * @param onProgress 进度回调
    */
   async importFromAlbion(minTier = 4): Promise<{
     total: number; imported: number; updated: number; skipped: number; failed: number;
@@ -299,27 +304,35 @@ export class CatalogService {
     const rawData: any[] = await response.json();
     this.logger.log(`原始数据 ${rawData.length} 条`);
 
-    // 2. 过滤物品（排除材料/采集装备，保留装备/药水/食物/坐骑）
+    // 2. 过滤物品 + 为每件装备生成 Q0~Q4 品质变体
     const items: { uniqueName: string; zhName: string; enName: string; tier: number; quality: number; imageUrl: string }[] = [];
     for (const r of rawData) {
       const name = r.UniqueName;
       if (!name) continue;
+      // 跳过已带 @N 后缀的（避免重复）
+      if (name.includes('@')) continue;
       if (!CatalogService.isValidItem(name)) continue;
       const tier = CatalogService.getTier(name);
       if (minTier > 0 && tier < minTier) continue;
 
       const lnames = r.LocalizedNames || {};
-      const quality = CatalogService.getQuality(name);
-      items.push({
-        uniqueName: name,
-        zhName: lnames['ZH-CN'] || lnames['ZH-TW'] || '',
-        enName: lnames['EN-US'] || '',
-        tier,
-        quality,
-        imageUrl: CatalogService.ALBION_RENDER_URL.replace('{name}', name),
-      });
+      const zhName = lnames['ZH-CN'] || lnames['ZH-TW'] || '';
+      const enName = lnames['EN-US'] || '';
+
+      // 为每件装备生成 Q0~Q4 共5个变体
+      for (let q = 0; q <= 4; q++) {
+        const uniqueWithQ = q === 0 ? name : `${name}@${q}`;
+        items.push({
+          uniqueName: uniqueWithQ,
+          zhName,
+          enName,
+          tier,
+          quality: q,
+          imageUrl: CatalogService.ALBION_RENDER_URL.replace('{name}', uniqueWithQ),
+        });
+      }
     }
-    this.logger.log(`过滤后物品 ${items.length} 件`);
+    this.logger.log(`过滤+品质展开后物品 ${items.length} 件（含 Q0~Q4 变体）`);
 
     // 3. Upsert 到数据库（以 albionId 去重）
     let imported = 0, updated = 0, skipped = 0, failed = 0;

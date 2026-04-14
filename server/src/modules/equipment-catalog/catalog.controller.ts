@@ -41,7 +41,7 @@ export class CatalogController {
   @Get('search')
   @ApiOperation({ summary: '模糊搜索装备（下拉用）' })
   search(@Query('keyword') keyword: string) {
-    return this.catalogService.search(keyword || '', 20);
+    return this.catalogService.search(keyword || '', 200);
   }
 
   @Get(':id')

@@ -31,6 +31,9 @@ export class EquipmentCatalog {
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'image_url', comment: '参考图' })
   imageUrl: string;
 
+  @Column({ type: 'varchar', length: 16, nullable: true, name: 'image_phash', comment: '图片感知哈希(pHash 64bit hex)' })
+  imagePhash: string;
+
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '描述' })
   description: string;
 
