@@ -92,3 +92,8 @@
 | T-012 | KOOK OAuth Token交换格式 | completed | 2026-04-13 23:19 | Content-Type改为application/json |
 | T-013 | dashboard syncMembers前置检查修复 | completed | 2026-04-13 23:24 | 去掉kookBotToken必填检查，与kook-sync一致 |
 | T-014 | scheduler定时任务前置检查修复 | completed | 2026-04-13 23:24 | 去掉kookBotToken必填检查，与kook-sync一致 |
+| R-001 | 补装表字段重构 | completed | 2026-04-14 14:30 | equipment_name→equipment_ids，删level/quality/gearScore/category |
+| R-002 | 补装Service重构 | completed | 2026-04-14 14:30 | 一条记录=一次事件=多装备ID，quantity=总件数，逐ID扣库存 |
+| R-003 | 前端补装列表重构 | completed | 2026-04-14 14:30 | 多装备名显示+手动创建多选列表模式 |
+| R-004 | 待识别工作区 | completed | 2026-04-14 14:30 | OCR batch增加source/kookUserId，KOOK<80%进待识别区 |
+| R-005 | KOOK消息处理重构 | completed | 2026-04-14 14:30 | 一条记录=一次事件，低置信度进待识别工作区 |

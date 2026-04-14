@@ -21,6 +21,15 @@ export class OcrRecognitionBatch {
   @Column({ type: 'varchar', length: 20, default: 'pending', comment: '状态: pending/recognized/confirmed/saved/failed' })
   status: string;
 
+  @Column({ type: 'varchar', length: 20, default: 'manual', comment: '来源: manual/kook' })
+  source: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'kook_user_id', comment: 'KOOK推送用户ID' })
+  kookUserId: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true, name: 'kook_nickname', comment: 'KOOK推送用户昵称' })
+  kookNickname: string;
+
   @Column({ type: 'int', default: 0, name: 'total_items', comment: '识别出的装备总数' })
   totalItems: number;
 

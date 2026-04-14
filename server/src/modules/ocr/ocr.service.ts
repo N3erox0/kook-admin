@@ -182,6 +182,54 @@ export class OcrService {
     return { saved };
   }
 
+  /** R-004: 创建 KOOK 来源的 OCR 批次（低置信度装备进入待识别工作区） */
+  async createKookBatch(guildId: number, imageUrl: string, kookUserId: string, kookNickname: string, lowConfItems: any[]): Promise<OcrRecognitionBatch> {
+    const batch = this.batchRepo.create({
+      guildId,
+      batchNo: `KOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      imageUrl,
+      imageType: 'kook',
+      status: 'recognized',
+      source: 'kook',
+      kookUserId,
+      kookNickname,
+      totalItems: lowConfItems.length,
+    });
+    const saved = await this.batchRepo.save(batch);
+
+    // 保存低置信度项
+    const items = lowConfItems.map(eq => this.itemRepo.create({
+      batchId: saved.id,
+      guildId,
+      equipmentName: eq.name,
+      matchedCatalogId: eq.catalogId || null,
+      matchedCatalogName: eq.catalogName || null,
+      level: eq.level || null,
+      quality: eq.quality ?? null,
+      category: eq.category || null,
+      gearScore: eq.gearScore || null,
+      quantity: eq.quantity || 1,
+      confidence: eq.matchScore ? Math.round(eq.matchScore * 100) : 0,
+      ocrRawText: eq.name,
+      status: 'pending',
+    }));
+    await this.itemRepo.save(items);
+
+    this.logger.log(`KOOK待识别批次 ${saved.batchNo}: ${lowConfItems.length} 件低置信度装备`);
+    return saved;
+  }
+
+  /** 获取待识别工作区列表（source=kook） */
+  async getKookPendingBatches(guildId: number, page = 1, pageSize = 20) {
+    const [list, total] = await this.batchRepo.findAndCount({
+      where: { guildId, source: 'kook' },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+    return { list, total, page, pageSize };
+  }
+
   // ===== 原有 OCR 识别方法 =====
 
   async recognizeImage(imageUrl: string): Promise<ParsedEquipment[]> {

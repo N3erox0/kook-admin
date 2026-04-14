@@ -20,22 +20,10 @@ export class GuildResupply {
   @Column({ type: 'varchar', length: 100, nullable: true, name: 'kook_nickname', comment: '申请人昵称' })
   kookNickname: string;
 
-  @Column({ type: 'varchar', length: 100, name: 'equipment_name', comment: '装备名称' })
-  equipmentName: string;
+  @Column({ type: 'varchar', length: 500, nullable: true, name: 'equipment_ids', comment: '待补装备ID列表（逗号分隔的catalog ID）' })
+  equipmentIds: string;
 
-  @Column({ type: 'int', nullable: true, comment: '等级 1~8' })
-  level: number;
-
-  @Column({ type: 'int', nullable: true, comment: '品质 0~4' })
-  quality: number;
-
-  @Column({ type: 'int', nullable: true, name: 'gear_score', comment: '装等' })
-  gearScore: number;
-
-  @Column({ type: 'varchar', length: 20, nullable: true, comment: '部位' })
-  category: string;
-
-  @Column({ type: 'int', default: 1, comment: '申请数量' })
+  @Column({ type: 'int', default: 0, comment: '待补装备总数量' })
   quantity: number;
 
   @Column({ type: 'varchar', length: 30, default: '补装', name: 'apply_type', comment: '申请类型' })

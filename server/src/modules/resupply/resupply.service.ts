@@ -4,7 +4,6 @@ import { Repository } from 'typeorm';
 import { GuildResupply } from './entities/guild-resupply.entity';
 import { GuildResupplyLog } from './entities/guild-resupply-log.entity';
 import { EquipmentService } from '../equipment/equipment.service';
-import { CatalogService } from '../equipment-catalog/catalog.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
 import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto } from './dto/resupply.dto';
 import { ResupplyStatus } from '../../common/constants/enums';
@@ -39,7 +38,6 @@ export class ResupplyService {
     @InjectRepository(GuildResupply) private resupplyRepo: Repository<GuildResupply>,
     @InjectRepository(GuildResupplyLog) private logRepo: Repository<GuildResupplyLog>,
     private equipmentService: EquipmentService,
-    private catalogService: CatalogService,
     private kookNotifyService: KookNotifyService,
   ) {}
 
@@ -51,16 +49,7 @@ export class ResupplyService {
 
     if (query.status !== undefined) qb.andWhere('r.status = :s', { s: query.status });
     if (query.keyword) {
-      // 支持 P8+堕神 格式：拆分装等+装备名
-      const gearScoreMatch = query.keyword.match(/^P(\d+)\s*[+＋]?\s*(.+)/i);
-      if (gearScoreMatch) {
-        const gs = parseInt(gearScoreMatch[1]);
-        const name = gearScoreMatch[2].trim();
-        qb.andWhere('r.gearScore = :gs', { gs });
-        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${name}%` });
-      } else {
-        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
-      }
+      qb.andWhere('(r.equipmentIds LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
     }
     if (query.applyType) qb.andWhere('r.applyType = :at', { at: query.applyType });
     if (query.room) qb.andWhere('r.resupplyRoom = :room', { room: query.room });
@@ -111,9 +100,24 @@ export class ResupplyService {
       dto['_dedupHash'] = hash;
     }
 
+    // equipment_ids 解析数量
+    const ids = (dto.equipmentIds || '').split(',').filter(Boolean);
+    const qty = dto.quantity || ids.length;
+
     const r = this.resupplyRepo.create({
-      ...dto,
       guildId,
+      guildMemberId: dto.guildMemberId,
+      kookUserId: dto.kookUserId,
+      kookNickname: dto.kookNickname,
+      equipmentIds: dto.equipmentIds,
+      quantity: qty,
+      applyType: dto.applyType || '手动创建',
+      reason: dto.reason,
+      screenshotUrl: dto.screenshotUrl,
+      kookMessageId: dto.kookMessageId,
+      killDate: dto.killDate,
+      mapName: dto.mapName,
+      gameId: dto.gameId,
       resupplyBox: dto.resupplyBox || parseResupplyBox(dto.kookNickname) || null,
       status: ResupplyStatus.PENDING,
       dedupHash: dto['_dedupHash'] || null,
@@ -123,7 +127,7 @@ export class ResupplyService {
     return saved;
   }
 
-  /** 从击杀详情创建多条补装申请 */
+  /** 从击杀详情创建一条补装申请（一次死亡=一条记录=多件装备ID） */
   async createFromKillDetail(guildId: number, data: {
     kookUserId: string;
     kookNickname: string;
@@ -132,59 +136,43 @@ export class ResupplyService {
     mapName: string;
     gameId: string;
     guild: string;
-    equipments: { name: string; level?: number; quality?: number; gearScore?: number; category?: string; catalogId?: number }[];
+    equipmentCatalogIds: number[]; // catalog ID 数组
     kookMessageId?: string;
-  }): Promise<{ created: number; skipped: number; details: any[] }> {
-    let created = 0, skipped = 0;
-    const details: any[] = [];
+  }): Promise<{ created: boolean; skipped: boolean; resupplyId?: number }> {
+    const dateStr = data.killDate || new Date().toISOString().slice(0, 10);
+    const hash = this.generateDedupHash(data.screenshotUrl, dateStr, data.kookUserId);
 
-    for (let i = 0; i < data.equipments.length; i++) {
-      const eq = data.equipments[i];
-      const dateStr = data.killDate || new Date().toISOString().slice(0, 10);
-      const hash = this.generateDedupHash(
-        `${data.screenshotUrl}_${eq.name}_${i}`,
-        dateStr,
-        data.kookUserId,
-      );
-
-      // 去重检查
-      const existing = await this.resupplyRepo.findOne({ where: { guildId, dedupHash: hash } });
-      if (existing) {
-        skipped++;
-        details.push({ name: eq.name, status: 'skipped', reason: '去重' });
-        continue;
-      }
-
-      const r = this.resupplyRepo.create({
-        guildId,
-        kookUserId: data.kookUserId,
-        kookNickname: data.kookNickname,
-        equipmentName: eq.name,
-        level: eq.level,
-        quality: eq.quality,
-        gearScore: eq.gearScore,
-        category: eq.category,
-        quantity: 1,
-        applyType: '补装',
-        reason: `击杀详情 | 日期:${data.killDate} | 地图:${data.mapName} | 游戏ID:${data.gameId}`,
-        screenshotUrl: data.screenshotUrl,
-        kookMessageId: data.kookMessageId ? `${data.kookMessageId}_${i}` : null,
-        dedupHash: hash,
-        resupplyBox: parseResupplyBox(data.kookNickname) || null,
-        killDate: data.killDate || null,
-        mapName: data.mapName || null,
-        gameId: data.gameId || null,
-        ocrGuildName: data.guild || null,
-        status: ResupplyStatus.PENDING,
-      });
-      await this.resupplyRepo.save(r);
-      await this.addLog(guildId, r.id, 'create', null, 'pending', null, null, `击杀详情自动创建`);
-      created++;
-      details.push({ name: eq.name, status: 'created', id: r.id });
+    // 去重检查
+    const existing = await this.resupplyRepo.findOne({ where: { guildId, dedupHash: hash } });
+    if (existing) {
+      this.logger.warn(`补装去重命中: hash=${hash}, 已有申请ID=${existing.id}`);
+      return { created: false, skipped: true };
     }
 
-    this.logger.log(`[公会${guildId}] 击杀详情补装: 创建${created}, 跳过${skipped}`);
-    return { created, skipped, details };
+    const equipmentIds = data.equipmentCatalogIds.join(',');
+    const r = this.resupplyRepo.create({
+      guildId,
+      kookUserId: data.kookUserId,
+      kookNickname: data.kookNickname,
+      equipmentIds,
+      quantity: data.equipmentCatalogIds.length,
+      applyType: '死亡补装',
+      reason: `击杀详情 | 日期:${data.killDate} | 地图:${data.mapName} | 游戏ID:${data.gameId}`,
+      screenshotUrl: data.screenshotUrl,
+      kookMessageId: data.kookMessageId || null,
+      dedupHash: hash,
+      resupplyBox: parseResupplyBox(data.kookNickname) || null,
+      killDate: data.killDate || null,
+      mapName: data.mapName || null,
+      gameId: data.gameId || null,
+      ocrGuildName: data.guild || null,
+      status: ResupplyStatus.PENDING,
+    });
+    const saved = await this.resupplyRepo.save(r);
+    await this.addLog(guildId, saved.id, 'create', null, 'pending', null, null, '击杀详情自动创建');
+
+    this.logger.log(`[公会${guildId}] 击杀详情补装: 创建1条, ${data.equipmentCatalogIds.length}件装备`);
+    return { created: true, skipped: false, resupplyId: saved.id };
   }
 
   async updateFields(guildId: number, id: number, dto: UpdateResupplyFieldsDto) {
@@ -208,32 +196,22 @@ export class ResupplyService {
         r.processRemark = dto.remark || null;
         r.processedAt = new Date();
 
-        // 通过后立即扣减库存-1（优先精确匹配 catalogId）
+        // 逐个 equipment_ids 中的 catalogId 各扣减库存 1
         try {
-          let catalogId: number | null = null;
-
-          // 优先使用补装申请的 gearScore+equipmentName 精确匹配
-          if (r.equipmentName) {
-            const matches = await this.catalogService.findByNameFuzzy(r.equipmentName, 0.8);
-            if (matches.length > 0) {
-              // 如果有多个匹配项，优先选择 level/quality/gearScore 完全匹配的
-              const exactMatch = matches.find(m =>
-                (!r.level || m.item.level === r.level) &&
-                (!r.quality && r.quality !== 0 || m.item.quality === r.quality) &&
-                (!r.gearScore || m.item.gearScore === r.gearScore)
-              );
-              catalogId = exactMatch ? exactMatch.item.id : matches[0].item.id;
+          const ids = (r.equipmentIds || '').split(',').filter(Boolean).map(Number);
+          let deducted = 0;
+          for (const catalogId of ids) {
+            if (!catalogId || isNaN(catalogId)) continue;
+            try {
+              await this.equipmentService.deductForDispatch(guildId, catalogId, 1, operatorId, operatorName);
+              deducted++;
+            } catch (err: any) {
+              this.logger.warn(`补装扣减库存失败 catalogId=${catalogId}: ${err.message}`);
             }
           }
-
-          if (catalogId) {
-            await this.equipmentService.deductForDispatch(guildId, catalogId, 1, operatorId, operatorName);
-            this.logger.log(`补装通过扣减库存: ${r.equipmentName} -1 (catalogId=${catalogId})`);
-          } else {
-            this.logger.warn(`补装通过但未找到匹配装备: ${r.equipmentName}`);
-          }
+          this.logger.log(`补装通过扣减库存: ${deducted}/${ids.length} 件 (申请ID=${r.id})`);
         } catch (err: any) {
-          this.logger.error(`补装扣减库存失败: ${err.message}`);
+          this.logger.error(`补装扣减库存异常: ${err.message}`);
         }
         break;
       }
@@ -263,15 +241,16 @@ export class ResupplyService {
 
     // KOOK 通知（异步）
     try {
+      const eqDisplay = r.equipmentIds || '未知装备';
       if (dto.action === 'reject' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyRejected(r.kookUserId, r.equipmentName, r.quantity, dto.remark || '');
+        this.kookNotifyService.notifyResupplyRejected(r.kookUserId, eqDisplay, r.quantity, dto.remark || '');
       } else if (dto.action === 'approve' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyApproved(r.kookUserId, r.equipmentName, r.quantity);
+        this.kookNotifyService.notifyResupplyApproved(r.kookUserId, eqDisplay, r.quantity);
       } else if (dto.action === 'dispatch' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyDispatched(r.kookUserId, r.equipmentName, r.dispatchQuantity || r.quantity);
+        this.kookNotifyService.notifyResupplyDispatched(r.kookUserId, eqDisplay, r.dispatchQuantity || r.quantity);
       }
       this.kookNotifyService.notifyResupplyStatusChange(
-        r.kookNickname || '未知', r.equipmentName, r.quantity, r.status, dto.remark,
+        r.kookNickname || '未知', eqDisplay, r.quantity, r.status, dto.remark,
       );
     } catch (err) {
       this.logger.error(`KOOK 通知发送失败: ${err}`);
@@ -336,13 +315,7 @@ export class ResupplyService {
 
     if (query.status !== undefined) qb.andWhere('r.status = :s', { s: query.status });
     if (query.keyword) {
-      const gearScoreMatch = query.keyword.match(/^P(\d+)\s*[+＋]?\s*(.+)/i);
-      if (gearScoreMatch) {
-        qb.andWhere('r.gearScore = :gs', { gs: parseInt(gearScoreMatch[1]) });
-        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${gearScoreMatch[2].trim()}%` });
-      } else {
-        qb.andWhere('(r.equipmentName LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
-      }
+      qb.andWhere('(r.equipmentIds LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
     }
     if (query.startDate && query.endDate) {
       qb.andWhere('r.createdAt BETWEEN :startDate AND :endDate', {
@@ -392,9 +365,7 @@ export class ResupplyService {
 
     // 生成摘要
     const merged = Array.from(groups.values()).map(g => {
-      g.equipmentSummary = g.items.map(i =>
-        `${i.equipmentName}${i.gearScore ? `(P${i.gearScore})` : ''} x${i.quantity}`
-      ).join('、');
+      g.equipmentSummary = g.items.map(i => `${i.equipmentIds || '?'} x${i.quantity}`).join('、');
       return g;
     });
 
@@ -412,20 +383,10 @@ export class ResupplyService {
       .andWhere('r.status = :s', { s: ResupplyStatus.PENDING });
 
     if (keyword) {
-      const gearScoreMatch = keyword.match(/^P(\d+)\s*[+＋]?\s*(.+)/i);
-      if (gearScoreMatch) {
-        const gs = parseInt(gearScoreMatch[1]);
-        const name = gearScoreMatch[2].trim();
-        qb.andWhere('r.gearScore = :gs', { gs });
-        qb.andWhere('r.equipmentName LIKE :kw', { kw: `%${name}%` });
-      } else {
-        qb.andWhere('r.equipmentName LIKE :kw', { kw: `%${keyword}%` });
-      }
+      qb.andWhere('r.equipmentIds LIKE :kw', { kw: `%${keyword}%` });
     }
 
-    // 按装备名聚合排序：相同装备名排在一起，组内按时间排序
-    qb.orderBy('r.equipmentName', 'ASC')
-      .addOrderBy('r.gearScore', 'DESC')
+    qb.orderBy('r.equipmentIds', 'ASC')
       .addOrderBy('r.createdAt', 'ASC');
 
     return qb.getMany();

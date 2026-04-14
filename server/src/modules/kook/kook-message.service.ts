@@ -242,33 +242,35 @@ export class KookMessageService {
     imageUrl: string, textContent: string, kookMessageId?: string,
   ): Promise<void> {
     try {
-      // OCR 识别
       const ocrResults = await this.ocrService.recognizeImage(imageUrl);
       const allText = ocrResults.map(r => r.name).join(' ');
-
-      // 判断是否为击杀详情图片
       const killDetail = this.parseKillDetail(allText, textContent);
+      const enriched = await this.ocrService.enrichWithCatalog(ocrResults);
+
+      // 分为高置信度（>=0.8）和低置信度（<0.8）
+      const highConf = enriched.filter(e => e.catalogId && e.matchScore >= 0.8);
+      const lowConf = enriched.filter(e => !e.catalogId || e.matchScore < 0.8);
+
+      // 低置信度存入 OCR 待识别工作区
+      if (lowConf.length > 0) {
+        try {
+          await this.ocrService.createKookBatch(guild.id, imageUrl, kookUserId, kookNickname, lowConf);
+          this.logger.log(`[${guild.name}] ${lowConf.length} 件低置信度装备存入待识别工作区`);
+        } catch (err) {
+          this.logger.error(`存入待识别工作区失败: ${err}`);
+        }
+      }
+
+      if (highConf.length === 0) {
+        await this.kookService.sendDirectMessage(kookUserId,
+          `未能从截图中高置信度匹配到已预置的装备。${lowConf.length > 0 ? `${lowConf.length} 件已存入待识别工作区，请管理员手动确认。` : '请确认装备参考库中已录入对应装备。'}`);
+        return;
+      }
+
+      const catalogIds = highConf.map(e => e.catalogId!);
 
       if (killDetail.isKillDetail) {
-        // 击杀详情模式：解析装备 → 批量创建补装申请（含去重）
-        const enriched = await this.ocrService.enrichWithCatalog(ocrResults);
-        const equipments = enriched
-          .filter(e => e.catalogId && e.matchScore >= 0.8)
-          .map(e => ({
-            name: e.catalogName || e.name,
-            level: e.level,
-            quality: e.quality,
-            gearScore: e.gearScore,
-            category: e.category,
-            catalogId: e.catalogId,
-          }));
-
-        if (equipments.length === 0) {
-          await this.kookService.sendDirectMessage(kookUserId,
-            `识别到击杀详情，但未能匹配到已预置的装备。请确认装备参考库中已录入对应装备。`);
-          return;
-        }
-
+        // 击杀详情：一条记录 = 一次死亡 = 多件装备
         const result = await this.resupplyService.createFromKillDetail(guild.id, {
           kookUserId,
           kookNickname,
@@ -277,52 +279,33 @@ export class KookMessageService {
           mapName: killDetail.mapName || 'unknown',
           gameId: killDetail.gameId || kookNickname,
           guild: killDetail.guildName || guild.name,
-          equipments,
+          equipmentCatalogIds: catalogIds,
           kookMessageId,
         });
 
-        const msg = result.skipped > 0
-          ? `收到击杀详情补装申请：创建 ${result.created} 件，跳过 ${result.skipped} 件（已存在）。`
-          : `收到击杀详情补装申请：共 ${result.created} 件装备已提交。`;
+        const msg = result.skipped
+          ? `补装申请已存在（去重跳过）。`
+          : `收到击杀详情补装申请：${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
         await this.kookService.sendDirectMessage(kookUserId, msg);
       } else {
-        // 普通补装模式：只处理匹配到参考库的装备
-        const enriched = await this.ocrService.enrichWithCatalog(ocrResults);
-        // 过滤：仅保留匹配到参考库的装备（score >= 0.8）
-        const matched = enriched.filter(e => e.catalogId && e.matchScore >= 0.8);
-        if (matched.length === 0) {
+        // 普通补装：一条记录 = 多件装备
+        const result = await this.resupplyService.create(guild.id, {
+          kookUserId,
+          kookNickname,
+          equipmentIds: catalogIds.join(','),
+          quantity: catalogIds.length,
+          applyType: '死亡补装',
+          screenshotUrl: imageUrl,
+          kookMessageId,
+        });
+
+        if (!result['deduplicated']) {
           await this.kookService.sendDirectMessage(kookUserId,
-            `未能从截图中匹配到已预置的装备，请确认装备参考库中已录入对应装备和图片。`);
-          return;
+            `收到补装申请，${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`);
         }
-
-        let createdCount = 0;
-        for (const item of matched) {
-          try {
-            const result = await this.resupplyService.create(guild.id, {
-              kookUserId,
-              kookNickname,
-              equipmentName: item.catalogName || item.name,
-              level: item.level,
-              quality: item.quality,
-              gearScore: item.gearScore,
-              category: item.category,
-              quantity: item.quantity || 1,
-              applyType: '补装',
-              screenshotUrl: imageUrl,
-              kookMessageId: kookMessageId ? `${kookMessageId}_${createdCount}` : undefined,
-            });
-            if (!result['deduplicated']) createdCount++;
-          } catch (err) {
-            this.logger.error(`创建补装申请失败: ${err}`);
-          }
-        }
-
-        await this.kookService.sendDirectMessage(kookUserId,
-          `收到补装申请，共 ${createdCount} 件装备已提交。`);
       }
 
-      this.logger.log(`[${guild.name}] ${kookNickname} 提交补装申请`);
+      this.logger.log(`[${guild.name}] ${kookNickname} 提交补装申请 (${catalogIds.length}件)`);
     } catch (err) {
       this.logger.error(`处理图片消息失败: ${err}`);
       try {

@@ -87,11 +87,7 @@ export interface GuildResupply {
   guildMemberId: number | null;
   kookUserId: string;
   kookNickname: string;
-  equipmentName: string;
-  level: number | null;
-  quality: number | null;
-  gearScore: number | null;
-  category: string | null;
+  equipmentIds: string | null;
   quantity: number;
   applyType: string;
   reason: string | null;

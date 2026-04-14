@@ -76,4 +76,14 @@ export class OcrController {
   ) {
     return this.ocrService.saveToInventory(batchId, guildId, user.sub || user.userId, req.guildMember?.nickname || user.username);
   }
+
+  @Get('kook-pending')
+  @ApiOperation({ summary: '获取KOOK待识别工作区列表' })
+  getKookPending(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Query('page') page?: number,
+    @Query('pageSize') pageSize?: number,
+  ) {
+    return this.ocrService.getKookPendingBatches(guildId, page || 1, pageSize || 20);
+  }
 }

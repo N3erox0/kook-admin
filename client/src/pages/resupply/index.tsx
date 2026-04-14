@@ -64,6 +64,7 @@ export default function ResupplyPage() {
   // F-055: 手动创建装备搜索预置库
   const [catalogOptions, setCatalogOptions] = useState<any[]>([]);
   const [selectedCatalogItem, setSelectedCatalogItem] = useState<any>(null);
+  const [createEquipList, setCreateEquipList] = useState<any[]>([]);
   const handleCatalogSearch = async (kw: string) => {
     if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
     try {
@@ -216,10 +217,12 @@ export default function ResupplyPage() {
       },
     },
     {
-      title: '待补装备', dataIndex: 'equipmentName', key: 'equip', ellipsis: true,
-      render: (v: string, r: GuildResupply) => (
-        <span>{v}{r.gearScore ? <Tag style={{ marginLeft: 4 }}>P{r.gearScore}</Tag> : ''}</span>
-      ),
+      title: '待补装备', dataIndex: 'equipmentIds', key: 'equip', ellipsis: true,
+      render: (v: string) => {
+        if (!v) return '-';
+        const ids = v.split(',').filter(Boolean);
+        return <span>{ids.length}件装备 (ID: {ids.slice(0, 3).join(',')}{ ids.length > 3 ? '...' : '' })</span>;
+      },
     },
     { title: '数量', dataIndex: 'quantity', key: 'qty', width: 55 },
     {
@@ -459,28 +462,53 @@ export default function ResupplyPage() {
         )}
       </Drawer>
 
-      {/* 手动创建弹窗 */}
-      <Modal title="手动创建补装申请" open={createModal} onCancel={() => { setCreateModal(false); setSelectedCatalogItem(null); setCatalogOptions([]); }} footer={null} destroyOnClose>
+      {/* 手动创建弹窗 - 多装备列表模式 */}
+      <Modal title="手动创建补装申请" open={createModal} width={650}
+        onCancel={() => { setCreateModal(false); setSelectedCatalogItem(null); setCatalogOptions([]); setCreateEquipList([]); }}
+        footer={null} destroyOnClose>
         <Form form={createForm} onFinish={(values: any) => {
-          if (!selectedCatalogItem) { message.warning('请从预置装备库中选择装备'); return; }
-          handleCreate(values);
-          }} layout="vertical" initialValues={{ quantity: 1, applyType: '手动创建' }}>
-          <Form.Item name="equipmentName" label="装备名称（搜索预置装备库）" rules={[{ required: true }]}>
-            <AutoComplete
-              options={catalogOptions}
-              onSearch={handleCatalogSearch}
-              onSelect={handleCatalogSelect}
-              placeholder="输入装备名称搜索预置库..."
-              style={{ width: '100%' }}
-            />
+          if (createEquipList.length === 0) { message.warning('请至少添加一件装备'); return; }
+          const equipmentIds = createEquipList.map(e => e.id).join(',');
+          handleCreate({ ...values, equipmentIds, quantity: createEquipList.length });
+        }} layout="vertical" initialValues={{ applyType: '手动创建' }}>
+
+          {/* 装备搜索+添加 */}
+          <Form.Item label="搜索并添加装备（关键词模糊搜索预置库）">
+            <Space.Compact style={{ width: '100%' }}>
+              <AutoComplete
+                options={catalogOptions}
+                onSearch={handleCatalogSearch}
+                onSelect={(_: string, option: any) => {
+                  const item = option.item;
+                  if (createEquipList.find(e => e.id === item.id)) { message.warning('该装备已添加'); return; }
+                  if (createEquipList.length >= 10) { message.warning('单次最多添加10件装备'); return; }
+                  setCreateEquipList(prev => [...prev, { id: item.id, name: item.name, gearScore: item.gearScore, category: item.category }]);
+                }}
+                placeholder="输入装备名称搜索..."
+                style={{ width: '100%' }}
+                value=""
+              />
+            </Space.Compact>
           </Form.Item>
-          {selectedCatalogItem && (
-            <div style={{ marginBottom: 12, padding: 8, background: '#f6ffed', borderRadius: 6, fontSize: 12 }}>
-              已选：{selectedCatalogItem.name} | 等级{selectedCatalogItem.level} | 品质{selectedCatalogItem.quality} | P{selectedCatalogItem.gearScore} | {selectedCatalogItem.category}
+
+          {/* 已添加装备列表 */}
+          {createEquipList.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>已添加装备（{createEquipList.length}件）：</Text>
+              <Table size="small" pagination={false} dataSource={createEquipList} rowKey="id" style={{ marginTop: 8 }}
+                columns={[
+                  { title: '装备名称', dataIndex: 'name', key: 'name' },
+                  { title: '装等', key: 'gs', width: 60, render: (_: any, r: any) => r.gearScore ? `P${r.gearScore}` : '-' },
+                  { title: '部位', dataIndex: 'category', key: 'cat', width: 60 },
+                  { title: '', key: 'del', width: 40, render: (_: any, r: any) => (
+                    <Button size="small" type="link" danger onClick={() => setCreateEquipList(prev => prev.filter(e => e.id !== r.id))}>删除</Button>
+                  )},
+                ]}
+              />
             </div>
           )}
+
           <Space>
-            <Form.Item name="quantity" label="数量" rules={[{ required: true }]}><InputNumber min={1} /></Form.Item>
             <Form.Item name="applyType" label="类型">
               <Select style={{ width: 130 }}>
                 <Select.Option value="死亡补装">死亡补装</Select.Option>
@@ -490,9 +518,8 @@ export default function ResupplyPage() {
             </Form.Item>
           </Space>
           <Form.Item name="kookNickname" label="申请人昵称"><Input placeholder="含箱子编号自动提取，如 玩家A 3-16" /></Form.Item>
-          <Form.Item name="resupplyBox" label="补装箱子编号（留空自动从昵称提取）"><Input placeholder="如 3-16, 大厅32" /></Form.Item>
           <Form.Item name="reason" label="备注"><Input.TextArea rows={2} /></Form.Item>
-          <Form.Item><Button type="primary" htmlType="submit" block>创建</Button></Form.Item>
+          <Form.Item><Button type="primary" htmlType="submit" block>创建补装申请（{createEquipList.length}件装备）</Button></Form.Item>
         </Form>
       </Modal>
 

@@ -1,15 +1,11 @@
-import { IsString, IsOptional, IsNumber, IsInt, IsArray, Min } from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsInt, IsArray } from 'class-validator';
 
 export class CreateResupplyDto {
   @IsOptional() @IsInt() guildMemberId?: number;
   @IsOptional() @IsString() kookUserId?: string;
   @IsOptional() @IsString() kookNickname?: string;
-  @IsString() equipmentName: string;
-  @IsOptional() @IsInt() level?: number;
-  @IsOptional() @IsInt() quality?: number;
-  @IsOptional() @IsInt() gearScore?: number;
-  @IsOptional() @IsString() category?: string;
-  @IsInt() @Min(1) quantity: number;
+  @IsString() equipmentIds: string; // 逗号分隔的 catalog ID，如 "11731,11481,10033"
+  @IsOptional() @IsInt() quantity?: number; // 总数量（默认=ID个数）
   @IsOptional() @IsString() applyType?: string;
   @IsOptional() @IsString() reason?: string;
   @IsOptional() @IsString() screenshotUrl?: string;
@@ -27,11 +23,7 @@ export class ProcessResupplyDto {
 }
 
 export class UpdateResupplyFieldsDto {
-  @IsOptional() @IsString() equipmentName?: string;
-  @IsOptional() @IsInt() level?: number;
-  @IsOptional() @IsInt() quality?: number;
-  @IsOptional() @IsInt() gearScore?: number;
-  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() equipmentIds?: string;
   @IsOptional() @IsInt() quantity?: number;
   @IsOptional() @IsString() applyType?: string;
   @IsOptional() @IsString() reason?: string;
