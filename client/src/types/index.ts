@@ -188,3 +188,35 @@ export const ALERT_RULE_TYPE: Record<string, string> = {
   '01': '补装库存预警',
   '02': '死亡次数预警',
 };
+
+// ===== 装备显示格式化 =====
+const TIER_PREFIX_MAP: Record<string, string> = {
+  '新手级': '', '学徒级': '', '熟练级': '', '老手级': '', '专家级': '',
+  '大师级': '', '宗师级': '', '禅师级': '',
+};
+
+/**
+ * 格式化装备显示名称
+ * 输入: { name: '专家级堕神法杖', level: 5, quality: 1, gearScore: 6, category: '武器' }
+ * 输出: '51堕神法杖 P6 武器'
+ */
+export function formatEquipName(item: { name?: string; level?: number; quality?: number; gearScore?: number; category?: string }): string {
+  if (!item?.name) return '-';
+  let name = item.name;
+  // 去掉中文等级前缀
+  for (const prefix of Object.keys(TIER_PREFIX_MAP)) {
+    if (name.startsWith(prefix)) { name = name.slice(prefix.length); break; }
+  }
+  const lv = item.level ?? 0;
+  const q = item.quality ?? 0;
+  const gs = item.gearScore ?? (lv + q);
+  const cat = item.category || '';
+  return `${lv}${q}${name} P${gs}${cat ? ' ' + cat : ''}`;
+}
+
+/**
+ * 格式化装备下拉选项标签
+ */
+export function formatEquipOption(item: { name?: string; level?: number; quality?: number; gearScore?: number; category?: string }): string {
+  return formatEquipName(item);
+}

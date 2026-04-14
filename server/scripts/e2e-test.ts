@@ -52,7 +52,7 @@ const API_SMOKE_TESTS = [
   { name: 'POST /api/auth/login', method: 'POST', path: '/api/auth/login', body: { username: 'test', password: 'test123' }, expectedStatus: [400, 401] },
   { name: 'GET /api/catalog/csv-template', method: 'GET', path: '/api/catalog/csv-template', expectedStatus: [200, 401] },
   { name: 'POST /api/guilds/invite-codes/validate', method: 'POST', path: '/api/guilds/invite-codes/validate', body: { code: 'E2E-TEST' }, expectedStatus: [200, 201] },
-  { name: 'POST /api/kook/webhook (challenge)', method: 'POST', path: '/api/kook/webhook', body: { s: 0, d: { challenge: 'e2e-test' } }, expectedStatus: [200, 201] },
+  { name: 'POST /api/kook/callback (challenge)', method: 'POST', path: '/api/kook/callback', body: { s: 0, d: { challenge: 'e2e-test' } }, expectedStatus: [200, 201] },
 ];
 
 class E2ETestRunner {

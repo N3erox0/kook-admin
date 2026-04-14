@@ -13,7 +13,6 @@ async function bootstrap() {
 
   // KOOK Webhook 路径用 raw 解析器（支持 zlib 压缩数据），必须在 json 之前
   app.use('/api/kook/callback', bodyParser.raw({ type: '*/*', limit: '10mb' }));
-  app.use('/api/kook/webhook', bodyParser.raw({ type: '*/*', limit: '10mb' }));
   // 其他所有 API 用 JSON 解析器
   app.use(bodyParser.json({ limit: '10mb' }));
   app.use(bodyParser.urlencoded({ extended: true }));

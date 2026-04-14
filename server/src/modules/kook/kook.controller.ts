@@ -89,27 +89,17 @@ export class KookController {
   }
 
   /** KOOK Webhook 回调端点（不加 JWT 认证） */
-  @Post('webhook')
-  async handleWebhook(@Req() req: Request, @Res() res: Response) {
-    try {
-      const payload = await this.parseKookPayload(req);
-      const result = await this.processKookEvent(payload);
-      res.status(200).json(result);
-    } catch (err) {
-      this.logger.error(`[Webhook] 处理失败: ${err.message}`);
-      res.status(200).json({ code: 500, message: err.message });
-    }
-  }
-
-  /** KOOK Callback URL（等同于 webhook，KOOK 开放平台配置用） */
   @Post('callback')
   async handleCallback(@Req() req: Request, @Res() res: Response) {
     try {
+      this.logger.log(`[Callback] 收到请求, body type=${typeof req.body}, isBuffer=${Buffer.isBuffer(req.body)}, length=${req.body?.length || JSON.stringify(req.body || '').length}`);
       const payload = await this.parseKookPayload(req);
+      this.logger.log(`[Callback] 解析成功: s=${payload.s}, type=${payload.d?.type}, channel_type=${payload.d?.channel_type}, extra_type=${payload.d?.extra?.type}, guild_id=${payload.d?.extra?.guild_id}, author=${payload.d?.author_id}`);
       const result = await this.processKookEvent(payload);
+      this.logger.log(`[Callback] 处理结果: ${JSON.stringify(result).slice(0, 200)}`);
       res.status(200).json(result);
     } catch (err) {
-      this.logger.error(`[Callback] 处理失败: ${err.message}`);
+      this.logger.error(`[Callback] 处理失败: ${err.message}`, err.stack);
       res.status(200).json({ code: 500, message: err.message });
     }
   }

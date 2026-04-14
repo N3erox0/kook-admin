@@ -107,3 +107,12 @@
 | BF-003 | 操作日志状态显示优化 | completed | 2026-04-14 23:07 | 状态码200→"成功"，4xx/5xx→"失败" |
 | BF-004 | GuildGuard参数兼容 | completed | 2026-04-14 23:07 | params.guildId加params.id fallback |
 | BF-005 | KOOK频道列表401优雅处理 | completed | 2026-04-14 23:07 | try-catch返回空数组+错误提示 |
+| **V2.7** | **测试反馈优化批次** | | | |
+| UI-001 | 公会设置：频道/角色下拉选择 | completed | 2026-04-15 00:17 | 通知频道+管理员角色改为Select下拉 |
+| UI-002 | 公会设置：隐藏高级配置 | completed | 2026-04-15 00:17 | 删除Bot Token/Verify Token折叠区 |
+| UI-003 | 装备显示格式统一 | completed | 2026-04-15 00:17 | {level}{quality}名称 P{gearScore} 部位 |
+| UI-004 | 录入库存：搜索数字前缀过滤 | completed | 2026-04-15 00:17 | 输入44堕神→搜索堕神 |
+| UI-005 | 录入库存：搜索结果50条 | completed | 2026-04-15 00:17 | limit 20→50 |
+| UI-006 | Webhook日志增强 | completed | 2026-04-15 00:17 | callback端点加详细请求/解析/结果日志 |
+| UI-007 | 删除/webhook端点 | completed | 2026-04-15 00:17 | 只保留/callback |
+| UI-008 | OAuth弹窗防护 | completed | 2026-04-15 00:17 | popup=null时提示+取消loading |

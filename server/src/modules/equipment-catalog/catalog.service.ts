@@ -203,7 +203,7 @@ export class CatalogService {
   }
 
   /** 搜索装备（模糊匹配，用于库存录入下拉） */
-  async search(keyword: string, limit = 20) {
+  async search(keyword: string, limit = 50) {
     return this.catalogRepo.createQueryBuilder('c')
       .where('c.name LIKE :kw', { kw: `%${keyword}%` })
       .orderBy('c.name', 'ASC')

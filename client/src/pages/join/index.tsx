@@ -105,6 +105,11 @@ export default function JoinPage() {
       if (res?.url) {
         // 新标签页打开 KOOK OAuth
         const popup = window.open(res.url, '_blank', 'width=600,height=700');
+        if (!popup) {
+          message.warning('浏览器拦截了弹窗，请允许弹窗后重试');
+          setLoading(false);
+          return;
+        }
         // 监听子窗口传回的消息
         const handler = (event: MessageEvent) => {
           if (event.data?.type === 'kook-oauth-success') {

@@ -4,7 +4,7 @@ import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined
 import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply } from '@/api/resupply';
 import { searchCatalog } from '@/api/catalog';
 import { useGuildStore } from '@/stores/guild.store';
-import { RESUPPLY_STATUS } from '@/types';
+import { RESUPPLY_STATUS, formatEquipName } from '@/types';
 import type { GuildResupply } from '@/types';
 import dayjs from 'dayjs';
 
@@ -67,11 +67,13 @@ export default function ResupplyPage() {
   const [createEquipList, setCreateEquipList] = useState<any[]>([]);
   const handleCatalogSearch = async (kw: string) => {
     if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
+    const cleanKw = kw.replace(/^\d+/, '').trim();
+    if (!cleanKw) { setCatalogOptions([]); return; }
     try {
-      const res: any = await searchCatalog(kw);
+      const res: any = await searchCatalog(cleanKw);
       setCatalogOptions((res || []).map((item: any) => ({
-        value: item.name,
-        label: `${item.name} Lv${item.level} Q${item.quality} ${item.category} (P${item.gearScore})`,
+        value: `${item.id}_${item.name}`,
+        label: formatEquipName(item),
         item,
       })));
     } catch { setCatalogOptions([]); }

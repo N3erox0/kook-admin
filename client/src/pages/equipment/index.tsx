@@ -6,7 +6,7 @@ import { searchCatalog } from '@/api/catalog';
 import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
 import { uploadFile } from '@/api/upload';
 import { useGuildStore } from '@/stores/guild.store';
-import { CATEGORIES, QUALITY_LABELS } from '@/types';
+import { CATEGORIES, QUALITY_LABELS, formatEquipName } from '@/types';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -104,11 +104,14 @@ export default function EquipmentPage() {
   // 搜索装备参考库（下拉）
   const handleCatalogSearch = async (keyword: string) => {
     if (!keyword || keyword.length < 1) { setCatalogOptions([]); return; }
+    // 过滤数字前缀（如"44堕神" → "堕神"）
+    const cleanKw = keyword.replace(/^\d+/, '').trim();
+    if (!cleanKw) { setCatalogOptions([]); return; }
     try {
-      const res: any = await searchCatalog(keyword);
+      const res: any = await searchCatalog(cleanKw);
       setCatalogOptions((res || []).map((item: any) => ({
-        value: item.name,
-        label: `${item.name} Lv.${item.level} Q${item.quality} ${item.category} (P${item.gearScore})`,
+        value: `${item.id}_${item.name}`,
+        label: formatEquipName(item),
         item,
       })));
     } catch { setCatalogOptions([]); }
@@ -255,7 +258,7 @@ export default function EquipmentPage() {
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
       title: '装备名称', key: 'name',
-      render: (_: any, r: any) => r.catalog?.name || '-',
+      render: (_: any, r: any) => r.catalog ? formatEquipName(r.catalog) : '-',
     },
     {
       title: '等级', key: 'level', width: 70,
