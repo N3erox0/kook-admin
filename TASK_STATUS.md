@@ -97,3 +97,7 @@
 | R-003 | 前端补装列表重构 | completed | 2026-04-14 14:30 | 多装备名显示+手动创建多选列表模式 |
 | R-004 | 待识别工作区 | completed | 2026-04-14 14:30 | OCR batch增加source/kookUserId，KOOK<80%进待识别区 |
 | R-005 | KOOK消息处理重构 | completed | 2026-04-14 14:30 | 一条记录=一次事件，低置信度进待识别工作区 |
+| B-001 | Bot入服记录 | completed | 2026-04-14 15:10 | self_joined_guild→获取服务器主→写入bot_join_records |
+| B-002 | Bot入服私信 | completed | 2026-04-14 15:10 | KMarkdown私信服务器主带邀请码注册链接 |
+| B-003 | 首次私信宣导 | completed | 2026-04-14 15:10 | channel_type=PERSON首次私信→自动回复官网宣导 |
+| B-004 | 私信关键词路由 | completed | 2026-04-14 15:10 | 邀请码/帮助/试用→对应回复模板 |

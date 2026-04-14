@@ -3,9 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Guild } from '../guild/entities/guild.entity';
 import { InviteCode } from '../guild/entities/invite-code.entity';
+import { BotJoinRecord } from './entities/bot-join-record.entity';
 import { OcrService } from '../ocr/ocr.service';
 import { ResupplyService } from '../resupply/resupply.service';
 import { KookService } from './kook.service';
+import { KookBotInteractionService } from './kook-bot-interaction.service';
 import { GuildStatus, InviteCodeStatus } from '../../common/constants/enums';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
@@ -47,9 +49,11 @@ export class KookMessageService {
   constructor(
     @InjectRepository(Guild) private guildRepo: Repository<Guild>,
     @InjectRepository(InviteCode) private inviteRepo: Repository<InviteCode>,
+    @InjectRepository(BotJoinRecord) private joinRecordRepo: Repository<BotJoinRecord>,
     private kookService: KookService,
     private ocrService: OcrService,
     private resupplyService: ResupplyService,
+    private botInteraction: KookBotInteractionService,
     private configService: ConfigService,
   ) {}
 
@@ -64,6 +68,16 @@ export class KookMessageService {
     // ===== 系统事件处理（type=255） =====
     if (d?.type === 255 && d.extra?.type) {
       return this.handleSystemEvent(d);
+    }
+
+    // ===== 私信处理（channel_type=PERSON） =====
+    if (d?.channel_type === 'PERSON' && d?.author_id) {
+      try {
+        await this.botInteraction.handlePrivateMessage(d.author_id, d.content || '');
+      } catch (err) {
+        this.logger.error(`处理私信失败: ${err}`);
+      }
+      return { ok: true };
     }
 
     if (!d?.extra?.guild_id || !d?.author_id) return { ok: true };
@@ -102,65 +116,104 @@ export class KookMessageService {
     switch (eventType) {
       // 模块一：机器人被邀请进入新服务器
       case 'self_joined_guild': {
-        const guildId = body.guild_id;
-        const userId = body.user_id;
-        if (!guildId) return { ok: true };
+        const kookGuildId = body.guild_id;
+        if (!kookGuildId) return { ok: true };
 
-        this.logger.log(`[joined_guild] Bot 加入服务器: guild_id=${guildId}, invited_by=${userId}`);
+        this.logger.log(`[joined_guild] Bot 加入服务器: guild_id=${kookGuildId}`);
 
-        const existing = await this.guildRepo.findOne({ where: { kookGuildId: guildId } });
-        if (existing) {
-          this.logger.log(`服务器 ${guildId} 已存在（状态=${existing.status}），跳过初始化`);
+        // 检查是否已有加入记录
+        const existingRecord = await this.joinRecordRepo.findOne({ where: { kookGuildId } });
+        if (existingRecord) {
+          this.logger.log(`服务器 ${kookGuildId} 加入记录已存在，跳过`);
           return { ok: true };
         }
 
-        // 生成12位邀请码（排除 I/O/o/l）
+        // 获取服务器信息 + 服务器主
+        let guildName = `服务器-${kookGuildId.slice(-6)}`;
+        let guildIcon = '';
+        let inviterKookId = '';
+        let inviterUsername = '';
+        let inviterIdentifyNum = '';
+        let memberCount = 0;
+
+        try {
+          const guildView = await this.kookService.getGuildView(kookGuildId);
+          guildName = guildView.name || guildName;
+          guildIcon = guildView.icon || '';
+          inviterKookId = (guildView as any).user_id || (guildView as any).master_id || '';
+          memberCount = (guildView as any).member_count || 0;
+          if (inviterKookId) {
+            try {
+              const userView = await this.kookService.getUserView(inviterKookId, kookGuildId);
+              inviterUsername = (userView as any).username || '';
+              inviterIdentifyNum = (userView as any).identify_num || '';
+            } catch { /* ignore */ }
+          }
+        } catch (err) {
+          this.logger.warn(`获取服务器 ${kookGuildId} 信息失败: ${err}`);
+        }
+
+        // 生成12位邀请码
         const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789';
         let inviteCodeStr = '';
         for (let i = 0; i < 12; i++) inviteCodeStr += CHARSET.charAt(Math.floor(Math.random() * CHARSET.length));
-
-        // 同时生成激活码（兼容旧流程）
-        const activationCode = uuidv4().replace(/-/g, '').slice(0, 12).toUpperCase();
         const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
 
-        // 创建 pending 公会
-        const guild = this.guildRepo.create({
-          name: `待激活-${guildId.slice(-6)}`,
-          kookGuildId: guildId,
-          activationCode,
-          invitedByKookUserId: userId || null,
-          status: GuildStatus.PENDING_ACTIVATION,
-        });
-        await this.guildRepo.save(guild);
-
-        // 写入邀请码表（createSource=02 BOT自动）
+        // 写入邀请码表
         const invite = this.inviteRepo.create({
           code: inviteCodeStr,
           status: InviteCodeStatus.DISABLED,
           createSource: '02',
-          remark: `BOT自动生成 | 服务器:${guildId} | 邀请人:${userId}`,
+          remark: `BOT自动 | ${guildName} | 服务器主:${inviterKookId}`,
         });
-        await this.inviteRepo.save(invite);
+        const savedInvite = await this.inviteRepo.save(invite);
 
-        // 私信邀请人
-        if (userId) {
-          const loginLink = `${baseUrl}/login`;
-          const joinLink = `${baseUrl}/join`;
-          const msg = `🎉 **公会管理助手已加入你的服务器！**\n\n` +
-            `📋 **你的专属邀请码**：\`${inviteCodeStr}\`\n\n` +
-            `🔗 **注册入口**：${joinLink}\n` +
-            `🔗 **登录入口**：${loginLink}\n\n` +
-            `请使用邀请码完成公会注册，绑定你的服务器。\n` +
-            `⚠️ 此邀请码为一次性使用，请妥善保管。`;
+        // 写入 bot_join_records
+        const joinRecord = this.joinRecordRepo.create({
+          kookGuildId,
+          guildName,
+          guildIcon,
+          inviterKookId: inviterKookId || null,
+          inviterUsername: inviterUsername || null,
+          inviterIdentifyNum: inviterIdentifyNum || null,
+          status: 'pending',
+          inviteCodeId: savedInvite.id,
+          guildMemberCount: memberCount,
+          joinedAt: new Date(),
+        });
+        await this.joinRecordRepo.save(joinRecord);
+
+        // 创建 pending 公会（如果不存在）
+        const existingGuild = await this.guildRepo.findOne({ where: { kookGuildId } });
+        if (!existingGuild) {
+          const activationCode = uuidv4().replace(/-/g, '').slice(0, 12).toUpperCase();
+          await this.guildRepo.save(this.guildRepo.create({
+            name: `待激活-${guildName}`,
+            kookGuildId,
+            activationCode,
+            invitedByKookUserId: inviterKookId || null,
+            status: GuildStatus.PENDING_ACTIVATION,
+          }));
+        }
+
+        // KMarkdown 私信服务器主
+        if (inviterKookId) {
+          const msg =
+            `**🎉 感谢邀请我加入 ${guildName}！**\n\n` +
+            `我是 KOOK 公会管理助手，可以帮助管理装备库存、补装申请和成员信息。\n\n` +
+            `**立即开通管理后台：**\n` +
+            `[👉 点击这里开始配置](${baseUrl}/join?code=${inviteCodeStr})\n\n` +
+            `您的专属邀请码：\`${inviteCodeStr}\`\n\n` +
+            `如有疑问，请发送 \`/帮助\` 查看使用说明。`;
           try {
-            await this.kookService.sendDirectMessage(userId, msg);
-            this.logger.log(`邀请码 ${inviteCodeStr} 已私信发送给 ${userId}`);
+            await this.kookService.sendDirectMessage(inviterKookId, msg, 9);
+            this.logger.log(`邀请码 ${inviteCodeStr} 已私信发送给服务器主 ${inviterKookId}`);
           } catch (err) {
             this.logger.error(`发送邀请码私信失败: ${err}`);
           }
         }
 
-        return { ok: true, message: 'Guild pending + invite code created' };
+        return { ok: true, message: 'Bot join recorded + invite code sent' };
       }
 
       // 模块三：成员加入 KOOK 服务器
