@@ -40,6 +40,7 @@ export class ResupplyService {
     @InjectRepository(GuildResupplyLog) private logRepo: Repository<GuildResupplyLog>,
     private equipmentService: EquipmentService,
     private kookNotifyService: KookNotifyService,
+    private catalogService: CatalogService,
   ) {}
 
   async findAll(guildId: number, query: QueryResupplyDto) {

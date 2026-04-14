@@ -8,6 +8,7 @@ import { ParsedEquipment } from './parsers/base.parser';
 import { EquipmentParser } from './parsers/equipment.parser';
 import { CatalogService } from '../equipment-catalog/catalog.service';
 import { EquipmentService } from '../equipment/equipment.service';
+import { ImageMatchService } from './image-match.service';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
