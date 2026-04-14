@@ -36,10 +36,8 @@ export class OcrService {
     });
     const saved = await this.batchRepo.save(batch);
 
-    // 异步执行 OCR 识别
-    this.processRecognition(saved).catch(err => {
-      this.logger.error(`OCR批次 ${saved.batchNo} 处理失败: ${err.message}`);
-    });
+    // 同步等待 OCR 识别完成再返回，避免前端查询时 items 尚未生成
+    await this.processRecognition(saved);
 
     return saved;
   }

@@ -77,8 +77,8 @@ export default function LogPage() {
     },
     { title: 'IP', dataIndex: 'ipAddress', key: 'ip', width: 130 },
     {
-      title: '状态码', dataIndex: 'responseStatus', key: 'status', width: 80,
-      render: (v: number) => v === 200 ? <Tag color="green">200</Tag> : <Tag color="red">{v}</Tag>,
+      title: '状态', dataIndex: 'responseStatus', key: 'status', width: 80,
+      render: (v: number) => v >= 200 && v < 400 ? <Tag color="green">成功</Tag> : <Tag color="red">失败</Tag>,
     },
   ];
 

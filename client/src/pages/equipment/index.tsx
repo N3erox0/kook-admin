@@ -487,7 +487,7 @@ export default function EquipmentPage() {
               size="small"
               pagination={false}
               columns={[
-                { title: '装备名称', dataIndex: 'recognizedName', key: 'name' },
+                { title: '装备名称', dataIndex: 'equipmentName', key: 'name' },
                 { title: '匹配结果', dataIndex: 'matchedCatalogName', key: 'match', render: (v: string) => v || <Tag color="red">未匹配</Tag> },
                 { title: '数量', dataIndex: 'quantity', key: 'qty', width: 60 },
                 {

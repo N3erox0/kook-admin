@@ -132,14 +132,18 @@ export class KookController {
   @Get('channels')
   @UseGuards(JwtAuthGuard)
   async getChannels(@Query('guild_id') guildId?: string) {
-    // 尝试从数据库获取该KOOK服务器绑定的公会Token
-    if (guildId) {
-      const guild = await this.syncService.findGuildByKookId(guildId);
-      if (guild?.kookBotToken) {
-        return this.kookService.getChannelList(guildId, guild.kookBotToken);
+    try {
+      if (guildId) {
+        const guild = await this.syncService.findGuildByKookId(guildId);
+        if (guild?.kookBotToken) {
+          return this.kookService.getChannelList(guildId, guild.kookBotToken);
+        }
       }
+      return this.kookService.getChannelList(guildId);
+    } catch (err: any) {
+      this.logger.warn(`获取频道列表失败: ${err.message}`);
+      return { data: [], error: err.message || '获取频道列表失败，请检查 Bot Token 是否有效' };
     }
-    return this.kookService.getChannelList(guildId);
   }
 
   /** 验证用户在KOOK服务器是否为管理员 */

@@ -17,7 +17,7 @@ export class GuildGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
-    const guildId = parseInt(request.headers['x-guild-id'] || request.params.guildId || '0');
+    const guildId = parseInt(request.headers['x-guild-id'] || request.params.guildId || request.params.id || '0');
 
     if (!guildId) throw new ForbiddenException('缺少公会上下文（X-Guild-Id header）');
     if (!user?.userId && !user?.sub) throw new ForbiddenException('未认证');

@@ -101,3 +101,9 @@
 | B-002 | Bot入服私信 | completed | 2026-04-14 15:10 | KMarkdown私信服务器主带邀请码注册链接 |
 | B-003 | 首次私信宣导 | completed | 2026-04-14 15:10 | channel_type=PERSON首次私信→自动回复官网宣导 |
 | B-004 | 私信关键词路由 | completed | 2026-04-14 15:10 | 邀请码/帮助/试用→对应回复模板 |
+| **V2.6.1** | **Bug 修复批次** | | | |
+| BF-001 | OCR竞态条件修复 | completed | 2026-04-14 23:07 | createBatch改为await同步等待识别完成 |
+| BF-002 | OCR前端字段名修复 | completed | 2026-04-14 23:07 | recognizedName→equipmentName |
+| BF-003 | 操作日志状态显示优化 | completed | 2026-04-14 23:07 | 状态码200→"成功"，4xx/5xx→"失败" |
+| BF-004 | GuildGuard参数兼容 | completed | 2026-04-14 23:07 | params.guildId加params.id fallback |
+| BF-005 | KOOK频道列表401优雅处理 | completed | 2026-04-14 23:07 | try-catch返回空数组+错误提示 |
