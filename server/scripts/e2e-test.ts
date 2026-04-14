@@ -31,7 +31,7 @@ interface E2EReport {
   summary: { total: number; passed: number; failed: number };
 }
 
-const BASE_URL = process.env.E2E_BASE_URL || 'http://127.0.0.1:3000';
+const BASE_URL = process.env.E2E_BASE_URL || 'http://127.0.0.1:80';
 const SCREENSHOT_DIR = '/tmp/e2e-screenshots';
 const LOGIN_USERNAME = process.env.E2E_USERNAME || '';
 const LOGIN_PASSWORD = process.env.E2E_PASSWORD || '';
@@ -51,6 +51,8 @@ const MENU_ROUTES = [
 const API_SMOKE_TESTS = [
   { name: 'POST /api/auth/login', method: 'POST', path: '/api/auth/login', body: { username: 'test', password: 'test123' }, expectedStatus: [400, 401] },
   { name: 'GET /api/catalog/csv-template', method: 'GET', path: '/api/catalog/csv-template', expectedStatus: [200, 401] },
+  { name: 'POST /api/guilds/invite-codes/validate', method: 'POST', path: '/api/guilds/invite-codes/validate', body: { code: 'E2E-TEST' }, expectedStatus: [200, 201] },
+  { name: 'POST /api/kook/webhook (challenge)', method: 'POST', path: '/api/kook/webhook', body: { s: 0, d: { challenge: 'e2e-test' } }, expectedStatus: [200, 201] },
 ];
 
 class E2ETestRunner {
