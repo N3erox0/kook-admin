@@ -224,7 +224,6 @@ export default function CatalogPage() {
           <Upload accept=".csv" showUploadList={false} beforeUpload={handleCsvFile}>
             <Button icon={<UploadOutlined />}>CSV导入</Button>
           </Upload>
-          <a href="/api/catalog/csv-template" download="装备参考库模板.csv" style={{ fontSize: 12 }}>下载CSV模板</a>
           <Popconfirm title="从 Albion Online 官方API拉取 T4+ 装备数据导入参考库？（约3000+件，耗时约1分钟）" onConfirm={handleAlbionImport} okText="开始导入">
             <Button icon={<CloudDownloadOutlined />} loading={albionImporting}>
               {albionImporting ? '导入中...' : '导入Albion装备'}

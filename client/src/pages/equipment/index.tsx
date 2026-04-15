@@ -335,6 +335,7 @@ export default function EquipmentPage() {
           <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
             <Button icon={<UploadOutlined />}>Excel/CSV导入</Button>
           </Upload>
+          <a href="/api/catalog/csv-template" download="库存导入模板.csv" style={{ fontSize: 12, color: '#1677ff' }}>下载CSV模板</a>
           <Button icon={<ScanOutlined />} onClick={() => { setOcrModal(true); setOcrStep('upload'); setOcrItems([]); setOcrBatchId(null); }}>OCR识别入库</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
         </Space>

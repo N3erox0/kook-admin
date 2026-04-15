@@ -31,7 +31,9 @@ export default function LoginPage() {
       } else {
         navigate('/guild/select');
       }
-    } catch {} finally { setLoading(false); }
+    } catch (err: any) {
+      message.error(err?.message || '登录失败，请检查用户名和密码');
+    } finally { setLoading(false); }
   };
 
   return (

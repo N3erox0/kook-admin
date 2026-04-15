@@ -227,7 +227,7 @@ export class CatalogService {
     'FURNITURE', 'UNIQUE_FURNITURE', 'DECORATION', 'FARM', 'SEED',
     '_RUNE', '_SOUL', '_RELIC', '_SHARD', 'TRASH', 'TOKEN', 'EVENT_',
     'QUESTITEM', 'LOOTCHEST', 'UNIQUE_UNLOCK', 'VANITY', 'BACKPACK_SKIN',
-    'PAPERDOLL', 'EMOTE', 'FLAG', 'BANNER', 'CREST',
+    'PAPERDOLL', 'EMOTE', 'FLAG', 'BANNER', 'CREST', 'CONTRACT',
   ];
 
   // 包含规则
