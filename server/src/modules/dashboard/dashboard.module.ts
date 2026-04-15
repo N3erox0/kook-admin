@@ -9,11 +9,12 @@ import { GuildAlertRecord } from '../alert/entities/guild-alert-record.entity';
 import { User } from '../user/entities/user.entity';
 import { Guild } from '../guild/entities/guild.entity';
 import { InviteCode } from '../guild/entities/invite-code.entity';
+import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
 import { KookModule } from '../kook/kook.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([GuildMember, GuildInventory, GuildResupply, GuildAlertRecord, User, Guild, InviteCode]),
+    TypeOrmModule.forFeature([GuildMember, GuildInventory, GuildResupply, GuildAlertRecord, User, Guild, InviteCode, EquipmentCatalog]),
     KookModule,
   ],
   controllers: [DashboardController],

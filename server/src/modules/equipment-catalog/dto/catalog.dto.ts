@@ -7,6 +7,7 @@ export class CreateCatalogDto {
   @IsString() category: string;
   @IsOptional() @IsInt() gearScore?: number;
   @IsOptional() @IsString() imageUrl?: string;
+  @IsOptional() @IsString() aliases?: string;
   @IsOptional() @IsString() description?: string;
 }
 
@@ -17,6 +18,7 @@ export class UpdateCatalogDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsInt() gearScore?: number;
   @IsOptional() @IsString() imageUrl?: string;
+  @IsOptional() @IsString() aliases?: string;
   @IsOptional() @IsString() description?: string;
 }
 

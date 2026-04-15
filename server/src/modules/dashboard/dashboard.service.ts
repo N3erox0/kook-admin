@@ -8,6 +8,7 @@ import { GuildAlertRecord } from '../alert/entities/guild-alert-record.entity';
 import { Guild } from '../guild/entities/guild.entity';
 import { InviteCode } from '../guild/entities/invite-code.entity';
 import { User } from '../user/entities/user.entity';
+import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
 import { MemberStatus, ResupplyStatus, InviteCodeStatus, GuildStatus } from '../../common/constants/enums';
 
 @Injectable()
@@ -20,6 +21,7 @@ export class DashboardService {
     @InjectRepository(Guild) private guildRepo: Repository<Guild>,
     @InjectRepository(InviteCode) private inviteCodeRepo: Repository<InviteCode>,
     @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
   ) {}
 
   // ===== 模块一：系统超管控制台 =====
@@ -53,6 +55,13 @@ export class DashboardService {
       .where('ic.status = :status', { status: InviteCodeStatus.USED })
       .andWhere('ic.used_at >= :today', { today: todayStart })
       .getCount();
+
+    // 邀请码总数 + 已使用数
+    const totalInviteCodes = await this.inviteCodeRepo.count();
+    const usedInviteCodes = await this.inviteCodeRepo.count({ where: { status: InviteCodeStatus.USED as any } });
+
+    // 装备参考库总数
+    const totalCatalog = await this.catalogRepo.count();
 
     // 最新入驻公会（最近5个）
     const recentGuilds = await this.guildRepo.find({
@@ -90,6 +99,9 @@ export class DashboardService {
       totalUsers,
       activeBots,
       todayRedeemed,
+      totalInviteCodes,
+      usedInviteCodes,
+      totalCatalog,
       recentGuilds: recentGuilds.map((g) => ({
         id: g.id,
         name: g.name,

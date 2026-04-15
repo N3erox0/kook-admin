@@ -66,7 +66,9 @@ export default function MemberPage() {
       message.success('角色修改成功');
       setExpandedRoleId(null);
       fetchData();
-    } catch {}
+    } catch (err: any) {
+      message.error(err?.message || '角色修改失败');
+    }
   };
 
   const calcDays = (joinedAt: string) => {

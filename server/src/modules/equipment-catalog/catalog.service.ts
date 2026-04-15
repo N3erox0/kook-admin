@@ -42,7 +42,7 @@ export class CatalogService {
     const pageSize = query.pageSize || 50;
     const qb = this.catalogRepo.createQueryBuilder('c');
 
-    if (query.keyword) qb.andWhere('c.name LIKE :kw', { kw: `%${query.keyword}%` });
+    if (query.keyword) qb.andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${query.keyword}%` });
     if (query.level) qb.andWhere('c.level = :level', { level: query.level });
     if (query.quality !== undefined) qb.andWhere('c.quality = :quality', { quality: query.quality });
     if (query.category) qb.andWhere('c.category = :category', { category: query.category });

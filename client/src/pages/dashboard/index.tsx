@@ -148,18 +148,19 @@ function AdminDashboard() {
         <Col xs={24} sm={12} md={6}>
           <Card hoverable onClick={() => navigate('/admin/invite-codes')} style={{ cursor: 'pointer' }}>
             <Statistic
-              title={<Space><KeyOutlined /> 邀请码总数</Space>}
-              value={data.todayRedeemed}
+              title={<Space><KeyOutlined /> 邀请码</Space>}
+              value={data.usedInviteCodes ?? data.todayRedeemed ?? 0}
+              suffix={<Text style={{ fontSize: 16, color: '#999' }}>/ {data.totalInviteCodes ?? '?'}</Text>}
               valueStyle={{ color: '#faad14', fontSize: 32 }}
             />
-            <Text type="secondary" style={{ fontSize: 12 }}>点击管理邀请码</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>已使用 / 总数</Text>
           </Card>
         </Col>
         <Col xs={24} sm={12} md={6}>
           <Card hoverable onClick={() => navigate('/admin/catalog')} style={{ cursor: 'pointer' }}>
             <Statistic
-              title={<Space><RobotOutlined /> 装备参考库</Space>}
-              value={data.activeBots}
+              title={<Space><AppstoreOutlined /> 装备参考库</Space>}
+              value={data.totalCatalog ?? data.activeBots ?? 0}
               valueStyle={{ color: '#52c41a', fontSize: 32 }}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>点击管理参考库</Text>

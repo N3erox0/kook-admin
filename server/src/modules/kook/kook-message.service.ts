@@ -101,6 +101,8 @@ export class KookMessageService {
     const imageUrl = this.extractImageUrl(d);
     const textContent = d.content || '';
 
+    this.logger.log(`[频道消息] type=${d.type}, target_id=${d.target_id}, author=${authorName}(${authorId}), imageUrl=${imageUrl ? imageUrl.slice(0, 80) : 'null'}, content=${textContent.slice(0, 150)}`);
+
     if (imageUrl) {
       await this.processImageMessage(guild, authorId, authorName, imageUrl, textContent, d.msg_id);
     }

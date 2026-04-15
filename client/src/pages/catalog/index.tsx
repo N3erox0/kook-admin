@@ -201,6 +201,7 @@ export default function CatalogPage() {
       render: (v: number) => v != null && v > 0 ? `P${v}` : '-',
     },
     { title: '部位', dataIndex: 'category', key: 'category', width: 80 },
+    { title: '别称', dataIndex: 'aliases', key: 'aliases', width: 150, ellipsis: true, render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
     {
       title: '操作', key: 'actions', width: 180,
       render: (_: any, record: EquipmentCatalog) => (
@@ -282,6 +283,7 @@ export default function CatalogPage() {
             </Form.Item>
           </Space>
           <Form.Item name="gearScore" label="装等（留空自动计算=等级+品质）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="aliases" label="装备别称（逗号分隔，如：堕神,堕神杖）"><Input placeholder="多个别称用逗号分隔" /></Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item><Button type="primary" htmlType="submit" block>保存</Button></Form.Item>
         </Form>

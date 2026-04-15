@@ -222,8 +222,13 @@ export default function EquipmentPage() {
       const itemsRes: any = await getOcrBatchDetail(guildId, batchRes?.id || batchRes?.batchId);
       setOcrItems(Array.isArray(itemsRes) ? itemsRes : itemsRes?.items || itemsRes?.list || []);
       setOcrStep('review');
-    } catch {
-      message.error('OCR 识别失败');
+    } catch (err: any) {
+      const errMsg = err?.message || err?.errorMessage || '';
+      if (errMsg.includes('图片指纹') || errMsg.includes('pHash')) {
+        message.error('装备参考库未初始化图片指纹，请先在 SSVIP→参考库 执行"生成图片指纹"');
+      } else {
+        message.error(errMsg || 'OCR 识别失败，请确认上传的是装备截图');
+      }
     } finally { setOcrLoading(false); }
     return false;
   };

@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import type { User } from '@/types';
 
+// 同步从 localStorage 读取初始认证状态（避免刷新页面时 AuthRoute 误判为未登录）
+const _initToken = localStorage.getItem('token');
+const _initUserStr = localStorage.getItem('user');
+let _initUser: User | null = null;
+let _initAuth = false;
+try {
+  if (_initToken && _initUserStr && _initUserStr !== 'undefined' && _initUserStr !== 'null') {
+    _initUser = JSON.parse(_initUserStr);
+    _initAuth = true;
+  }
+} catch { /* ignore */ }
+
 interface AuthState {
   token: string | null;
   user: User | null;
@@ -11,9 +23,9 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  token: null,
-  user: null,
-  isAuthenticated: false,
+  token: _initAuth ? _initToken : null,
+  user: _initUser,
+  isAuthenticated: _initAuth,
 
   setAuth: (token, user, refreshToken?) => {
     localStorage.setItem('token', token);

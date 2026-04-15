@@ -48,6 +48,7 @@ export interface EquipmentCatalog {
   category: string;
   gearScore: number;
   imageUrl: string | null;
+  aliases: string | null;
   description: string | null;
 }
 
