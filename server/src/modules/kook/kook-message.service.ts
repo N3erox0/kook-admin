@@ -13,6 +13,7 @@ import { KookBotInteractionService } from './kook-bot-interaction.service';
 import { GuildStatus, InviteCodeStatus } from '../../common/constants/enums';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 
 export interface KookWebhookPayload {
   s: number;
@@ -102,13 +103,16 @@ export class KookMessageService {
     const authorId = author?.id || d.author_id;
     const authorName = author?.nickname || author?.username || authorId;
 
-    const imageUrl = this.extractImageUrl(d);
+    const imageUrls = this.extractAllImageUrls(d);
     const textContent = d.content || '';
 
-    this.logger.log(`[频道消息] type=${d.type}, target_id=${d.target_id}, author=${authorName}(${authorId}), imageUrl=${imageUrl ? imageUrl.slice(0, 80) : 'null'}, content=${textContent.slice(0, 150)}`);
+    this.logger.log(`[频道消息] type=${d.type}, target_id=${d.target_id}, author=${authorName}(${authorId}), images=${imageUrls.length}, content=${textContent.slice(0, 150)}`);
 
-    if (imageUrl) {
-      await this.processImageMessage(guild, authorId, authorName, imageUrl, textContent, d.msg_id);
+    if (imageUrls.length > 0) {
+      // 多图逐张处理
+      for (const imgUrl of imageUrls) {
+        await this.processImageMessage(guild, authorId, authorName, imgUrl, textContent, d.msg_id);
+      }
     } else if (this.isOcBrokenMessage(textContent)) {
       await this.processOcBrokenMessage(guild, authorId, authorName, textContent, d.msg_id);
     }
@@ -385,6 +389,13 @@ export class KookMessageService {
       const highConf = matchResults.filter(m => m.confidence >= 0.70);
       const lowConf = matchResults.filter(m => m.confidence < 0.70);
 
+      // 每张图最多识别10件装备（按置信度降序取前10）
+      const MAX_ITEMS = 10;
+      const limitedHighConf = highConf.sort((a, b) => b.confidence - a.confidence).slice(0, MAX_ITEMS);
+      if (highConf.length > MAX_ITEMS) {
+        this.logger.log(`[${guild.name}] 匹配${highConf.length}件超出上限${MAX_ITEMS}，截取置信度最高的${MAX_ITEMS}件`);
+      }
+
       // 低置信度存入待识别工作区
       if (lowConf.length > 0) {
         try {
@@ -400,7 +411,7 @@ export class KookMessageService {
         }
       }
 
-      if (highConf.length === 0) {
+      if (limitedHighConf.length === 0) {
         const msg = lowConf.length > 0
           ? `未能高置信度匹配到装备。${lowConf.length} 件已存入待识别工作区，请管理员手动确认。`
           : '未能从截图中识别到装备。请确认装备参考库已初始化图片指纹。';
@@ -408,8 +419,16 @@ export class KookMessageService {
         return;
       }
 
-      // Step 5: 创建补装申请
-      const catalogIds = highConf.map(m => m.catalogId);
+      // Step 5: 创建补装申请（内容级去重：时间+地点+人+装备IDs）
+      const catalogIds = limitedHighConf.map(m => m.catalogId);
+      const contentDedupHash = crypto.createHash('md5')
+        .update(`${killDetail.date || ''}|${killDetail.mapName || ''}|${kookUserId}|${[...catalogIds].sort().join(',')}`)
+        .digest('hex');
+      const existingContent = await this.resupplyService.findByDedupHash(guild.id, contentDedupHash);
+      if (existingContent) {
+        this.logger.log(`[${guild.name}] 内容级去重命中(时间+地点+人+装备相同)，跳过`);
+        return;
+      }
 
       if (killDetail.isKillDetail) {
         const result = await this.resupplyService.createFromKillDetail(guild.id, {
@@ -421,6 +440,7 @@ export class KookMessageService {
           guild: killDetail.guildName || guild.name,
           equipmentCatalogIds: catalogIds,
           kookMessageId,
+          _dedupHash: contentDedupHash,
         });
         const msg = result.skipped
           ? '补装申请已存在（去重跳过）。'
@@ -434,6 +454,7 @@ export class KookMessageService {
           applyType: '死亡补装',
           screenshotUrl: imageUrl,
           kookMessageId,
+          _dedupHash: contentDedupHash,
         });
         if (!result['deduplicated']) {
           const msg = `收到补装申请，${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
@@ -653,57 +674,67 @@ export class KookMessageService {
   // ===== 击杀详情定位 =====
 
   /**
-   * 基于OCR文字坐标定位击杀详情左面板区域
-   * 找"击杀"文字位置作为中轴线参考点，左面板=弹窗左边界~中轴线
+   * 基于OCR"击杀详情"文字坐标精确定位左面板装备区域
+   * 策略：以"击杀详情"四字为锚点推算弹窗范围
+   * - "击杀详情"文字宽度 ≈ 弹窗宽度的 1/4~1/3
+   * - "击杀"二字（中间剑图标）的x = 左右面板分界线
+   * - 左面板宽度 ≈ 弹窗宽度的 40%
+   * - 上边界 = 玩家信息区下方（击杀详情y + 击杀详情高度 * 3）
+   * - 下边界 = "另存为新模板"/"击杀声望" 或 弹窗底部
    */
   private detectLeftPanel(detections: { text: string; x: number; y: number; width: number; height: number }[],
     imageBuffer: Buffer): { left: number; top: number; width: number; height: number } | null {
     if (!detections || detections.length === 0) return null;
 
-    // 找"击杀"文字的位置（中轴线参考）
-    const killTextIdx = detections.findIndex(d => d.text === '击杀' && d.width < 200);
-    // 找"击杀详情"的位置（弹窗上边界参考）
+    // 找"击杀详情"的位置（弹窗标题，作为锚点）
     const killDetailIdx = detections.findIndex(d => /击杀详情/.test(d.text));
-    // 找"击杀声望"/"另存为新模板"（弹窗下边界参考）
+    if (killDetailIdx < 0) return null;
+
+    const anchor = detections[killDetailIdx];
+    // 击杀详情文字宽度约为弹窗宽度的25-30%，推算弹窗宽度
+    const estimatedPopupWidth = anchor.width * 3.5;
+
+    // 找"击杀"文字（中间剑图标位置）作为左右分界
+    const killTextIdx = detections.findIndex(d => d.text === '击杀' && d.width < 150 && d.y > anchor.y + anchor.height);
+    // 找底部标记
     const bottomIdx = detections.findIndex(d => /击杀声望|另存为新模板/.test(d.text));
 
-    if (killDetailIdx < 0) return null; // 未找到击杀详情文字，无法定位
+    // 弹窗左边界 = 击杀详情文字的x - 小偏移
+    const popupLeft = Math.max(0, anchor.x - 10);
 
-    const detailDetection = detections[killDetailIdx];
-
-    // 推算中轴线X：优先用"击杀"（居中的），否则用"击杀详情"的 x + 弹窗宽度/2
-    let centerX: number;
+    // 左面板右边界：优先用"击杀"文字的x（中轴线），否则用弹窗宽度的45%
+    let leftPanelRight: number;
     if (killTextIdx >= 0) {
-      const kt = detections[killTextIdx];
-      centerX = kt.x + kt.width / 2;
+      leftPanelRight = detections[killTextIdx].x - 5;
     } else {
-      // 估算："击杀详情"在弹窗左上角，弹窗宽度约为图片的50-80%
-      // 取所有检测文字的最大x+width作为弹窗右边界
-      const maxRight = Math.max(...detections.map(d => d.x + d.width));
-      centerX = (detailDetection.x + maxRight) / 2;
+      leftPanelRight = popupLeft + Math.round(estimatedPopupWidth * 0.45);
     }
 
-    // 弹窗上边界：击杀详情文字下方一段（玩家信息区）
-    const topY = detailDetection.y + detailDetection.height + 20;
+    // 上边界：击杀详情标题下方 + 玩家信息区（头像+昵称+公会+IP约占3行高度）
+    const topY = anchor.y + anchor.height * 4;
 
-    // 弹窗下边界
+    // 下边界
     let bottomY: number;
     if (bottomIdx >= 0) {
-      bottomY = detections[bottomIdx].y;
+      bottomY = detections[bottomIdx].y - 5;
     } else {
-      // 估算：击杀详情下方约为弹窗高度的 80%
-      const allYs = detections.map(d => d.y + d.height);
-      bottomY = Math.max(...allYs) - 30;
+      // 估算：弹窗高度约为弹窗宽度的0.8倍
+      bottomY = anchor.y + Math.round(estimatedPopupWidth * 0.8);
     }
 
-    // 左面板：从弹窗左边界到中轴线
-    const leftX = Math.max(0, detailDetection.x - 10);
-    const regionWidth = Math.max(50, Math.round(centerX - leftX - 10));
+    const regionLeft = popupLeft;
+    const regionWidth = Math.max(50, Math.round(leftPanelRight - popupLeft));
     const regionHeight = Math.max(50, Math.round(bottomY - topY));
 
-    if (regionWidth < 50 || regionHeight < 50) return null;
+    // 安全检查：左面板宽度不应超过估算弹窗宽度的50%
+    const maxWidth = Math.round(estimatedPopupWidth * 0.5);
+    const safeWidth = Math.min(regionWidth, maxWidth);
 
-    return { left: leftX, top: topY, width: regionWidth, height: regionHeight };
+    if (safeWidth < 50 || regionHeight < 50) return null;
+
+    this.logger.log(`[detectLeftPanel] 锚点"击杀详情": x=${anchor.x},y=${anchor.y},w=${anchor.width} → 弹窗宽≈${Math.round(estimatedPopupWidth)}, 左面板: left=${regionLeft},top=${Math.round(topY)},${safeWidth}x${regionHeight}`);
+
+    return { left: regionLeft, top: Math.round(topY), width: safeWidth, height: regionHeight };
   }
 
   /** 下载图片为 Buffer */
@@ -767,55 +798,64 @@ export class KookMessageService {
     return { date, mapName, gameId, guildName, isKillDetail: true };
   }
 
-  private extractImageUrl(d: any): string | null {
-    // 1. type=2 纯图片消息
-    if (d.type === 2 && d.content) return d.content;
+  /** 提取消息中所有图片URL（支持一条消息多张图） */
+  private extractAllImageUrls(d: any): string[] {
+    const urls: string[] = [];
 
-    // 2. type=10 卡片消息 — 解析JSON提取 image.src
+    // 1. type=2 纯图片消息
+    if (d.type === 2 && d.content) { urls.push(d.content); return urls; }
+
+    // 2. type=10 卡片消息 — 提取所有 image.src
     if (d.type === 10 && d.content) {
       try {
         const cards = typeof d.content === 'string' ? JSON.parse(d.content) : d.content;
         if (Array.isArray(cards)) {
           for (const card of cards) {
             for (const mod of (card.modules || [])) {
-              // container / image-group 类型都含 elements
               if (mod.elements && Array.isArray(mod.elements)) {
                 for (const el of mod.elements) {
-                  if (el.type === 'image' && el.src) return el.src;
+                  if (el.type === 'image' && el.src) urls.push(el.src);
                 }
               }
-              // 单独 image 模块
-              if (mod.type === 'image' && mod.src) return mod.src;
+              if (mod.type === 'image' && mod.src) urls.push(mod.src);
             }
           }
         }
       } catch (err) {
         this.logger.warn(`解析卡片消息图片失败: ${err}`);
       }
+      if (urls.length > 0) return urls;
     }
 
-    // 3. type=9 KMarkdown 消息 — 提取 [文字](图片URL) 格式
+    // 3. type=9 KMarkdown — 提取所有图片URL
     if (d.type === 9 && d.content) {
-      const kmdImageMatch = (d.content as string).match(/\[.*?\]\((https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp)[^\s)]*)\)/i);
-      if (kmdImageMatch) return kmdImageMatch[1];
-      // 也匹配纯URL（KOOK有时直接发图片链接作为KMarkdown内容）
-      const plainUrlMatch = (d.content as string).match(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)[^\s]*)/i);
-      if (plainUrlMatch) return plainUrlMatch[1];
+      const kmdMatches = (d.content as string).matchAll(/\[.*?\]\((https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp)[^\s)]*)\)/gi);
+      for (const m of kmdMatches) urls.push(m[1]);
+      if (urls.length === 0) {
+        const plainMatches = (d.content as string).matchAll(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)[^\s]*)/gi);
+        for (const m of plainMatches) urls.push(m[1]);
+      }
+      if (urls.length > 0) return urls;
     }
 
-    // 4. attachments
+    // 4. attachments（可能有多个）
     const attachments = d.extra?.attachments || [];
-    const imageAtt = attachments.find((a: any) => a.type === 'image' || a.url?.match(/\.(png|jpg|jpeg|gif|webp)/i));
-    if (imageAtt) return imageAtt.url;
+    for (const a of attachments) {
+      if (a.type === 'image' || a.url?.match(/\.(png|jpg|jpeg|gif|webp)/i)) {
+        urls.push(a.url);
+      }
+    }
+    if (urls.length > 0) return urls;
 
-    // 5. Markdown 图片语法 ![alt](url)
-    const imgMatch = (d.content || '').match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
-    if (imgMatch) return imgMatch[1];
+    // 5. Markdown 图片语法
+    const mdMatches = (d.content || '').matchAll(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g);
+    for (const m of mdMatches) urls.push(m[1]);
+    if (urls.length > 0) return urls;
 
-    // 6. 通用URL提取（兜底：内容中任何图片URL）
-    const genericMatch = (d.content || '').match(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)/i);
-    if (genericMatch) return genericMatch[1];
+    // 6. 通用URL兜底
+    const genericMatches = (d.content || '').matchAll(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)/gi);
+    for (const m of genericMatches) urls.push(m[1]);
 
-    return null;
+    return urls;
   }
 }

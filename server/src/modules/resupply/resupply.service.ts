@@ -74,6 +74,12 @@ export class ResupplyService {
     return { list: enrichedList, total, page, pageSize };
   }
 
+  /** 部位排序权重：武器→副手→头→甲→鞋→其他 */
+  private static readonly CATEGORY_ORDER: Record<string, number> = {
+    '武器': 1, '副手': 2, '头': 3, '甲': 4, '鞋': 5,
+    '披风': 6, '坐骑': 7, '药水': 8, '食物': 9, '其他': 10,
+  };
+
   /** 将补装记录中的 equipmentIds (逗号分隔catalog ID) 解析为装备名称 */
   private async enrichEquipmentNames(items: GuildResupply[]): Promise<any[]> {
     const allIds = new Set<number>();
@@ -95,11 +101,12 @@ export class ResupplyService {
 
     return items.map(item => {
       const ids = (item.equipmentIds || '').split(',').filter(Boolean).map(Number);
-      const names = ids.map(id => {
-        const cat = catalogMap.get(id);
-        return cat ? `${cat.level}${cat.quality}${cat.name} P${cat.gearScore}` : `ID:${id}`;
-      });
-      return { ...item, equipmentNames: names.join('、'), equipmentDetails: ids.map(id => catalogMap.get(id) || null) };
+      const details = ids.map(id => catalogMap.get(id) || null).filter(Boolean) as { name: string; level: number; quality: number; gearScore: number; category: string }[];
+      // 按部位排序：武器→副手→头→甲→鞋→其他
+      details.sort((a, b) => (ResupplyService.CATEGORY_ORDER[a.category] || 10) - (ResupplyService.CATEGORY_ORDER[b.category] || 10));
+      // 格式：P{装等} {名称}
+      const names = details.map(cat => `P${cat.gearScore} ${cat.name}`);
+      return { ...item, equipmentNames: names.join('、'), equipmentDetails: details };
     });
   }
 
