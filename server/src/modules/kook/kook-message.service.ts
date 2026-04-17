@@ -431,7 +431,7 @@ export class KookMessageService {
       }
 
       if (killDetail.isKillDetail) {
-        const result = await this.resupplyService.createFromKillDetail(guild.id, {
+        const killDto: any = {
           kookUserId, kookNickname,
           screenshotUrl: imageUrl,
           killDate: killDetail.date || new Date().toISOString().slice(0, 10),
@@ -441,13 +441,14 @@ export class KookMessageService {
           equipmentCatalogIds: catalogIds,
           kookMessageId,
           _dedupHash: contentDedupHash,
-        });
+        };
+        const result = await this.resupplyService.createFromKillDetail(guild.id, killDto);
         const msg = result.skipped
           ? '补装申请已存在（去重跳过）。'
           : `收到击杀详情补装申请：${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
         try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
       } else {
-        const result = await this.resupplyService.create(guild.id, {
+        const createDto: any = {
           kookUserId, kookNickname,
           equipmentIds: catalogIds.join(','),
           quantity: catalogIds.length,
@@ -455,7 +456,8 @@ export class KookMessageService {
           screenshotUrl: imageUrl,
           kookMessageId,
           _dedupHash: contentDedupHash,
-        });
+        };
+        const result = await this.resupplyService.create(guild.id, createDto);
         if (!result['deduplicated']) {
           const msg = `收到补装申请，${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
           try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
