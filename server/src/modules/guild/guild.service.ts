@@ -336,7 +336,21 @@ export class GuildService {
       guild.name = guild.name.startsWith('待激活') ? `公会-${guild.kookGuildId.slice(-6)}` : guild.name;
       await qr.manager.save(guild);
 
-      // 3. 建立超级管理员关联
+      // 3. 标记关联邀请码为已使用
+      if (guild.inviteCodeId) {
+        const invite = await qr.manager.findOne(InviteCode, { where: { id: guild.inviteCodeId } });
+        if (invite && invite.status !== InviteCodeStatus.USED) {
+          invite.status = InviteCodeStatus.USED;
+          invite.usedByUserId = user.id;
+          invite.usedAt = new Date();
+          invite.boundGuildId = guild.id;
+          invite.boundGuildName = guild.name;
+          await qr.manager.save(invite);
+          this.logger.log(`邀请码 ${invite.code} 已标记为已使用，绑定公会: ${guild.name}`);
+        }
+      }
+
+      // 4. 建立超级管理员关联
       const existingMember = await qr.manager.findOne(GuildMember, {
         where: { guildId: guild.id, userId: user.id },
       });
@@ -393,7 +407,21 @@ export class GuildService {
       guild.name = guild.name.startsWith('待激活') ? `公会-${guild.kookGuildId.slice(-6)}` : guild.name;
       await qr.manager.save(guild);
 
-      // 2. 建立超级管理员关联
+      // 2. 标记关联邀请码为已使用
+      if (guild.inviteCodeId) {
+        const invite = await qr.manager.findOne(InviteCode, { where: { id: guild.inviteCodeId } });
+        if (invite && invite.status !== InviteCodeStatus.USED) {
+          invite.status = InviteCodeStatus.USED;
+          invite.usedByUserId = user.id;
+          invite.usedAt = new Date();
+          invite.boundGuildId = guild.id;
+          invite.boundGuildName = guild.name;
+          await qr.manager.save(invite);
+          this.logger.log(`邀请码 ${invite.code} 已标记为已使用，绑定公会: ${guild.name}`);
+        }
+      }
+
+      // 3. 建立超级管理员关联
       const existingMember = await qr.manager.findOne(GuildMember, {
         where: { guildId: guild.id, userId: user.id },
       });

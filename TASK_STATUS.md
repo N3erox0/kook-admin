@@ -137,3 +137,8 @@
 | F-053 | POST download-images接口 | completed | 2026-04-17 21:45 | SSVIP权限，支持自定义并发数 |
 | F-054 | pHash生成优先读本地文件 | completed | 2026-04-17 21:45 | generatePhashForCatalog优先localImagePath，fallback远程URL |
 | F-055 | batchGeneratePhash本地优先 | completed | 2026-04-17 21:45 | 查询增加localImagePath字段并传入生成方法 |
+| **V2.8.3** | **邀请码状态修复** | | | |
+| F-056 | 邀请码前端状态文案修正 | completed | 2026-04-17 21:55 | disabled→"未启用"，used→"已使用"（invite-codes+types） |
+| F-057 | BOT邀请码默认enabled | completed | 2026-04-17 21:55 | self_joined_guild生成邀请码status改为ENABLED |
+| F-058 | pending公会关联inviteCodeId | completed | 2026-04-17 21:55 | 创建pending公会时写入inviteCodeId，已有公会补充关联 |
+| F-059 | 激活路径邀请码used联动 | completed | 2026-04-17 21:55 | activateGuild/activateGuildForUser激活后标记邀请码为used+写入绑定信息 |
