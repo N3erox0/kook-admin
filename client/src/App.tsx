@@ -22,6 +22,7 @@ import AlertPage from '@/pages/alert';
 import LogPage from '@/pages/log';
 import InviteCodePage from '@/pages/invite-codes';
 import GuildSettingsPage from '@/pages/guild/GuildSettings';
+import KookPendingPage from '@/pages/ocr/kook-pending';
 
 function GuildRoute({ children }: { children: React.ReactNode }) {
   const { currentGuildId } = useGuildStore();
