@@ -137,6 +137,13 @@
 | F-053 | POST download-images接口 | completed | 2026-04-17 21:45 | SSVIP权限，支持自定义并发数 |
 | F-054 | pHash生成优先读本地文件 | completed | 2026-04-17 21:45 | generatePhashForCatalog优先localImagePath，fallback远程URL |
 | F-055 | batchGeneratePhash本地优先 | completed | 2026-04-17 21:45 | 查询增加localImagePath字段并传入生成方法 |
+| **V2.8.3** | **pHash匹配精度优化+数量自动回填** | | | |
+| F-056 | pHash匹配阈值降低 | completed | 2026-04-17 22:50 | HAMMING_THRESHOLD 19→25（相似度≥60%），提升匹配容忍度 |
+| F-057 | cropCenter遮盖四角+比例调整 | completed | 2026-04-17 22:50 | 裁切前遮盖左上(等级)/右上(五角星)/右下(数量)+比例70%→60% |
+| F-058 | 装备区域智能检测 | completed | 2026-04-17 22:50 | detectGridRegion基于行方差自动裁掉顶部/底部UI |
+| F-059 | 多候选iconSize切割 | completed | 2026-04-17 22:50 | 遍历5个候选尺寸(0.70~1.30倍)，取最多子图组合 |
+| F-060 | 子图右下角数量自动提取 | completed | 2026-04-17 22:50 | extractQuantityFromCorner+腾讯云OCR数字识别 |
+| F-061 | processRecognition适配quantity | completed | 2026-04-17 22:50 | OCR结果回填提取到的数量而非硬编码1 |
 | **V2.8.3** | **邀请码状态修复** | | | |
 | F-056 | 邀请码前端状态文案修正 | completed | 2026-04-17 21:55 | disabled→"未启用"，used→"已使用"（invite-codes+types） |
 | F-057 | BOT邀请码默认enabled | completed | 2026-04-17 21:55 | self_joined_guild生成邀请码status改为ENABLED |
