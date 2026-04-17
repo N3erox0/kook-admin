@@ -140,7 +140,10 @@ export class CatalogService {
     return this.catalogRepo.save(entities);
   }
 
-  /** Levenshtein 模糊匹配 */
+  /** 中文等级前缀（Albion导入的装备名都带这些） */
+  private static readonly TIER_PREFIXES = ['新手级', '学徒级', '熟练级', '老手级', '专家级', '大师级', '宗师级', '禅师级'];
+
+  /** Levenshtein 模糊匹配（支持去等级前缀+别称） */
   async findByNameFuzzy(name: string, threshold = 0.8): Promise<{ item: EquipmentCatalog; score: number }[]> {
     const all = await this.catalogRepo.find();
     const results: { item: EquipmentCatalog; score: number }[] = [];
@@ -148,7 +151,37 @@ export class CatalogService {
 
     for (const item of all) {
       const itemName = item.name.toLowerCase();
-      const score = similarityScore(lowerName, itemName);
+
+      // 1. 直接匹配全名
+      let score = similarityScore(lowerName, itemName);
+
+      // 2. 去掉中文等级前缀后匹配（"禅师级牧师风帽" → "牧师风帽"）
+      let strippedName = item.name;
+      for (const prefix of CatalogService.TIER_PREFIXES) {
+        if (strippedName.startsWith(prefix)) {
+          strippedName = strippedName.slice(prefix.length);
+          break;
+        }
+      }
+      if (strippedName !== item.name) {
+        const strippedScore = similarityScore(lowerName, strippedName.toLowerCase());
+        if (strippedScore > score) score = strippedScore;
+      }
+
+      // 3. 别称匹配
+      if (item.aliases) {
+        const aliasList = item.aliases.split(',').map(a => a.trim().toLowerCase()).filter(Boolean);
+        for (const alias of aliasList) {
+          const aliasScore = similarityScore(lowerName, alias);
+          if (aliasScore > score) score = aliasScore;
+        }
+      }
+
+      // 4. 输入包含在名字中（子串匹配加分）
+      if (itemName.includes(lowerName) || strippedName.toLowerCase().includes(lowerName)) {
+        score = Math.max(score, 0.85);
+      }
+
       if (score >= threshold) {
         results.push({ item, score });
       }
