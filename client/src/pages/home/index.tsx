@@ -56,12 +56,12 @@ export default function HomePage() {
         </Space>
       </div>
 
-      {/* Hero - 文字居中在头图上，扁比例 */}
+      {/* Hero - 文字居中在头图上，9:6比例 */}
       <div style={{
         position: 'relative',
-        height: '38vw',
-        minHeight: 320,
-        maxHeight: 480,
+        height: '66.67vw',
+        minHeight: 400,
+        maxHeight: 680,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
