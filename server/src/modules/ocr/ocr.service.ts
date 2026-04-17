@@ -72,7 +72,7 @@ export class OcrService {
               quality: m.quality,
               category: m.category,
               gearScore: m.gearScore,
-              quantity: 1,
+              quantity: m.quantity || 1,
               confidence: m.confidence,
               matchScore: m.confidence,
             }));

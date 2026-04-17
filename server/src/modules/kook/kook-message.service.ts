@@ -567,18 +567,34 @@ export class KookMessageService {
   }
 
   /**
-   * OC碎文字拆词：移除关键词 → 拆分 → 过滤纯数字和无效短词
+   * OC碎文字拆词：移除关键词 → 拆分 → 纯数字段与下一段合并（如"80 牧师风帽"→"80牧师风帽"）
    */
   private parseOcBrokenSegments(text: string): string[] {
     let cleaned = text.replace(/oc\s*碎/gi, '').trim();
-    const segments = cleaned.split(/[,，、\s]+/).filter(s => s.trim().length > 0);
-    // 过滤纯数字（如独立的"80"），保留含汉字的词段
-    return segments.filter(s => {
-      const trimmed = s.trim();
-      if (trimmed.length < 2) return false;
-      if (/^\d+$/.test(trimmed)) return false; // 纯数字跳过
-      return true;
-    });
+    const rawSegments = cleaned.split(/[,，、\s]+/).filter(s => s.trim().length > 0);
+
+    // 合并：纯数字段（如"80"）与下一个非数字段合并为"80牧师风帽"
+    // 同理 "P8" / "平8" 等装等前缀也与下一段合并
+    const merged: string[] = [];
+    for (let i = 0; i < rawSegments.length; i++) {
+      const seg = rawSegments[i].trim();
+      if (!seg) continue;
+
+      // 纯数字或装等前缀（P8/平8等） → 与下一段合并
+      if (/^(\d{1,2}|[pP]\d{1,2}|平\d?)$/.test(seg) && i + 1 < rawSegments.length) {
+        const next = rawSegments[i + 1].trim();
+        if (next && !/^\d+$/.test(next)) {
+          merged.push(seg + next);
+          i++; // 跳过下一段
+          continue;
+        }
+      }
+
+      if (seg.length < 2) continue;
+      merged.push(seg);
+    }
+
+    return merged;
   }
 
   /**
