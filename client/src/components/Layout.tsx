@@ -24,6 +24,7 @@ const allMenuItems = [
   { key: '/admin/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['ssvip'] },
   { key: '/admin/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
+  { key: '/admin/kook-pending', icon: <AlertOutlined />, label: '待识别工作区', roles: ['super_admin', 'inventory_admin'] },
   { key: '/admin/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
   { key: '/admin/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
   { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin', 'ssvip'] },

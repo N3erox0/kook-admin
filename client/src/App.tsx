@@ -79,6 +79,7 @@ export default function App() {
               <Route path="catalog" element={<CatalogPage />} />
               <Route path="equipment" element={<EquipmentPage />} />
               <Route path="resupply" element={<ResupplyPage />} />
+              <Route path="kook-pending" element={<KookPendingPage />} />
               <Route path="alerts" element={<AlertPage />} />
               <Route path="invite-codes" element={<InviteCodePage />} />
               <Route path="logs" element={<LogPage />} />

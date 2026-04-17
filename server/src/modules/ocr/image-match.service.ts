@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
@@ -12,19 +13,20 @@ import { join } from 'path';
  *
  * 流程：
  * 1. 上传截图 → 按网格切割为单个装备图标子图
- * 2. 每个子图裁切中心70%（去品质边框）→ 缩放为 32x32 灰度 → DCT → 取低频 8x8 → 生成 64bit 哈希
+ * 2. 每个子图遮盖角标(五角星/等级/数量)→裁切中心60%（去品质边框）→ 缩放为 32x32 灰度 → DCT → 取低频 8x8 → 生成 64bit 哈希
  * 3. 与参考库所有装备的 imagePhash 比较汉明距离
- * 4. 距离 ≤ 19 (相似度 ≥ 0.70) → 匹配成功
+ * 4. 距离 ≤ 25 (相似度 ≥ 0.60) → 匹配成功
  */
 @Injectable()
 export class ImageMatchService {
   private readonly logger = new Logger(ImageMatchService.name);
 
-  /** 匹配阈值：汉明距离 ≤ 19/64 即相似度 ≥ 0.70 */
-  private static readonly HAMMING_THRESHOLD = 19;
+  /** 匹配阈值：汉明距离 ≤ 25/64 即相似度 ≥ 0.60 */
+  private static readonly HAMMING_THRESHOLD = 25;
 
   constructor(
     @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
+    private configService: ConfigService,
   ) {}
 
   /**
@@ -41,6 +43,7 @@ export class ImageMatchService {
     gearScore: number;
     confidence: number;
     imageUrl: string | null;
+    quantity: number;
   }[]> {
     let sharp: any;
     try {
@@ -81,7 +84,7 @@ export class ImageMatchService {
     const results: any[] = [];
     for (const subBuf of subImages) {
       try {
-        const cropped = await this.cropCenter(sharp, subBuf, 0.70);
+        const cropped = await this.cropCenter(sharp, subBuf, 0.60);
         const hash = await this.computePhash(sharp, cropped);
 
         let bestMatch: any = null;
@@ -98,8 +101,15 @@ export class ImageMatchService {
 
         if (bestMatch && bestDistance <= ImageMatchService.HAMMING_THRESHOLD) {
           const confidence = 1 - bestDistance / 64;
-          // 防止同一装备重复匹配
-          if (!results.find(r => r.catalogId === bestMatch.id)) {
+          // 防止同一装备重复匹配 — 改为累加数量
+          const existing = results.find(r => r.catalogId === bestMatch.id);
+          if (existing) {
+            // 同一装备出现多次，提取本子图数量后累加
+            const qty = await this.extractQuantityFromCorner(sharp, subBuf);
+            existing.quantity += qty;
+          } else {
+            // 提取右下角数量数字
+            const qty = await this.extractQuantityFromCorner(sharp, subBuf);
             results.push({
               catalogId: bestMatch.id,
               catalogName: bestMatch.name,
@@ -109,6 +119,7 @@ export class ImageMatchService {
               gearScore: bestMatch.gearScore,
               confidence: Math.round(confidence * 100) / 100,
               imageUrl: bestMatch.imageUrl,
+              quantity: qty,
             });
           }
         }
@@ -164,7 +175,7 @@ export class ImageMatchService {
     if (!buffer || buffer.length === 0) return null;
 
     try {
-      const cropped = await this.cropCenter(sharp, buffer, 0.70);
+      const cropped = await this.cropCenter(sharp, buffer, 0.60);
       return this.computePhash(sharp, cropped);
     } catch (err) {
       this.logger.warn(`生成 pHash 失败 catalogId=${catalogId}: ${err}`);
@@ -225,6 +236,7 @@ export class ImageMatchService {
     gearScore: number;
     confidence: number;
     imageUrl: string | null;
+    quantity: number;
   }[]> {
     let sharp: any;
     try { sharp = require('sharp'); } catch {
@@ -244,17 +256,124 @@ export class ImageMatchService {
 
   // ===== 内部方法 =====
 
-  /** 估算装备图标大小 */
+  /**
+   * 估算装备图标大小
+   * Albion 截图常见尺寸：
+   * - 手机截图：宽约 440~700px，图标 70~100px，一行约 5~6 列
+   * - PC截图：宽约 800~1920px，图标 60~90px
+   */
   private estimateIconSize(imgWidth: number, imgHeight: number): number {
-    // Albion 装备栏截图中图标通常是 60-80px
-    // 如果图片宽度 > 300，按比例推算；否则视为单个图标
     if (imgWidth <= 120 && imgHeight <= 120) return Math.min(imgWidth, imgHeight);
     if (imgWidth <= 300) return Math.round(imgWidth / 3);
-    return 72; // 默认 72px
+    // 按宽度推算，假设每行 5~7 列图标，取中位数 6
+    // 手机截图（宽约440）→ 图标约73px；宽700 → 图标约116px
+    return Math.round(imgWidth / 6);
   }
 
-  /** 按网格切割图片为子图 */
+  /**
+   * 智能检测装备网格区域（裁掉顶部/底部/侧边的UI元素）
+   * 通过计算每一行/每一列的像素方差，定位装备网格所在的矩形区域
+   * @returns 装备网格的 {left, top, width, height} 区域
+   */
+  private async detectGridRegion(sharp: any, buffer: Buffer, width: number, height: number): Promise<{ left: number; top: number; width: number; height: number }> {
+    try {
+      // 缩放为固定宽度 200 做分析（加速）
+      const analyzeW = 200;
+      const analyzeH = Math.round((height / width) * analyzeW);
+      const { data } = await sharp(buffer)
+        .resize(analyzeW, analyzeH)
+        .grayscale()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      // 计算每一行的方差（方差高=有图标边缘，方差低=纯色UI区域）
+      const rowVariances: number[] = [];
+      for (let y = 0; y < analyzeH; y++) {
+        let sum = 0, sumSq = 0;
+        for (let x = 0; x < analyzeW; x++) {
+          const v = data[y * analyzeW + x];
+          sum += v; sumSq += v * v;
+        }
+        const mean = sum / analyzeW;
+        const variance = sumSq / analyzeW - mean * mean;
+        rowVariances.push(variance);
+      }
+
+      // 找到方差阈值（中位数的50%）
+      const sortedVar = [...rowVariances].sort((a, b) => a - b);
+      const threshold = sortedVar[Math.floor(sortedVar.length / 2)] * 0.5;
+
+      // 从上往下找第一个方差 > 阈值的行（装备网格顶部）
+      let topRow = 0;
+      for (let y = 0; y < analyzeH; y++) {
+        if (rowVariances[y] > threshold) { topRow = y; break; }
+      }
+      // 从下往上找最后一个方差 > 阈值的行（装备网格底部）
+      let bottomRow = analyzeH - 1;
+      for (let y = analyzeH - 1; y >= 0; y--) {
+        if (rowVariances[y] > threshold) { bottomRow = y; break; }
+      }
+
+      // 映射回原图坐标
+      const scale = width / analyzeW;
+      const top = Math.max(0, Math.round(topRow * scale));
+      const bottom = Math.min(height, Math.round(bottomRow * scale) + 1);
+
+      // 左右两侧简单保留全宽（通常左右也是UI但影响较小）
+      return {
+        left: 0,
+        top,
+        width,
+        height: bottom - top,
+      };
+    } catch (err) {
+      this.logger.warn(`装备区域检测失败，使用全图: ${err}`);
+      return { left: 0, top: 0, width, height };
+    }
+  }
+
+  /**
+   * 按网格切割图片为子图
+   * 自动检测装备区域 + 多候选 iconSize 尝试，选出产生最多有效子图的组合
+   */
   private async gridCut(sharp: any, buffer: Buffer, width: number, height: number, iconSize: number): Promise<Buffer[]> {
+    // 先检测装备网格区域（裁掉顶部/底部UI）
+    const region = await this.detectGridRegion(sharp, buffer, width, height);
+    this.logger.log(`装备区域检测: top=${region.top}, height=${region.height} (原图 ${width}x${height})`);
+
+    // 裁切到装备区域
+    const regionBuf = (region.top === 0 && region.height === height)
+      ? buffer
+      : await sharp(buffer).extract(region).toBuffer();
+    const regionW = region.width;
+    const regionH = region.height;
+
+    // 多候选 iconSize 尝试（当前估算值 ± 两档）
+    const candidates = [
+      iconSize,
+      Math.round(iconSize * 0.85),
+      Math.round(iconSize * 1.15),
+      Math.round(iconSize * 0.70),
+      Math.round(iconSize * 1.30),
+    ].filter((s, i, arr) => s >= 40 && s <= 200 && arr.indexOf(s) === i);
+
+    let bestResult: Buffer[] = [];
+    let bestCount = 0;
+
+    for (const size of candidates) {
+      const subs = await this.gridCutWithSize(sharp, regionBuf, regionW, regionH, size);
+      if (subs.length > bestCount) {
+        bestCount = subs.length;
+        bestResult = subs;
+      }
+    }
+
+    this.logger.log(`多候选切割完成: 最佳子图数 ${bestCount}`);
+    return bestResult;
+  }
+
+  /** 用指定 iconSize 切割子图（原 gridCut 逻辑） */
+  private async gridCutWithSize(sharp: any, buffer: Buffer, width: number, height: number, iconSize: number): Promise<Buffer[]> {
     const results: Buffer[] = [];
     const cols = Math.floor(width / iconSize);
     const rows = Math.floor(height / iconSize);
@@ -281,17 +400,50 @@ export class ImageMatchService {
     return results;
   }
 
-  /** 裁切图片中心区域（去品质边框） */
+  /**
+   * 裁切图片中心区域（去品质边框）+ 遮盖四角角标
+   * 先将右上角（附魔五角星）、左上角（罗马数字等级）、右下角（数量数字）填黑，
+   * 再裁切中心区域，确保参考库图（无角标）和用户截图（有角标）pHash一致。
+   */
   private async cropCenter(sharp: any, buffer: Buffer, ratio: number): Promise<Buffer> {
     const meta = await sharp(buffer).metadata();
     const w = meta.width || 64;
     const h = meta.height || 64;
+
+    // 先遮盖角标区域（用纯黑色块覆盖）
+    const masked = await this.maskCorners(sharp, buffer, w, h);
+
     const cropW = Math.round(w * ratio);
     const cropH = Math.round(h * ratio);
     const left = Math.round((w - cropW) / 2);
     const top = Math.round((h - cropH) / 2);
-    return sharp(buffer)
+    return sharp(masked)
       .extract({ left, top, width: cropW, height: cropH })
+      .toBuffer();
+  }
+
+  /**
+   * 遮盖装备图标四角的角标区域（用黑色填充）
+   * - 左上角 20%×20%：罗马数字等级
+   * - 右上角 20%×20%：附魔五角星
+   * - 右下角 25%×25%：数量数字
+   */
+  private async maskCorners(sharp: any, buffer: Buffer, w: number, h: number): Promise<Buffer> {
+    const cornerSize = Math.round(Math.max(w, h) * 0.20);
+    const brCornerW = Math.round(w * 0.25);
+    const brCornerH = Math.round(h * 0.25);
+
+    // 创建黑色遮盖块
+    const blackTL = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+    const blackTR = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+    const blackBR = await sharp({ create: { width: brCornerW, height: brCornerH, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+
+    return sharp(buffer)
+      .composite([
+        { input: blackTL, left: 0, top: 0 },                           // 左上角：等级
+        { input: blackTR, left: w - cornerSize, top: 0 },              // 右上角：五角星
+        { input: blackBR, left: w - brCornerW, top: h - brCornerH },   // 右下角：数量
+      ])
       .toBuffer();
   }
 
@@ -397,5 +549,122 @@ export class ImageMatchService {
 
   private hexToBinary(hex: string): string {
     return hex.split('').map(c => parseInt(c, 16).toString(2).padStart(4, '0')).join('');
+  }
+
+  // ===== 右下角数量提取 =====
+
+  /**
+   * 从装备子图右下角提取数量数字
+   * 流程：裁切右下角约35%区域 → 放大3倍 → 灰度 → 阈值二值化 → 腾讯云OCR识别数字
+   * 识别失败或未识别到数字则返回 1（默认数量）
+   */
+  private async extractQuantityFromCorner(sharp: any, subBuf: Buffer): Promise<number> {
+    try {
+      const meta = await sharp(subBuf).metadata();
+      const w = meta.width || 64;
+      const h = meta.height || 64;
+
+      // 子图太小时跳过（如参考库单图），直接返回1
+      if (w < 48 || h < 48) return 1;
+
+      // 裁切右下角 35%×35% 区域（数量数字通常在此）
+      const cropW = Math.round(w * 0.35);
+      const cropH = Math.round(h * 0.35);
+      const left = w - cropW;
+      const top = h - cropH;
+
+      // 放大3倍 → 灰度 → 线性拉伸提升对比度（数字通常为白色，背景为暗色圆形）
+      const processed = await sharp(subBuf)
+        .extract({ left, top, width: cropW, height: cropH })
+        .resize(cropW * 3, cropH * 3, { kernel: 'lanczos3' })
+        .grayscale()
+        .linear(1.5, -30) // 提升对比度
+        .threshold(180)   // 二值化：亮度>180为白，其余为黑
+        .png()
+        .toBuffer();
+
+      const base64 = processed.toString('base64');
+      const digits = await this.callTencentOcrForDigits(base64);
+
+      if (digits && digits > 0) {
+        return digits;
+      }
+      return 1; // 未识别到数字 → 默认1件
+    } catch (err) {
+      this.logger.warn(`数量提取失败: ${err}`);
+      return 1;
+    }
+  }
+
+  /**
+   * 调用腾讯云 GeneralBasicOCR 识别 Base64 图片中的数字
+   * 专用于数量识别：只关心第一个连续数字
+   */
+  private async callTencentOcrForDigits(base64Data: string): Promise<number | null> {
+    const secretId = this.configService.get<string>('tencent.secretId');
+    const secretKey = this.configService.get<string>('tencent.secretKey');
+    const region = this.configService.get<string>('ocr.region') || 'ap-guangzhou';
+
+    if (!secretId || !secretKey) {
+      this.logger.debug('腾讯云 OCR 未配置，跳过数量识别');
+      return null;
+    }
+
+    try {
+      const host = 'ocr.tencentcloudapi.com';
+      const service = 'ocr';
+      const action = 'GeneralBasicOCR';
+      const version = '2018-11-19';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const date = new Date(timestamp * 1000).toISOString().split('T')[0];
+
+      const payload = JSON.stringify({ ImageBase64: base64Data });
+      const hashedPayload = crypto.createHash('sha256').update(payload).digest('hex');
+
+      // 签名步骤（与 ocr.service 保持一致）
+      const canonicalRequest = `POST\n/\n\ncontent-type:application/json; charset=utf-8\nhost:${host}\nx-tc-action:${action.toLowerCase()}\n\ncontent-type;host;x-tc-action\n${hashedPayload}`;
+      const stringToSign = `TC3-HMAC-SHA256\n${timestamp}\n${date}/${service}/tc3_request\n${crypto.createHash('sha256').update(canonicalRequest).digest('hex')}`;
+
+      const kDate = crypto.createHmac('sha256', `TC3${secretKey}`).update(date).digest();
+      const kService = crypto.createHmac('sha256', kDate).update(service).digest();
+      const kSigning = crypto.createHmac('sha256', kService).update('tc3_request').digest();
+      const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+
+      const authorization = `TC3-HMAC-SHA256 Credential=${secretId}/${date}/${service}/tc3_request, SignedHeaders=content-type;host;x-tc-action, Signature=${signature}`;
+
+      const response = await fetch(`https://${host}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': authorization,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Host': host,
+          'X-TC-Action': action,
+          'X-TC-Timestamp': timestamp.toString(),
+          'X-TC-Version': version,
+          'X-TC-Region': region,
+        },
+        body: payload,
+        signal: AbortSignal.timeout(8000),
+      });
+
+      const result: any = await response.json();
+      if (result.Response?.Error) {
+        this.logger.debug(`数量OCR错误: ${result.Response.Error.Message}`);
+        return null;
+      }
+
+      const detections = result.Response?.TextDetections || [];
+      // 合并所有文本，提取第一个数字序列
+      const allText = detections.map((d: any) => d.DetectedText || '').join(' ');
+      const match = allText.match(/\d+/);
+      if (match) {
+        const num = parseInt(match[0], 10);
+        if (num > 0 && num < 10000) return num; // 合理范围
+      }
+      return null;
+    } catch (err: any) {
+      this.logger.debug(`数量OCR调用失败: ${err.message}`);
+      return null;
+    }
   }
 }

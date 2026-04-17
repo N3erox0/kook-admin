@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Drawer, Timeline, Image, DatePicker, AutoComplete } from 'antd';
+import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Timeline, Image, DatePicker, AutoComplete } from 'antd';
 import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply } from '@/api/resupply';
 import { searchCatalog } from '@/api/catalog';
@@ -400,15 +400,15 @@ export default function ResupplyPage() {
         )}
       </Card>
 
-      {/* 详情 Drawer */}
-      <Drawer title="补装申请详情" open={detailDrawer} onClose={() => setDetailDrawer(false)} width={520}>
+      {/* 详情 Modal（居中弹窗） */}
+      <Modal title="补装申请详情" open={detailDrawer} onCancel={() => setDetailDrawer(false)} width={600} footer={null} centered destroyOnClose>
         {detailLoading ? <Text>加载中...</Text> : detail && (
           <div>
             <div style={{ marginBottom: 16 }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div><Text strong>状态：</Text><Tag color={STATUS_COLORS[detail.status]}>{RESUPPLY_STATUS[detail.status]}</Tag></div>
-                <div><Text strong>申请人：</Text>{detail.kookNickname || '-'} ({detail.kookUserId || '-'})</div>
-                <div><Text strong>装备：</Text>{detail.equipmentName} {detail.gearScore ? `P${detail.gearScore}` : ''}</div>
+                <div><Text strong>申请人：</Text>{detail.kookNickname || '-'}</div>
+                <div><Text strong>待补装备：</Text>{detail.equipmentNames || detail.equipmentName || <Text type="secondary">（暂无装备）</Text>}</div>
                 <div><Text strong>数量：</Text>{detail.quantity} | <Text strong>类型：</Text>{detail.applyType}</div>
                 {detail.resupplyBox && <div><Text strong>箱子编号：</Text><Tag color="geekblue">{detail.resupplyBox}</Tag></div>}
                 {detail.resupplyRoom && <div><Text strong>补装房间：</Text><Tag color="volcano">{detail.resupplyRoom}</Tag></div>}
@@ -442,28 +442,9 @@ export default function ResupplyPage() {
                 <Button icon={<SendOutlined />}>标记发放</Button>
               </Popconfirm>
             )}
-            {detail.logs?.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <Text strong>流转日志</Text>
-                <Timeline style={{ marginTop: 12 }}
-                  items={detail.logs.map((log: any) => ({
-                    color: log.action === 'approve' ? 'green' : log.action === 'reject' ? 'red' : 'blue',
-                    children: (
-                      <div key={log.id}>
-                        <Text strong>{log.action}</Text>
-                        <Text> {log.fromStatus} → {log.toStatus}</Text>
-                        <br />
-                        <Text type="secondary" style={{ fontSize: 12 }}>{log.operatorName || '系统'} · {dayjs(log.createdAt).format('MM-DD HH:mm')}</Text>
-                        {log.remark && <><br /><Text type="secondary" style={{ fontSize: 12 }}>{log.remark}</Text></>}
-                      </div>
-                    ),
-                  }))}
-                />
-              </div>
-            )}
           </div>
         )}
-      </Drawer>
+      </Modal>
 
       {/* 手动创建弹窗 - 多装备列表模式 */}
       <Modal title="手动创建补装申请" open={createModal} width={650}

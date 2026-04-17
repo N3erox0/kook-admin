@@ -142,3 +142,8 @@
 | F-057 | BOT邀请码默认enabled | completed | 2026-04-17 21:55 | self_joined_guild生成邀请码status改为ENABLED |
 | F-058 | pending公会关联inviteCodeId | completed | 2026-04-17 21:55 | 创建pending公会时写入inviteCodeId，已有公会补充关联 |
 | F-059 | 激活路径邀请码used联动 | completed | 2026-04-17 21:55 | activateGuild/activateGuildForUser激活后标记邀请码为used+写入绑定信息 |
+| **V2.8.4** | **补装+OC碎+待识别工作区** | | | |
+| F-060 | pHash置信度门槛调整 | completed | 2026-04-17 23:10 | KOOK自动补装门槛从0.8降到0.70，<0.70才进待识别 |
+| F-061 | OC碎文字解析重写 | completed | 2026-04-17 23:10 | 拆词过滤纯数字+逐个匹配参考库，有未匹配→整条进待识别 |
+| F-062 | 补装详情Drawer→Modal | completed | 2026-04-17 23:10 | 居中弹窗+隐藏KOOKID+隐藏流转日志 |
+| F-063 | KOOK待识别工作区页面 | completed | 2026-04-17 23:10 | 新增kook-pending页面+路由+菜单项+API封装 |

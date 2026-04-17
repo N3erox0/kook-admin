@@ -381,9 +381,9 @@ export class KookMessageService {
         }
       }
 
-      // Step 4: 分为高/低置信度
-      const highConf = matchResults.filter(m => m.confidence >= 0.8);
-      const lowConf = matchResults.filter(m => m.confidence < 0.8);
+      // Step 4: 分为高/低置信度（pHash匹配≥0.70即可信，<0.70进待识别）
+      const highConf = matchResults.filter(m => m.confidence >= 0.70);
+      const lowConf = matchResults.filter(m => m.confidence < 0.70);
 
       // 低置信度存入待识别工作区
       if (lowConf.length > 0) {
@@ -455,7 +455,10 @@ export class KookMessageService {
     return /oc\s*碎|OC\s*碎/i.test(text);
   }
 
-  /** 处理OC碎文字消息 → 创建补装申请 */
+  /**
+   * 处理OC碎文字消息
+   * 逻辑：拆词 → 逐个与参考库全名/别称匹配 → 全匹配创建补装，有未匹配进待识别工作区
+   */
   private async processOcBrokenMessage(
     guild: Guild, kookUserId: string, kookNickname: string,
     textContent: string, kookMessageId?: string,
@@ -463,67 +466,100 @@ export class KookMessageService {
     try {
       this.logger.log(`[${guild.name}] OC碎消息: ${kookNickname} → "${textContent.slice(0, 200)}"`);
 
-      // 解析装备列表
-      const parsedItems = this.parseOcBrokenText(textContent);
-      this.logger.log(`[${guild.name}] OC碎解析出 ${parsedItems.length} 件装备`);
+      // 解析装备词段（去除OC碎关键词+纯数字+分隔符）
+      const segments = this.parseOcBrokenSegments(textContent);
+      this.logger.log(`[${guild.name}] OC碎拆词: ${segments.length} 个词段: [${segments.join(', ')}]`);
 
-      // 匹配参考库
+      if (segments.length === 0) {
+        this.logger.log(`[${guild.name}] OC碎无有效装备词段，跳过`);
+        return;
+      }
+
+      // 逐个与参考库匹配（全名+别称）
       const matchedIds: number[] = [];
-      const unmatchedNames: string[] = [];
+      const matchedNames: string[] = [];
+      const unmatchedSegments: string[] = [];
 
-      for (const item of parsedItems) {
-        const matches = await this.catalogService.findByNameFuzzy(item.name, 0.6);
+      for (const seg of segments) {
+        // 提取可能的等级品质前缀："80牧师风帽" → name="牧师风帽", level=8, quality=0
+        const parsed = this.extractLevelQualityFromSegment(seg);
+        const searchName = parsed.name;
+
+        if (!searchName || searchName.length < 2) {
+          unmatchedSegments.push(seg);
+          continue;
+        }
+
+        const matches = await this.catalogService.findByNameFuzzy(searchName, 0.75);
         if (matches.length > 0) {
-          // 优先精确匹配+等级匹配
           let best = matches[0];
-          if (item.level) {
-            const levelMatch = matches.find(m => m.item.level === item.level);
-            if (levelMatch) best = levelMatch;
+          // 优先精确等级+品质匹配
+          if (parsed.level !== undefined) {
+            const lvMatch = matches.find(m => m.item.level === parsed.level);
+            if (lvMatch) best = lvMatch;
           }
-          if (item.quality !== undefined) {
-            const qMatch = matches.find(m => m.item.level === item.level && m.item.quality === item.quality);
-            if (qMatch) best = qMatch;
+          if (parsed.level !== undefined && parsed.quality !== undefined) {
+            const lqMatch = matches.find(m => m.item.level === parsed.level && m.item.quality === parsed.quality);
+            if (lqMatch) best = lqMatch;
           }
-          for (let i = 0; i < (item.quantity || 1); i++) {
+          for (let i = 0; i < (parsed.quantity || 1); i++) {
             matchedIds.push(best.item.id);
           }
+          matchedNames.push(`${best.item.name}(x${parsed.quantity || 1})`);
         } else {
-          unmatchedNames.push(item.name);
+          unmatchedSegments.push(seg);
         }
       }
 
-      // 创建补装申请（即使部分未匹配也创建）
-      if (matchedIds.length > 0 || parsedItems.length > 0) {
-        const dedupHash = require('crypto').createHash('md5')
-          .update(`${textContent}|${new Date().toISOString().slice(0, 10)}|${kookUserId}`)
-          .digest('hex');
+      this.logger.log(`[${guild.name}] OC碎匹配结果: ${matchedIds.length}件匹配[${matchedNames.join(',')}], ${unmatchedSegments.length}件未匹配[${unmatchedSegments.join(',')}]`);
 
-        // 先检查去重：避免同一天同一用户同一消息重复创建
-        const existingDedup = await this.resupplyService.findByDedupHash(guild.id, dedupHash);
-        if (existingDedup) {
-          this.logger.log(`[${guild.name}] OC碎去重命中，跳过: ${kookNickname}`);
-          return;
+      // 去重检查
+      const dedupHash = require('crypto').createHash('md5')
+        .update(`${textContent}|${new Date().toISOString().slice(0, 10)}|${kookUserId}`)
+        .digest('hex');
+      const existingDedup = await this.resupplyService.findByDedupHash(guild.id, dedupHash);
+      if (existingDedup) {
+        this.logger.log(`[${guild.name}] OC碎去重命中，跳过: ${kookNickname}`);
+        return;
+      }
+
+      // 有未匹配词段 → 整条进待识别工作区（不创建补装申请）
+      if (unmatchedSegments.length > 0) {
+        try {
+          const items = segments.map(seg => {
+            const parsed = this.extractLevelQualityFromSegment(seg);
+            return {
+              name: parsed.name || seg, catalogId: null, catalogName: null,
+              level: parsed.level, quality: parsed.quality, category: null,
+              gearScore: null, quantity: parsed.quantity || 1, matchScore: 0,
+            };
+          });
+          await this.ocrService.createKookBatch(guild.id, null, kookUserId, kookNickname, items as any);
+          this.logger.log(`[${guild.name}] OC碎有未匹配词段，整条存入待识别工作区`);
+        } catch (err) {
+          this.logger.error(`OC碎存入待识别失败: ${err}`);
         }
+        const msg = `OC碎消息中有${unmatchedSegments.length}个未识别词段（${unmatchedSegments.join('、')}），已存入待识别工作区，请管理员手动确认。`;
+        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        return;
+      }
 
+      // 全部匹配 → 创建补装申请
+      if (matchedIds.length > 0) {
         const createDto: any = {
           kookUserId, kookNickname,
-          equipmentIds: matchedIds.length > 0 ? matchedIds.join(',') : '',
-          quantity: matchedIds.length || parsedItems.length,
+          equipmentIds: matchedIds.join(','),
+          quantity: matchedIds.length,
           applyType: 'OC碎',
           reason: textContent,
           kookMessageId,
+          _dedupHash: dedupHash,
         };
-        // 传入去重hash
-        createDto._dedupHash = dedupHash;
-
         await this.resupplyService.create(guild.id, createDto);
 
-        let msg = `收到OC碎补装申请：${matchedIds.length} 件装备已匹配提交。`;
-        if (unmatchedNames.length > 0) {
-          msg += `\n${unmatchedNames.length} 件未匹配参考库：${unmatchedNames.join('、')}`;
-        }
+        const msg = `收到OC碎补装申请：${matchedIds.length} 件装备已匹配提交（${matchedNames.join('、')}）。`;
         try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
-        this.logger.log(`[${guild.name}] ${kookNickname} OC碎补装: ${matchedIds.length}件匹配, ${unmatchedNames.length}件未匹配`);
+        this.logger.log(`[${guild.name}] ${kookNickname} OC碎补装创建成功: ${matchedIds.length}件`);
       }
     } catch (err) {
       this.logger.error(`处理OC碎消息失败: ${err}`);
@@ -531,74 +567,71 @@ export class KookMessageService {
   }
 
   /**
-   * 解析OC碎文字中的装备
-   * 格式：{等级}{品质}{装备名} 或 {品质描述}{等级}{装备名}
-   * 如："OC碎 80牧师风帽 62挣脱鞋" → [{name:'牧师风帽',level:8,quality:0}, {name:'挣脱鞋',level:6,quality:2}]
-   * 数量："10个OC" → quantity=10
+   * OC碎文字拆词：移除关键词 → 拆分 → 过滤纯数字和无效短词
    */
-  private parseOcBrokenText(text: string): { name: string; level?: number; quality?: number; quantity?: number }[] {
-    // 移除"OC碎"/"oc碎"关键词
+  private parseOcBrokenSegments(text: string): string[] {
     let cleaned = text.replace(/oc\s*碎/gi, '').trim();
-
-    // 按常见分隔符拆分
     const segments = cleaned.split(/[,，、\s]+/).filter(s => s.trim().length > 0);
+    // 过滤纯数字（如独立的"80"），保留含汉字的词段
+    return segments.filter(s => {
+      const trimmed = s.trim();
+      if (trimmed.length < 2) return false;
+      if (/^\d+$/.test(trimmed)) return false; // 纯数字跳过
+      return true;
+    });
+  }
 
-    const results: { name: string; level?: number; quality?: number; quantity?: number }[] = [];
+  /**
+   * 从词段提取等级品质前缀
+   * "80牧师风帽" → { name:"牧师风帽", level:8, quality:0 }
+   * "P9重锤" → { name:"重锤", level:8, quality:1 }
+   * "牧师风帽" → { name:"牧师风帽" }
+   */
+  private extractLevelQualityFromSegment(seg: string): { name: string; level?: number; quality?: number; quantity?: number } {
+    let s = seg.trim();
+    let level: number | undefined;
+    let quality: number | undefined;
+    let quantity: number | undefined;
 
-    for (const seg of segments) {
-      let s = seg.trim();
-      if (!s || s.length < 2) continue;
+    // 提取数量："3个xxx"
+    const qtyMatch = s.match(/(\d+)\s*个/);
+    if (qtyMatch) {
+      quantity = parseInt(qtyMatch[1]);
+      s = s.replace(qtyMatch[0], '').trim();
+    }
 
-      let level: number | undefined;
-      let quality: number | undefined;
-      let quantity: number | undefined;
-      let name = s;
+    // 品质前缀："平xxx"=Q0
+    if (s.startsWith('平')) {
+      quality = 0;
+      s = s.slice(1);
+    }
 
-      // 提取数量："10个" / "x5"
-      const qtyMatch = s.match(/(\d+)\s*个/);
-      if (qtyMatch) {
-        quantity = parseInt(qtyMatch[1]);
-        s = s.replace(qtyMatch[0], '').trim();
-        name = s;
-      }
-
-      // 品质前缀："平"=Q0
-      if (s.startsWith('平')) {
-        quality = 0;
-        s = s.slice(1);
-        name = s;
-      }
-
-      // 提取开头的等级+品质数字："80牧师风帽" → level=8, quality=0, name="牧师风帽"
-      const lvQMatch = s.match(/^(\d)(\d)(.+)/);
-      if (lvQMatch) {
-        const lv = parseInt(lvQMatch[1]);
-        const q = parseInt(lvQMatch[2]);
-        if (lv >= 1 && lv <= 8 && q >= 0 && q <= 4) {
-          level = lv;
-          quality = q;
-          name = lvQMatch[3].trim();
-        }
-      }
-
-      // 提取装等前缀："P9重锤" → gearScore=9, name="重锤"
-      const gsMatch = s.match(/^[pP](\d{1,2})(.+)/);
-      if (gsMatch && !level) {
-        const gs = parseInt(gsMatch[1]);
-        name = gsMatch[2].trim();
-        // 从装等反推：gearScore = level + quality
-        if (gs >= 1 && gs <= 12) {
-          level = Math.min(gs, 8);
-          quality = Math.max(0, gs - level);
-        }
-      }
-
-      if (name && name.length >= 1) {
-        results.push({ name, level, quality, quantity: quantity || 1 });
+    // 两位数字前缀："80牧师风帽" → level=8, quality=0
+    const lvQMatch = s.match(/^(\d)(\d)(.+)/);
+    if (lvQMatch && lvQMatch[3].length >= 2) {
+      const lv = parseInt(lvQMatch[1]);
+      const q = parseInt(lvQMatch[2]);
+      if (lv >= 1 && lv <= 8 && q >= 0 && q <= 4) {
+        level = lv;
+        quality = q;
+        s = lvQMatch[3].trim();
       }
     }
 
-    return results;
+    // 装等前缀："P9重锤"
+    if (!level) {
+      const gsMatch = s.match(/^[pP](\d{1,2})(.+)/);
+      if (gsMatch && gsMatch[2].length >= 2) {
+        const gs = parseInt(gsMatch[1]);
+        if (gs >= 1 && gs <= 12) {
+          level = Math.min(gs, 8);
+          quality = Math.max(0, gs - (level || 0));
+          s = gsMatch[2].trim();
+        }
+      }
+    }
+
+    return { name: s, level, quality, quantity: quantity || 1 };
   }
 
   // ===== 击杀详情定位 =====

@@ -17,3 +17,6 @@ export const confirmAllOcrItems = (guildId: number, batchId: number) =>
 
 export const saveOcrToInventory = (guildId: number, batchId: number) =>
   request.post(`/guild/${guildId}/ocr/batch/${batchId}/save`);
+
+export const getKookPending = (guildId: number, params?: any) =>
+  request.get(`/guild/${guildId}/ocr/kook-pending`, { params });
