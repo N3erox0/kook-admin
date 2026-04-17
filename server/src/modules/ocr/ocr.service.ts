@@ -239,11 +239,11 @@ export class OcrService {
   }
 
   /** R-004: 创建 KOOK 来源的 OCR 批次（低置信度装备进入待识别工作区） */
-  async createKookBatch(guildId: number, imageUrl: string, kookUserId: string, kookNickname: string, lowConfItems: any[]): Promise<OcrRecognitionBatch> {
+  async createKookBatch(guildId: number, imageUrl: string | null, kookUserId: string, kookNickname: string, lowConfItems: any[]): Promise<OcrRecognitionBatch> {
     const batch = this.batchRepo.create({
       guildId,
       batchNo: `KOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      imageUrl,
+      imageUrl: imageUrl || '',
       imageType: 'kook',
       status: 'recognized',
       source: 'kook',
