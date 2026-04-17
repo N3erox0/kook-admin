@@ -125,3 +125,15 @@
 | F-048 | OC碎纯文字消息→补装申请 | completed | 2026-04-17 18:50 | KOOK频道文字含"OC碎"触发补装(applyType=OC碎) |
 | F-049 | OC碎文字解析器 | completed | 2026-04-17 18:50 | 解析"80牧师风帽""62挣脱鞋""P9重锤"等格式 |
 | F-050 | KookModule依赖补全 | completed | 2026-04-17 18:50 | 导入EquipmentCatalogModule供CatalogService注入 |
+| **V2.8.1** | **BUG修复批次** | | | |
+| BF-006 | extractImageUrl增强KMarkdown | completed | 2026-04-17 21:30 | 新增type=9 KMarkdown图片提取+通用URL兜底匹配 |
+| BF-007 | pHash匹配fallback文字OCR | completed | 2026-04-17 21:30 | matchResults为空时fallback到recognizeImage+enrichWithCatalog |
+| BF-008 | OC碎去重hash传入create | completed | 2026-04-17 21:30 | dedupHash通过_dedupHash传入+前置findByDedupHash去重 |
+| BF-009 | OCR region fallback默认值 | completed | 2026-04-17 21:30 | 3处region配置增加\|\|'ap-guangzhou'默认值 |
+| BF-010 | DTO equipmentIds改为可选 | completed | 2026-04-17 21:30 | @IsOptional()+@IsString()，OC碎无匹配也能创建 |
+| **V2.8.2** | **装备图片本地化+pHash优化** | | | |
+| F-051 | equipment_catalog新增localImagePath | completed | 2026-04-17 21:45 | Entity+SQL迁移新增local_image_path字段 |
+| F-052 | 批量下载Albion装备图片 | completed | 2026-04-17 21:45 | downloadAllImages方法：并发控制+3次重试+幂等跳过 |
+| F-053 | POST download-images接口 | completed | 2026-04-17 21:45 | SSVIP权限，支持自定义并发数 |
+| F-054 | pHash生成优先读本地文件 | completed | 2026-04-17 21:45 | generatePhashForCatalog优先localImagePath，fallback远程URL |
+| F-055 | batchGeneratePhash本地优先 | completed | 2026-04-17 21:45 | 查询增加localImagePath字段并传入生成方法 |

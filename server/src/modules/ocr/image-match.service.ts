@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
 import * as crypto from 'crypto';
+import * as fs from 'fs/promises';
+import { join } from 'path';
 
 /**
  * 图片相似度匹配服务
@@ -120,23 +122,48 @@ export class ImageMatchService {
   }
 
   /**
-   * 为单个装备图标计算 pHash 并存入数据库
+   * 为单个装备图标计算 pHash
+   * 优先读取本地文件（localImagePath），fallback 到远程 URL（imageUrl）
    * @param catalogId 参考库ID
-   * @param imageUrl 图片URL（Albion 渲染图）
+   * @param imageUrl 远程图片URL（Albion 渲染图）
+   * @param localImagePath 本地图片路径（如 /uploads/catalog/T4_2H_CLAYMORE.png）
    */
-  async generatePhashForCatalog(catalogId: number, imageUrl: string): Promise<string | null> {
-    if (!imageUrl || !imageUrl.startsWith('http')) return null;
-
+  async generatePhashForCatalog(catalogId: number, imageUrl: string, localImagePath?: string | null): Promise<string | null> {
     let sharp: any;
     try { sharp = require('sharp'); } catch { return null; }
 
+    let buffer: Buffer | null = null;
+
+    // 优先读取本地文件
+    if (localImagePath) {
+      try {
+        const absPath = join(process.cwd(), localImagePath.replace(/^\//, ''));
+        buffer = await fs.readFile(absPath);
+        if (buffer.length === 0) buffer = null;
+      } catch {
+        // 本地文件不存在或读取失败，继续尝试远程
+        buffer = null;
+      }
+    }
+
+    // fallback 到远程 URL
+    if (!buffer && imageUrl && imageUrl.startsWith('http')) {
+      try {
+        const response = await fetch(imageUrl, {
+          headers: { 'User-Agent': 'kook-admin/1.0' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (response.ok) {
+          buffer = Buffer.from(await response.arrayBuffer());
+        }
+      } catch (err) {
+        this.logger.warn(`远程获取图片失败 catalogId=${catalogId}: ${err}`);
+      }
+    }
+
+    if (!buffer || buffer.length === 0) return null;
+
     try {
-      const response = await fetch(imageUrl, {
-        headers: { 'User-Agent': 'kook-admin/1.0' },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!response.ok) return null;
-      const buffer = Buffer.from(await response.arrayBuffer());
       const cropped = await this.cropCenter(sharp, buffer, 0.70);
       return this.computePhash(sharp, cropped);
     } catch (err) {
@@ -147,12 +174,13 @@ export class ImageMatchService {
 
   /**
    * 批量为所有参考库装备生成 pHash
+   * 优先从本地文件读取图片，fallback 远程 URL
    * @returns 成功/失败统计
    */
   async batchGeneratePhash(): Promise<{ total: number; success: number; failed: number }> {
     const catalogs = await this.catalogRepo.find({
       where: {},
-      select: ['id', 'imageUrl', 'imagePhash'],
+      select: ['id', 'imageUrl', 'imagePhash', 'localImagePath'],
     });
 
     let success = 0, failed = 0;
@@ -162,9 +190,9 @@ export class ImageMatchService {
       const batch = catalogs.slice(i, i + batchSize);
       const promises = batch.map(async (cat) => {
         if (cat.imagePhash) { success++; return; } // 已有则跳过
-        if (!cat.imageUrl) { failed++; return; }
+        if (!cat.imageUrl && !cat.localImagePath) { failed++; return; }
 
-        const hash = await this.generatePhashForCatalog(cat.id, cat.imageUrl);
+        const hash = await this.generatePhashForCatalog(cat.id, cat.imageUrl, cat.localImagePath);
         if (hash) {
           await this.catalogRepo.update(cat.id, { imagePhash: hash });
           success++;

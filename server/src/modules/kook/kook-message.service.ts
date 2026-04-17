@@ -167,10 +167,10 @@ export class KookMessageService {
         for (let i = 0; i < 12; i++) inviteCodeStr += CHARSET.charAt(Math.floor(Math.random() * CHARSET.length));
         const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
 
-        // 写入邀请码表
+        // 写入邀请码表（BOT自动生成默认启用，用户收到私信后可直接使用）
         const invite = this.inviteRepo.create({
           code: inviteCodeStr,
-          status: InviteCodeStatus.DISABLED,
+          status: InviteCodeStatus.ENABLED,
           createSource: '02',
           remark: `BOT自动 | ${guildName} | 服务器主:${inviterKookId}`,
         });
@@ -191,7 +191,7 @@ export class KookMessageService {
         });
         await this.joinRecordRepo.save(joinRecord);
 
-        // 创建 pending 公会（如果不存在）
+        // 创建 pending 公会（如果不存在），关联邀请码ID
         const existingGuild = await this.guildRepo.findOne({ where: { kookGuildId } });
         if (!existingGuild) {
           const activationCode = uuidv4().replace(/-/g, '').slice(0, 12).toUpperCase();
@@ -199,9 +199,14 @@ export class KookMessageService {
             name: `待激活-${guildName}`,
             kookGuildId,
             activationCode,
+            inviteCodeId: savedInvite.id,
             invitedByKookUserId: inviterKookId || null,
             status: GuildStatus.PENDING_ACTIVATION,
           }));
+        } else if (!existingGuild.inviteCodeId) {
+          // 已存在的公会但未关联邀请码，补充关联
+          existingGuild.inviteCodeId = savedInvite.id;
+          await this.guildRepo.save(existingGuild);
         }
 
         // KMarkdown 私信服务器主
@@ -319,6 +324,7 @@ export class KookMessageService {
 
       // Step 3: pHash 匹配装备
       let matchResults: any[] = [];
+      let usedFallbackOcr = false;
 
       if (killDetail.isKillDetail) {
         // 击杀详情：尝试定位左面板区域后裁切匹配
@@ -335,6 +341,7 @@ export class KookMessageService {
         if (matchResults.length === 0) {
           try {
             matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
+            this.logger.log(`[${guild.name}] 全图pHash匹配: ${matchResults.length} 件`);
           } catch (err) {
             this.logger.warn(`全图pHash匹配失败: ${err}`);
           }
@@ -343,8 +350,34 @@ export class KookMessageService {
         // 非击杀详情：直接全图匹配
         try {
           matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
+          this.logger.log(`[${guild.name}] 全图pHash匹配: ${matchResults.length} 件`);
         } catch (err) {
           this.logger.warn(`全图pHash匹配失败: ${err}`);
+        }
+      }
+
+      // BUG-2 FIX: pHash匹配无结果时 fallback 到文字 OCR + 参考库匹配
+      if (matchResults.length === 0 && texts.length > 0) {
+        this.logger.log(`[${guild.name}] pHash无结果，fallback文字OCR识别...`);
+        try {
+          const parsedItems = await this.ocrService.recognizeImage(imageUrl);
+          if (parsedItems.length > 0) {
+            const enriched = await this.ocrService.enrichWithCatalog(parsedItems);
+            const matched = enriched.filter(e => e.catalogId && (e.matchScore || 0) >= 0.8);
+            matchResults = matched.map(e => ({
+              catalogId: e.catalogId,
+              catalogName: e.catalogName || e.name,
+              level: e.level,
+              quality: e.quality,
+              category: e.category,
+              gearScore: e.gearScore,
+              confidence: e.matchScore || 0,
+            }));
+            usedFallbackOcr = true;
+            this.logger.log(`[${guild.name}] 文字OCR fallback匹配: ${matchResults.length} 件（共解析 ${parsedItems.length} 条OCR文本）`);
+          }
+        } catch (ocrErr) {
+          this.logger.warn(`文字OCR fallback也失败: ${ocrErr}`);
         }
       }
 
@@ -465,14 +498,25 @@ export class KookMessageService {
           .update(`${textContent}|${new Date().toISOString().slice(0, 10)}|${kookUserId}`)
           .digest('hex');
 
-        await this.resupplyService.create(guild.id, {
+        // 先检查去重：避免同一天同一用户同一消息重复创建
+        const existingDedup = await this.resupplyService.findByDedupHash(guild.id, dedupHash);
+        if (existingDedup) {
+          this.logger.log(`[${guild.name}] OC碎去重命中，跳过: ${kookNickname}`);
+          return;
+        }
+
+        const createDto: any = {
           kookUserId, kookNickname,
           equipmentIds: matchedIds.length > 0 ? matchedIds.join(',') : '',
           quantity: matchedIds.length || parsedItems.length,
           applyType: 'OC碎',
           reason: textContent,
           kookMessageId,
-        });
+        };
+        // 传入去重hash
+        createDto._dedupHash = dedupHash;
+
+        await this.resupplyService.create(guild.id, createDto);
 
         let msg = `收到OC碎补装申请：${matchedIds.length} 件装备已匹配提交。`;
         if (unmatchedNames.length > 0) {
@@ -701,14 +745,27 @@ export class KookMessageService {
       }
     }
 
-    // 3. attachments
+    // 3. type=9 KMarkdown 消息 — 提取 [文字](图片URL) 格式
+    if (d.type === 9 && d.content) {
+      const kmdImageMatch = (d.content as string).match(/\[.*?\]\((https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp)[^\s)]*)\)/i);
+      if (kmdImageMatch) return kmdImageMatch[1];
+      // 也匹配纯URL（KOOK有时直接发图片链接作为KMarkdown内容）
+      const plainUrlMatch = (d.content as string).match(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)[^\s]*)/i);
+      if (plainUrlMatch) return plainUrlMatch[1];
+    }
+
+    // 4. attachments
     const attachments = d.extra?.attachments || [];
     const imageAtt = attachments.find((a: any) => a.type === 'image' || a.url?.match(/\.(png|jpg|jpeg|gif|webp)/i));
     if (imageAtt) return imageAtt.url;
 
-    // 4. Markdown 图片语法
+    // 5. Markdown 图片语法 ![alt](url)
     const imgMatch = (d.content || '').match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
     if (imgMatch) return imgMatch[1];
+
+    // 6. 通用URL提取（兜底：内容中任何图片URL）
+    const genericMatch = (d.content || '').match(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)/i);
+    if (genericMatch) return genericMatch[1];
 
     return null;
   }

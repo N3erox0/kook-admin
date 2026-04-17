@@ -116,6 +116,11 @@ export class ResupplyService {
     return crypto.createHash('md5').update(raw).digest('hex');
   }
 
+  /** 根据去重哈希查找已有补装申请 */
+  async findByDedupHash(guildId: number, dedupHash: string): Promise<GuildResupply | null> {
+    return this.resupplyRepo.findOne({ where: { guildId, dedupHash } });
+  }
+
   /** 创建补装申请（含去重检查） */
   async create(guildId: number, dto: CreateResupplyDto) {
     // 去重检查

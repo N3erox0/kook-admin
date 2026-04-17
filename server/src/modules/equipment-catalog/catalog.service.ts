@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { EquipmentCatalog } from './entities/equipment-catalog.entity';
 import { EquipmentImage } from './entities/equipment-image.entity';
 import { CreateCatalogDto, UpdateCatalogDto, QueryCatalogDto } from './dto/catalog.dto';
+import { join } from 'path';
+import * as fs from 'fs/promises';
 
 /** Levenshtein 编辑距离 */
 function levenshteinDistance(a: string, b: string): number {
@@ -381,5 +383,121 @@ export class CatalogService {
 
     this.logger.log(`Albion导入完成: 新增${imported} 更新${updated} 跳过${skipped} 失败${failed}`);
     return { total: items.length, imported, updated, skipped, failed };
+  }
+
+  // ===== 批量下载装备图片到本地 =====
+
+  /**
+   * 批量下载 Albion 远程装备图片到服务器本地
+   * 存储路径：uploads/catalog/{albionId}.png
+   * 已存在且文件有效的自动跳过（幂等）
+   * @param concurrency 并发下载数（默认10）
+   */
+  async downloadAllImages(concurrency = 10): Promise<{
+    total: number; downloaded: number; skipped: number; failed: number;
+  }> {
+    const uploadDir = join(process.cwd(), 'uploads', 'catalog');
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    // 查询所有有 imageUrl（远程URL）的记录
+    const catalogs = await this.catalogRepo.find({
+      select: ['id', 'imageUrl', 'localImagePath', 'albionId'],
+    });
+
+    const needDownload = catalogs.filter(c => c.imageUrl && c.imageUrl.startsWith('http'));
+    this.logger.log(`批量下载装备图片: 总计 ${needDownload.length} 条记录（并发=${concurrency}）`);
+
+    let downloaded = 0, skipped = 0, failed = 0;
+
+    // 分批并发下载
+    for (let i = 0; i < needDownload.length; i += concurrency) {
+      const batch = needDownload.slice(i, i + concurrency);
+      const promises = batch.map(async (cat) => {
+        try {
+          // 生成本地文件名：用 albionId（如T4_2H_CLAYMORE@2.png），无 albionId 则用 id
+          const fileName = cat.albionId
+            ? `${cat.albionId.replace(/[<>:"/\\|?*]/g, '_')}.png`
+            : `catalog_${cat.id}.png`;
+          const localPath = join(uploadDir, fileName);
+          const relativePath = `/uploads/catalog/${fileName}`;
+
+          // 幂等检查：文件已存在且大小 > 0 则跳过
+          if (cat.localImagePath) {
+            try {
+              const absPath = join(process.cwd(), cat.localImagePath.replace(/^\//, ''));
+              const stat = await fs.stat(absPath);
+              if (stat.size > 0) {
+                skipped++;
+                return;
+              }
+            } catch { /* 文件不存在，继续下载 */ }
+          }
+
+          // 也检查物理文件（可能之前下载了但DB未更新）
+          try {
+            const stat = await fs.stat(localPath);
+            if (stat.size > 0) {
+              // 文件存在但 DB 未记录 → 更新 DB
+              if (cat.localImagePath !== relativePath) {
+                await this.catalogRepo.update(cat.id, { localImagePath: relativePath });
+              }
+              skipped++;
+              return;
+            }
+          } catch { /* 文件不存在，继续下载 */ }
+
+          // 下载（3次重试）
+          let buffer: Buffer | null = null;
+          for (let retry = 0; retry < 3; retry++) {
+            try {
+              const response = await fetch(cat.imageUrl, {
+                headers: { 'User-Agent': 'kook-admin/1.0' },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (!response.ok) {
+                if (retry < 2) { await this.sleep(500 * (retry + 1)); continue; }
+                throw new Error(`HTTP ${response.status}`);
+              }
+              buffer = Buffer.from(await response.arrayBuffer());
+              break;
+            } catch (err) {
+              if (retry >= 2) throw err;
+              await this.sleep(500 * (retry + 1));
+            }
+          }
+
+          if (!buffer || buffer.length === 0) {
+            failed++;
+            return;
+          }
+
+          // 写入本地文件
+          await fs.writeFile(localPath, buffer);
+
+          // 更新数据库
+          await this.catalogRepo.update(cat.id, { localImagePath: relativePath });
+          downloaded++;
+        } catch (err: any) {
+          failed++;
+          if (failed <= 10) {
+            this.logger.warn(`下载失败 ${cat.albionId || cat.id}: ${err.message}`);
+          }
+        }
+      });
+
+      await Promise.all(promises);
+
+      // 每 100 条打印进度
+      if ((i + concurrency) % 100 < concurrency) {
+        this.logger.log(`下载进度: ${Math.min(i + concurrency, needDownload.length)}/${needDownload.length} (下载${downloaded}/跳过${skipped}/失败${failed})`);
+      }
+    }
+
+    this.logger.log(`批量下载完成: 下载${downloaded}, 跳过${skipped}, 失败${failed}, 总计${needDownload.length}`);
+    return { total: needDownload.length, downloaded, skipped, failed };
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

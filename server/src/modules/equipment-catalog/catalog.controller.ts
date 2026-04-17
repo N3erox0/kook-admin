@@ -81,6 +81,16 @@ export class CatalogController {
     return this.catalogService.importFromAlbion(body.minTier ?? 4);
   }
 
+  @Post('download-images')
+  @OperationLog({ module: 'catalog', action: 'download_images' })
+  @ApiOperation({ summary: '批量下载 Albion 装备图片到服务器本地' })
+  async downloadImages(@Body() body: { concurrency?: number }, @CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new BadRequestException('仅 SSVIP 可执行此操作');
+    }
+    return this.catalogService.downloadAllImages(body.concurrency ?? 10);
+  }
+
   @Post('match')
   @ApiOperation({ summary: '批量精确匹配装备' })
   batchMatch(@Body() dto: BatchMatchCatalogDto) {

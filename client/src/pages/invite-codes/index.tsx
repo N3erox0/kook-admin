@@ -9,9 +9,9 @@ import dayjs from 'dayjs';
 const { Title, Text } = Typography;
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  disabled: { label: '未激活', color: 'default' },
+  disabled: { label: '未启用', color: 'default' },
   enabled: { label: '已启用', color: 'green' },
-  used: { label: '已激活', color: 'blue' },
+  used: { label: '已使用', color: 'blue' },
   revoked: { label: '无效', color: 'red' },
 };
 

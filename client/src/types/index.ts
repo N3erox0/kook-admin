@@ -171,9 +171,9 @@ export const RESUPPLY_STATUS: Record<number, string> = { 0: '待处理', 1: '已
 export const QUALITY_LABELS = ['白', '绿', '蓝', '紫', '橙'];
 
 export const INVITE_CODE_STATUS: Record<string, { label: string; color: string }> = {
-  disabled: { label: '未激活', color: 'default' },
+  disabled: { label: '未启用', color: 'default' },
   enabled: { label: '已启用', color: 'green' },
-  used: { label: '已激活', color: 'blue' },
+  used: { label: '已使用', color: 'blue' },
   revoked: { label: '无效', color: 'red' },
 };
 

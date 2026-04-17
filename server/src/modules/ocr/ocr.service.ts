@@ -292,7 +292,7 @@ export class OcrService {
   async recognizeImageWithCoords(imageUrl: string): Promise<{ texts: string[]; detections: OcrTextDetection[] }> {
     const secretId = this.configService.get<string>('tencent.secretId');
     const secretKey = this.configService.get<string>('tencent.secretKey');
-    const region = this.configService.get<string>('ocr.region');
+    const region = this.configService.get<string>('ocr.region') || 'ap-guangzhou';
 
     if (!secretId || !secretKey) {
       this.logger.warn('腾讯云 OCR 密钥未配置');
@@ -346,7 +346,7 @@ export class OcrService {
   async recognizeImage(imageUrl: string): Promise<ParsedEquipment[]> {
     const secretId = this.configService.get<string>('tencent.secretId');
     const secretKey = this.configService.get<string>('tencent.secretKey');
-    const region = this.configService.get<string>('ocr.region');
+    const region = this.configService.get<string>('ocr.region') || 'ap-guangzhou';
 
     if (!secretId || !secretKey) {
       this.logger.warn('腾讯云 OCR 密钥未配置，使用模拟数据');
@@ -373,7 +373,7 @@ export class OcrService {
       return this.getMockResult();
     }
 
-    const ocrTexts = await this.callTencentOcrBase64(base64Data, secretId, secretKey, this.configService.get<string>('ocr.region'));
+    const ocrTexts = await this.callTencentOcrBase64(base64Data, secretId, secretKey, this.configService.get<string>('ocr.region') || 'ap-guangzhou');
     const items = this.parser.parse(ocrTexts);
     return this.enrichWithCatalog(items);
   }

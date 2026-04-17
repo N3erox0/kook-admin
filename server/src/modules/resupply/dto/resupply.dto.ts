@@ -4,7 +4,7 @@ export class CreateResupplyDto {
   @IsOptional() @IsInt() guildMemberId?: number;
   @IsOptional() @IsString() kookUserId?: string;
   @IsOptional() @IsString() kookNickname?: string;
-  @IsString() equipmentIds: string; // 逗号分隔的 catalog ID，如 "11731,11481,10033"
+  @IsOptional() @IsString() equipmentIds?: string; // 逗号分隔的 catalog ID，如 "11731,11481,10033"
   @IsOptional() @IsInt() quantity?: number; // 总数量（默认=ID个数）
   @IsOptional() @IsString() applyType?: string;
   @IsOptional() @IsString() reason?: string;
