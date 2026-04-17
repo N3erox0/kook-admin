@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Form, Input, Button, Card, Typography, message } from 'antd';
+import { Form, Input, Button, Card, Typography, message, Divider } from 'antd';
 import { UserOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
 import { login as loginApi } from '@/api/auth';
+import request from '@/api/request';
 
 const { Title, Text } = Typography;
 
@@ -13,6 +14,7 @@ export default function LoginPage() {
   const { setAuth } = useAuthStore();
   const { setGuilds, selectGuild } = useGuildStore();
   const [loading, setLoading] = useState(false);
+  const [kookLoading, setKookLoading] = useState(false);
 
   const handleLogin = async (values: { username: string; password: string }) => {
     setLoading(true);
@@ -34,6 +36,55 @@ export default function LoginPage() {
     } catch (err: any) {
       message.error(err?.message || '登录失败，请检查用户名和密码');
     } finally { setLoading(false); }
+  };
+
+  const handleKookLogin = async () => {
+    setKookLoading(true);
+    try {
+      const res: any = await request.get('/auth/kook/oauth-url');
+      if (res?.url) {
+        const popup = window.open(res.url, '_blank', 'width=600,height=700');
+        if (!popup) {
+          message.warning('浏览器拦截了弹窗，请允许弹窗后重试');
+          setKookLoading(false);
+          return;
+        }
+        const handler = (event: MessageEvent) => {
+          if (event.data?.type === 'kook-oauth-success') {
+            window.removeEventListener('message', handler);
+            const data = event.data.data;
+            setAuth(data.accessToken, data.user, data.refreshToken);
+            if (data.guilds) {
+              setGuilds(data.guilds);
+              if (data.guilds.length > 0) selectGuild(data.guilds[0].guildId);
+            }
+            message.success('KOOK 登录成功');
+            setKookLoading(false);
+            if (data.user?.globalRole === 'ssvip') {
+              navigate('/admin/dashboard');
+            } else if (data.guilds?.length > 0) {
+              navigate('/admin/dashboard');
+            } else {
+              navigate('/guild/select');
+            }
+          }
+        };
+        window.addEventListener('message', handler);
+        const checkClosed = setInterval(() => {
+          if (popup?.closed) {
+            clearInterval(checkClosed);
+            window.removeEventListener('message', handler);
+            setKookLoading(false);
+          }
+        }, 1000);
+      } else {
+        message.error('获取 KOOK 授权链接失败');
+        setKookLoading(false);
+      }
+    } catch {
+      message.error('获取 KOOK 授权链接失败');
+      setKookLoading(false);
+    }
   };
 
   return (
@@ -76,8 +127,26 @@ export default function LoginPage() {
           </Form.Item>
         </Form>
 
-        <div style={{ textAlign: 'center' }}>
+        <Divider plain style={{ margin: '8px 0 16px' }}>
+          <Text type="secondary" style={{ fontSize: 13 }}>或</Text>
+        </Divider>
+
+        <Button
+          block
+          size="large"
+          loading={kookLoading}
+          onClick={handleKookLogin}
+          style={{
+            height: 44, borderRadius: 8, fontWeight: 500,
+            background: '#6b48ff', borderColor: '#6b48ff', color: '#fff',
+          }}
+        >
+          使用 KOOK 账号登录
+        </Button>
+
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
           <Button type="link" style={{ color: '#999' }} onClick={() => navigate('/')}>返回首页</Button>
+          <Button type="link" style={{ color: '#999' }} onClick={() => navigate('/join')}>没有账号？去注册</Button>
         </div>
       </Card>
     </div>
