@@ -5,6 +5,8 @@ import { Guild } from '../guild/entities/guild.entity';
 import { InviteCode } from '../guild/entities/invite-code.entity';
 import { BotJoinRecord } from './entities/bot-join-record.entity';
 import { OcrService } from '../ocr/ocr.service';
+import { ImageMatchService } from '../ocr/image-match.service';
+import { CatalogService } from '../equipment-catalog/catalog.service';
 import { ResupplyService } from '../resupply/resupply.service';
 import { KookService } from './kook.service';
 import { KookBotInteractionService } from './kook-bot-interaction.service';
@@ -52,6 +54,8 @@ export class KookMessageService {
     @InjectRepository(BotJoinRecord) private joinRecordRepo: Repository<BotJoinRecord>,
     private kookService: KookService,
     private ocrService: OcrService,
+    private imageMatchService: ImageMatchService,
+    private catalogService: CatalogService,
     private resupplyService: ResupplyService,
     private botInteraction: KookBotInteractionService,
     private configService: ConfigService,
@@ -105,6 +109,8 @@ export class KookMessageService {
 
     if (imageUrl) {
       await this.processImageMessage(guild, authorId, authorName, imageUrl, textContent, d.msg_id);
+    } else if (this.isOcBrokenMessage(textContent)) {
+      await this.processOcBrokenMessage(guild, authorId, authorName, textContent, d.msg_id);
     }
 
     return { ok: true };
@@ -291,25 +297,70 @@ export class KookMessageService {
     }
   }
 
-  /** 处理图片消息：判断是否击杀详情 → 对应流程 */
+  /** 处理图片消息：OCR提取元数据 + pHash匹配装备 */
   private async processImageMessage(
     guild: Guild, kookUserId: string, kookNickname: string,
     imageUrl: string, textContent: string, kookMessageId?: string,
   ): Promise<void> {
     try {
-      const ocrResults = await this.ocrService.recognizeImage(imageUrl);
-      const allText = ocrResults.map(r => r.name).join(' ');
+      // Step 1: OCR 识别文字+坐标（提取元数据 + 弹窗定位）
+      const { texts, detections } = await this.ocrService.recognizeImageWithCoords(imageUrl);
+      const allText = texts.join(' ');
       const killDetail = this.parseKillDetail(allText, textContent);
-      const enriched = await this.ocrService.enrichWithCatalog(ocrResults);
 
-      // 分为高置信度（>=0.8）和低置信度（<0.8）
-      const highConf = enriched.filter(e => e.catalogId && e.matchScore >= 0.8);
-      const lowConf = enriched.filter(e => !e.catalogId || e.matchScore < 0.8);
+      this.logger.log(`[${guild.name}] OCR文字: "${allText.slice(0, 200)}", 是否击杀详情=${killDetail.isKillDetail}`);
 
-      // 低置信度存入 OCR 待识别工作区
+      // Step 2: 下载图片为 Buffer
+      const imageBuffer = await this.fetchImageBuffer(imageUrl);
+      if (!imageBuffer) {
+        this.logger.warn('图片下载失败，跳过处理');
+        return;
+      }
+
+      // Step 3: pHash 匹配装备
+      let matchResults: any[] = [];
+
+      if (killDetail.isKillDetail) {
+        // 击杀详情：尝试定位左面板区域后裁切匹配
+        const leftRegion = this.detectLeftPanel(detections, imageBuffer);
+        if (leftRegion) {
+          try {
+            matchResults = await this.imageMatchService.matchFromRegion(imageBuffer, leftRegion);
+            this.logger.log(`[${guild.name}] 击杀详情左面板匹配: ${matchResults.length} 件`);
+          } catch (err) {
+            this.logger.warn(`左面板裁切匹配失败，降级为全图匹配: ${err}`);
+          }
+        }
+        // 左面板匹配无结果时降级为全图匹配
+        if (matchResults.length === 0) {
+          try {
+            matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
+          } catch (err) {
+            this.logger.warn(`全图pHash匹配失败: ${err}`);
+          }
+        }
+      } else {
+        // 非击杀详情：直接全图匹配
+        try {
+          matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
+        } catch (err) {
+          this.logger.warn(`全图pHash匹配失败: ${err}`);
+        }
+      }
+
+      // Step 4: 分为高/低置信度
+      const highConf = matchResults.filter(m => m.confidence >= 0.8);
+      const lowConf = matchResults.filter(m => m.confidence < 0.8);
+
+      // 低置信度存入待识别工作区
       if (lowConf.length > 0) {
         try {
-          await this.ocrService.createKookBatch(guild.id, imageUrl, kookUserId, kookNickname, lowConf);
+          const lowItems = lowConf.map(m => ({
+            name: m.catalogName, catalogId: m.catalogId, catalogName: m.catalogName,
+            level: m.level, quality: m.quality, category: m.category,
+            gearScore: m.gearScore, quantity: 1, matchScore: m.confidence,
+          }));
+          await this.ocrService.createKookBatch(guild.id, imageUrl, kookUserId, kookNickname, lowItems);
           this.logger.log(`[${guild.name}] ${lowConf.length} 件低置信度装备存入待识别工作区`);
         } catch (err) {
           this.logger.error(`存入待识别工作区失败: ${err}`);
@@ -317,18 +368,19 @@ export class KookMessageService {
       }
 
       if (highConf.length === 0) {
-        await this.kookService.sendDirectMessage(kookUserId,
-          `未能从截图中高置信度匹配到已预置的装备。${lowConf.length > 0 ? `${lowConf.length} 件已存入待识别工作区，请管理员手动确认。` : '请确认装备参考库中已录入对应装备。'}`);
+        const msg = lowConf.length > 0
+          ? `未能高置信度匹配到装备。${lowConf.length} 件已存入待识别工作区，请管理员手动确认。`
+          : '未能从截图中识别到装备。请确认装备参考库已初始化图片指纹。';
+        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
         return;
       }
 
-      const catalogIds = highConf.map(e => e.catalogId!);
+      // Step 5: 创建补装申请
+      const catalogIds = highConf.map(m => m.catalogId);
 
       if (killDetail.isKillDetail) {
-        // 击杀详情：一条记录 = 一次死亡 = 多件装备
         const result = await this.resupplyService.createFromKillDetail(guild.id, {
-          kookUserId,
-          kookNickname,
+          kookUserId, kookNickname,
           screenshotUrl: imageUrl,
           killDate: killDetail.date || new Date().toISOString().slice(0, 10),
           mapName: killDetail.mapName || 'unknown',
@@ -337,36 +389,238 @@ export class KookMessageService {
           equipmentCatalogIds: catalogIds,
           kookMessageId,
         });
-
         const msg = result.skipped
-          ? `补装申请已存在（去重跳过）。`
+          ? '补装申请已存在（去重跳过）。'
           : `收到击杀详情补装申请：${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
-        await this.kookService.sendDirectMessage(kookUserId, msg);
+        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
       } else {
-        // 普通补装：一条记录 = 多件装备
         const result = await this.resupplyService.create(guild.id, {
-          kookUserId,
-          kookNickname,
+          kookUserId, kookNickname,
           equipmentIds: catalogIds.join(','),
           quantity: catalogIds.length,
           applyType: '死亡补装',
           screenshotUrl: imageUrl,
           kookMessageId,
         });
-
         if (!result['deduplicated']) {
-          await this.kookService.sendDirectMessage(kookUserId,
-            `收到补装申请，${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`);
+          const msg = `收到补装申请，${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
+          try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
         }
       }
 
       this.logger.log(`[${guild.name}] ${kookNickname} 提交补装申请 (${catalogIds.length}件)`);
     } catch (err) {
       this.logger.error(`处理图片消息失败: ${err}`);
-      try {
-        await this.kookService.sendDirectMessage(kookUserId,
-          `补装申请处理失败，请稍后重试或联系管理员。`);
-      } catch {}
+      try { await this.kookService.sendDirectMessage(kookUserId, '补装申请处理失败，请稍后重试或联系管理员。'); } catch {}
+    }
+  }
+
+  // ===== OC碎文字消息处理 =====
+
+  /** 检测是否为OC碎消息 */
+  private isOcBrokenMessage(text: string): boolean {
+    return /oc\s*碎|OC\s*碎/i.test(text);
+  }
+
+  /** 处理OC碎文字消息 → 创建补装申请 */
+  private async processOcBrokenMessage(
+    guild: Guild, kookUserId: string, kookNickname: string,
+    textContent: string, kookMessageId?: string,
+  ): Promise<void> {
+    try {
+      this.logger.log(`[${guild.name}] OC碎消息: ${kookNickname} → "${textContent.slice(0, 200)}"`);
+
+      // 解析装备列表
+      const parsedItems = this.parseOcBrokenText(textContent);
+      this.logger.log(`[${guild.name}] OC碎解析出 ${parsedItems.length} 件装备`);
+
+      // 匹配参考库
+      const matchedIds: number[] = [];
+      const unmatchedNames: string[] = [];
+
+      for (const item of parsedItems) {
+        const matches = await this.catalogService.findByNameFuzzy(item.name, 0.6);
+        if (matches.length > 0) {
+          // 优先精确匹配+等级匹配
+          let best = matches[0];
+          if (item.level) {
+            const levelMatch = matches.find(m => m.item.level === item.level);
+            if (levelMatch) best = levelMatch;
+          }
+          if (item.quality !== undefined) {
+            const qMatch = matches.find(m => m.item.level === item.level && m.item.quality === item.quality);
+            if (qMatch) best = qMatch;
+          }
+          for (let i = 0; i < (item.quantity || 1); i++) {
+            matchedIds.push(best.item.id);
+          }
+        } else {
+          unmatchedNames.push(item.name);
+        }
+      }
+
+      // 创建补装申请（即使部分未匹配也创建）
+      if (matchedIds.length > 0 || parsedItems.length > 0) {
+        const dedupHash = require('crypto').createHash('md5')
+          .update(`${textContent}|${new Date().toISOString().slice(0, 10)}|${kookUserId}`)
+          .digest('hex');
+
+        await this.resupplyService.create(guild.id, {
+          kookUserId, kookNickname,
+          equipmentIds: matchedIds.length > 0 ? matchedIds.join(',') : '',
+          quantity: matchedIds.length || parsedItems.length,
+          applyType: 'OC碎',
+          reason: textContent,
+          kookMessageId,
+        });
+
+        let msg = `收到OC碎补装申请：${matchedIds.length} 件装备已匹配提交。`;
+        if (unmatchedNames.length > 0) {
+          msg += `\n${unmatchedNames.length} 件未匹配参考库：${unmatchedNames.join('、')}`;
+        }
+        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        this.logger.log(`[${guild.name}] ${kookNickname} OC碎补装: ${matchedIds.length}件匹配, ${unmatchedNames.length}件未匹配`);
+      }
+    } catch (err) {
+      this.logger.error(`处理OC碎消息失败: ${err}`);
+    }
+  }
+
+  /**
+   * 解析OC碎文字中的装备
+   * 格式：{等级}{品质}{装备名} 或 {品质描述}{等级}{装备名}
+   * 如："OC碎 80牧师风帽 62挣脱鞋" → [{name:'牧师风帽',level:8,quality:0}, {name:'挣脱鞋',level:6,quality:2}]
+   * 数量："10个OC" → quantity=10
+   */
+  private parseOcBrokenText(text: string): { name: string; level?: number; quality?: number; quantity?: number }[] {
+    // 移除"OC碎"/"oc碎"关键词
+    let cleaned = text.replace(/oc\s*碎/gi, '').trim();
+
+    // 按常见分隔符拆分
+    const segments = cleaned.split(/[,，、\s]+/).filter(s => s.trim().length > 0);
+
+    const results: { name: string; level?: number; quality?: number; quantity?: number }[] = [];
+
+    for (const seg of segments) {
+      let s = seg.trim();
+      if (!s || s.length < 2) continue;
+
+      let level: number | undefined;
+      let quality: number | undefined;
+      let quantity: number | undefined;
+      let name = s;
+
+      // 提取数量："10个" / "x5"
+      const qtyMatch = s.match(/(\d+)\s*个/);
+      if (qtyMatch) {
+        quantity = parseInt(qtyMatch[1]);
+        s = s.replace(qtyMatch[0], '').trim();
+        name = s;
+      }
+
+      // 品质前缀："平"=Q0
+      if (s.startsWith('平')) {
+        quality = 0;
+        s = s.slice(1);
+        name = s;
+      }
+
+      // 提取开头的等级+品质数字："80牧师风帽" → level=8, quality=0, name="牧师风帽"
+      const lvQMatch = s.match(/^(\d)(\d)(.+)/);
+      if (lvQMatch) {
+        const lv = parseInt(lvQMatch[1]);
+        const q = parseInt(lvQMatch[2]);
+        if (lv >= 1 && lv <= 8 && q >= 0 && q <= 4) {
+          level = lv;
+          quality = q;
+          name = lvQMatch[3].trim();
+        }
+      }
+
+      // 提取装等前缀："P9重锤" → gearScore=9, name="重锤"
+      const gsMatch = s.match(/^[pP](\d{1,2})(.+)/);
+      if (gsMatch && !level) {
+        const gs = parseInt(gsMatch[1]);
+        name = gsMatch[2].trim();
+        // 从装等反推：gearScore = level + quality
+        if (gs >= 1 && gs <= 12) {
+          level = Math.min(gs, 8);
+          quality = Math.max(0, gs - level);
+        }
+      }
+
+      if (name && name.length >= 1) {
+        results.push({ name, level, quality, quantity: quantity || 1 });
+      }
+    }
+
+    return results;
+  }
+
+  // ===== 击杀详情定位 =====
+
+  /**
+   * 基于OCR文字坐标定位击杀详情左面板区域
+   * 找"击杀"文字位置作为中轴线参考点，左面板=弹窗左边界~中轴线
+   */
+  private detectLeftPanel(detections: { text: string; x: number; y: number; width: number; height: number }[],
+    imageBuffer: Buffer): { left: number; top: number; width: number; height: number } | null {
+    if (!detections || detections.length === 0) return null;
+
+    // 找"击杀"文字的位置（中轴线参考）
+    const killTextIdx = detections.findIndex(d => d.text === '击杀' && d.width < 200);
+    // 找"击杀详情"的位置（弹窗上边界参考）
+    const killDetailIdx = detections.findIndex(d => /击杀详情/.test(d.text));
+    // 找"击杀声望"/"另存为新模板"（弹窗下边界参考）
+    const bottomIdx = detections.findIndex(d => /击杀声望|另存为新模板/.test(d.text));
+
+    if (killDetailIdx < 0) return null; // 未找到击杀详情文字，无法定位
+
+    const detailDetection = detections[killDetailIdx];
+
+    // 推算中轴线X：优先用"击杀"（居中的），否则用"击杀详情"的 x + 弹窗宽度/2
+    let centerX: number;
+    if (killTextIdx >= 0) {
+      const kt = detections[killTextIdx];
+      centerX = kt.x + kt.width / 2;
+    } else {
+      // 估算："击杀详情"在弹窗左上角，弹窗宽度约为图片的50-80%
+      // 取所有检测文字的最大x+width作为弹窗右边界
+      const maxRight = Math.max(...detections.map(d => d.x + d.width));
+      centerX = (detailDetection.x + maxRight) / 2;
+    }
+
+    // 弹窗上边界：击杀详情文字下方一段（玩家信息区）
+    const topY = detailDetection.y + detailDetection.height + 20;
+
+    // 弹窗下边界
+    let bottomY: number;
+    if (bottomIdx >= 0) {
+      bottomY = detections[bottomIdx].y;
+    } else {
+      // 估算：击杀详情下方约为弹窗高度的 80%
+      const allYs = detections.map(d => d.y + d.height);
+      bottomY = Math.max(...allYs) - 30;
+    }
+
+    // 左面板：从弹窗左边界到中轴线
+    const leftX = Math.max(0, detailDetection.x - 10);
+    const regionWidth = Math.max(50, Math.round(centerX - leftX - 10));
+    const regionHeight = Math.max(50, Math.round(bottomY - topY));
+
+    if (regionWidth < 50 || regionHeight < 50) return null;
+
+    return { left: leftX, top: topY, width: regionWidth, height: regionHeight };
+  }
+
+  /** 下载图片为 Buffer */
+  private async fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
+    try {
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return null;
+      return Buffer.from(await response.arrayBuffer());
+    } catch {
+      return null;
     }
   }
 
@@ -421,12 +675,41 @@ export class KookMessageService {
   }
 
   private extractImageUrl(d: any): string | null {
+    // 1. type=2 纯图片消息
     if (d.type === 2 && d.content) return d.content;
+
+    // 2. type=10 卡片消息 — 解析JSON提取 image.src
+    if (d.type === 10 && d.content) {
+      try {
+        const cards = typeof d.content === 'string' ? JSON.parse(d.content) : d.content;
+        if (Array.isArray(cards)) {
+          for (const card of cards) {
+            for (const mod of (card.modules || [])) {
+              // container / image-group 类型都含 elements
+              if (mod.elements && Array.isArray(mod.elements)) {
+                for (const el of mod.elements) {
+                  if (el.type === 'image' && el.src) return el.src;
+                }
+              }
+              // 单独 image 模块
+              if (mod.type === 'image' && mod.src) return mod.src;
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`解析卡片消息图片失败: ${err}`);
+      }
+    }
+
+    // 3. attachments
     const attachments = d.extra?.attachments || [];
     const imageAtt = attachments.find((a: any) => a.type === 'image' || a.url?.match(/\.(png|jpg|jpeg|gif|webp)/i));
     if (imageAtt) return imageAtt.url;
+
+    // 4. Markdown 图片语法
     const imgMatch = (d.content || '').match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
     if (imgMatch) return imgMatch[1];
+
     return null;
   }
 }

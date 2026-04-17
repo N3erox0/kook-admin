@@ -183,6 +183,37 @@ export class ImageMatchService {
     return { total: catalogs.length, success, failed };
   }
 
+  /**
+   * 从指定区域裁切后识别装备图标（击杀详情左面板用）
+   * @param imageBuffer 完整截图 Buffer
+   * @param region 裁切区域 { left, top, width, height }
+   */
+  async matchFromRegion(imageBuffer: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<{
+    catalogId: number;
+    catalogName: string;
+    level: number;
+    quality: number;
+    category: string;
+    gearScore: number;
+    confidence: number;
+    imageUrl: string | null;
+  }[]> {
+    let sharp: any;
+    try { sharp = require('sharp'); } catch {
+      throw new Error('图片处理模块未安装');
+    }
+
+    // 裁切指定区域
+    const regionBuffer = await sharp(imageBuffer)
+      .extract({ left: region.left, top: region.top, width: region.width, height: region.height })
+      .toBuffer();
+
+    this.logger.log(`裁切击杀详情左面板: left=${region.left}, top=${region.top}, ${region.width}x${region.height}`);
+
+    // 对裁切后的区域执行标准匹配
+    return this.matchFromScreenshot(regionBuffer);
+  }
+
   // ===== 内部方法 =====
 
   /** 估算装备图标大小 */

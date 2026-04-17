@@ -11,12 +11,14 @@ import { Guild } from '../guild/entities/guild.entity';
 import { InviteCode } from '../guild/entities/invite-code.entity';
 import { BotJoinRecord } from './entities/bot-join-record.entity';
 import { OcrModule } from '../ocr/ocr.module';
+import { EquipmentCatalogModule } from '../equipment-catalog/catalog.module';
 import { ResupplyModule } from '../resupply/resupply.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([GuildMember, Guild, InviteCode, BotJoinRecord]),
     OcrModule,
+    EquipmentCatalogModule,
     forwardRef(() => ResupplyModule),
   ],
   controllers: [KookController],

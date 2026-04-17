@@ -116,3 +116,12 @@
 | UI-006 | Webhook日志增强 | completed | 2026-04-15 00:17 | callback端点加详细请求/解析/结果日志 |
 | UI-007 | 删除/webhook端点 | completed | 2026-04-15 00:17 | 只保留/callback |
 | UI-008 | OAuth弹窗防护 | completed | 2026-04-15 00:17 | popup=null时提示+取消loading |
+| **V2.8** | **KOOK消息→补装申请核心重构** | | | |
+| F-043 | extractImageUrl支持type=10卡片消息 | completed | 2026-04-17 18:50 | 解析KOOK Card Message中container/image元素的src |
+| F-044 | OCR带坐标识别(recognizeImageWithCoords) | completed | 2026-04-17 18:50 | 调用腾讯云OCR返回ItemPolygon文字坐标 |
+| F-045 | ImageMatchService.matchFromRegion区域匹配 | completed | 2026-04-17 18:50 | 指定区域裁切后执行pHash匹配 |
+| F-046 | processImageMessage重构双通道 | completed | 2026-04-17 18:50 | OCR元数据提取+pHash图片匹配，替代纯文字OCR |
+| F-047 | 击杀详情弹窗左面板自动定位 | completed | 2026-04-17 18:50 | 基于OCR文字坐标检测"击杀"/"击杀详情"位置推算左面板区域 |
+| F-048 | OC碎纯文字消息→补装申请 | completed | 2026-04-17 18:50 | KOOK频道文字含"OC碎"触发补装(applyType=OC碎) |
+| F-049 | OC碎文字解析器 | completed | 2026-04-17 18:50 | 解析"80牧师风帽""62挣脱鞋""P9重锤"等格式 |
+| F-050 | KookModule依赖补全 | completed | 2026-04-17 18:50 | 导入EquipmentCatalogModule供CatalogService注入 |

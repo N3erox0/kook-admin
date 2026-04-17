@@ -11,6 +11,15 @@ import { EquipmentService } from '../equipment/equipment.service';
 import { ImageMatchService } from './image-match.service';
 import { v4 as uuidv4 } from 'uuid';
 
+/** OCR 文字检测结果（含坐标） */
+export interface OcrTextDetection {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 @Injectable()
 export class OcrService {
   private readonly logger = new Logger(OcrService.name);
@@ -277,7 +286,62 @@ export class OcrService {
     return { list, total, page, pageSize };
   }
 
-  // ===== 原有 OCR 识别方法 =====
+  // ===== OCR 识别方法 =====
+
+  /** 带坐标的 OCR 识别 — 用于击杀详情弹窗定位 */
+  async recognizeImageWithCoords(imageUrl: string): Promise<{ texts: string[]; detections: OcrTextDetection[] }> {
+    const secretId = this.configService.get<string>('tencent.secretId');
+    const secretKey = this.configService.get<string>('tencent.secretKey');
+    const region = this.configService.get<string>('ocr.region');
+
+    if (!secretId || !secretKey) {
+      this.logger.warn('腾讯云 OCR 密钥未配置');
+      return { texts: [], detections: [] };
+    }
+
+    let fullUrl = imageUrl;
+    if (imageUrl && !imageUrl.startsWith('http')) {
+      const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:3000';
+      fullUrl = `${baseUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+
+    const result = await this.callTencentOcrRaw(fullUrl, secretId, secretKey, region);
+    const textDetections = result.Response?.TextDetections || [];
+
+    const texts: string[] = [];
+    const detections: OcrTextDetection[] = [];
+    for (const t of textDetections) {
+      texts.push(t.DetectedText || '');
+      const poly = t.ItemPolygon || {};
+      detections.push({
+        text: t.DetectedText || '',
+        x: poly.X ?? 0,
+        y: poly.Y ?? 0,
+        width: poly.Width ?? 0,
+        height: poly.Height ?? 0,
+      });
+    }
+
+    return { texts, detections };
+  }
+
+  /** 调用腾讯云OCR返回原始结果（含坐标） */
+  private async callTencentOcrRaw(imageUrl: string, secretId: string, secretKey: string, region: string): Promise<any> {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
+    const host = 'ocr.tencentcloudapi.com';
+    const payload = JSON.stringify({ ImageUrl: imageUrl });
+
+    const headers = {
+      'Content-Type': 'application/json', Host: host,
+      'X-TC-Action': 'GeneralBasicOCR', 'X-TC-Version': '2018-11-19',
+      'X-TC-Region': region, 'X-TC-Timestamp': String(timestamp),
+      Authorization: await this.generateAuth(secretId, secretKey, 'ocr', date, timestamp, payload, host),
+    };
+
+    const response = await fetch(`https://${host}`, { method: 'POST', headers, body: payload });
+    return response.json();
+  }
 
   async recognizeImage(imageUrl: string): Promise<ParsedEquipment[]> {
     const secretId = this.configService.get<string>('tencent.secretId');
