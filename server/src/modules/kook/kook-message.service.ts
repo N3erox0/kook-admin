@@ -148,7 +148,7 @@ export class KookMessageService {
           return { ok: true, message: 'Guild already activated, skip invite' };
         }
 
-        // ========== 获取服务器信息 + 服务器主 ==========
+        // ========== 获取服务器信息 + 识别邀请者 ==========
         let guildName = `服务器-${kookGuildId.slice(-6)}`;
         let guildIcon = '';
         let inviterKookId = '';
@@ -156,12 +156,32 @@ export class KookMessageService {
         let inviterIdentifyNum = '';
         let memberCount = 0;
 
+        // 优先从 webhook body 取邀请者（KOOK 可能在 body.user_id / body.operator_id 提供）
+        const bodyUserId = body.user_id || body.operator_id || '';
+        // 也检查 d.author_id（某些事件格式下会带）
+        const dAuthorId = d.author_id || '';
+
         try {
           const guildView = await this.kookService.getGuildView(kookGuildId);
           guildName = guildView.name || guildName;
           guildIcon = guildView.icon || '';
-          inviterKookId = (guildView as any).user_id || (guildView as any).master_id || '';
+          const masterId = (guildView as any).user_id || (guildView as any).master_id || '';
           memberCount = (guildView as any).member_count || 0;
+
+          // 邀请者识别优先级：body.user_id > d.author_id > master_id
+          // body.user_id 和 d.author_id 可能是 Bot 自身（3532242146），需排除
+          const botSelfId = '3532242146'; // TODO: 从 /me 接口动态获取，暂硬编码
+          if (bodyUserId && bodyUserId !== '1' && bodyUserId !== botSelfId) {
+            inviterKookId = bodyUserId;
+            this.logger.log(`[self_joined_guild] 邀请者来源: body.user_id=${bodyUserId}`);
+          } else if (dAuthorId && dAuthorId !== '1' && dAuthorId !== botSelfId) {
+            inviterKookId = dAuthorId;
+            this.logger.log(`[self_joined_guild] 邀请者来源: d.author_id=${dAuthorId}`);
+          } else {
+            inviterKookId = masterId;
+            this.logger.log(`[self_joined_guild] 邀请者来源: master_id=${masterId}（兜底）`);
+          }
+
           if (inviterKookId) {
             try {
               const userView = await this.kookService.getUserView(inviterKookId, kookGuildId);
@@ -170,6 +190,14 @@ export class KookMessageService {
             } catch { /* ignore */ }
           }
         } catch (err) {
+          // API 失败时仍优先用 body 里的邀请者
+          if (bodyUserId && bodyUserId !== '1') {
+            inviterKookId = bodyUserId;
+            this.logger.log(`[self_joined_guild] API失败但从body取到邀请者: ${bodyUserId}`);
+          } else if (dAuthorId && dAuthorId !== '1') {
+            inviterKookId = dAuthorId;
+            this.logger.log(`[self_joined_guild] API失败但从d.author_id取到邀请者: ${dAuthorId}`);
+          }
           this.logger.warn(`[self_joined_guild] 获取服务器 ${kookGuildId} 信息失败: ${err}`);
         }
 
