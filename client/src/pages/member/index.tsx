@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, Input, Select, message, Tooltip, Popover } from 'antd';
-import { EyeOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { EyeOutlined, ClockCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
 import request from '@/api/request';
 import dayjs from 'dayjs';
@@ -34,8 +34,12 @@ export default function MemberPage() {
   const [data, setData] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [keyword, setKeyword] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  // F-101: 拆出受控输入与已提交查询参数，点击【查询】才触发
+  const [keywordInput, setKeywordInput] = useState('');
+  const [statusInput, setStatusInput] = useState<string>('');
+  const [kookRoleIdInput, setKookRoleIdInput] = useState<string>('');
+  const [queryParams, setQueryParams] = useState<{ keyword?: string; status?: string; kookRoleId?: string }>({});
+
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [expandedRoleId, setExpandedRoleId] = useState<number | null>(null);
 
@@ -45,8 +49,9 @@ export default function MemberPage() {
     if (!currentGuildId) return;
     setLoading(true);
     const params: any = { page, pageSize: 50 };
-    if (keyword) params.keyword = keyword;
-    if (statusFilter) params.status = statusFilter;
+    if (queryParams.keyword) params.keyword = queryParams.keyword;
+    if (queryParams.status) params.status = queryParams.status;
+    if (queryParams.kookRoleId) params.kookRoleId = queryParams.kookRoleId;
     request.get(`/guild/${currentGuildId}/members`, { params }).then((res: any) => {
       setData(res.list || []);
       setTotal(res.total || 0);
@@ -58,7 +63,38 @@ export default function MemberPage() {
     }).catch(() => {});
   };
 
-  useEffect(() => { fetchData(); }, [currentGuildId, page, statusFilter]);
+  useEffect(() => { fetchData(); }, [currentGuildId, page, queryParams]);
+
+  // F-101: 从当前成员列表汇总出现过的 KOOK 角色作为下拉选项（避免额外调 KOOK API）
+  const kookRoleOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of data) {
+      const roles = Array.isArray(m.kookRoles) ? m.kookRoles : [];
+      for (const r of roles) {
+        if (r && typeof r === 'object' && r.role_id) {
+          map.set(String(r.role_id), r.name || `角色${r.role_id}`);
+        }
+      }
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ value: id, label: name }));
+  }, [data]);
+
+  const handleSearch = () => {
+    setPage(1);
+    setQueryParams({
+      keyword: keywordInput.trim() || undefined,
+      status: statusInput || undefined,
+      kookRoleId: kookRoleIdInput || undefined,
+    });
+  };
+
+  const handleResetSearch = () => {
+    setKeywordInput('');
+    setStatusInput('');
+    setKookRoleIdInput('');
+    setPage(1);
+    setQueryParams({});
+  };
 
   const handleRoleChange = async (memberId: number, role: string) => {
     try {
@@ -168,23 +204,38 @@ export default function MemberPage() {
       </div>
       <Card>
         <Space style={{ marginBottom: 16 }} wrap>
-          <Input.Search
-            placeholder="搜索昵称"
+          <Input
+            placeholder="搜索昵称/KOOK ID"
             allowClear
             style={{ width: 200 }}
-            onSearch={(v) => { setKeyword(v); setPage(1); fetchData(); }}
+            prefix={<SearchOutlined />}
+            value={keywordInput}
+            onChange={(e) => setKeywordInput(e.target.value)}
+            onPressEnter={handleSearch}
           />
           <Select
-            placeholder="状态筛选"
+            placeholder="KOOK 角色"
+            allowClear
+            style={{ width: 180 }}
+            value={kookRoleIdInput || undefined}
+            onChange={(v) => setKookRoleIdInput(v || '')}
+            options={kookRoleOptions}
+            showSearch
+            filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())}
+          />
+          <Select
+            placeholder="状态"
             allowClear
             style={{ width: 120 }}
-            value={statusFilter || undefined}
-            onChange={(v) => { setStatusFilter(v || ''); setPage(1); }}
+            value={statusInput || undefined}
+            onChange={(v) => setStatusInput(v || '')}
             options={[
               { value: 'active', label: '在会' },
               { value: 'left', label: '离开' },
             ]}
           />
+          <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>查询</Button>
+          <Button onClick={handleResetSearch}>重置</Button>
         </Space>
 
         <Table

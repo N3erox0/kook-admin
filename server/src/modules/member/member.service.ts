@@ -27,6 +27,17 @@ export class MemberService {
       qb.andWhere('(m.nickname LIKE :kw OR m.kookUserId LIKE :kw)', { kw: `%${query.keyword}%` });
     }
 
+    // F-101: KOOK 角色过滤（kook_roles JSON 中匹配 role_id）
+    // kookRoles 存储格式: [{ "role_id": 123, "name": "XXX" }, ...]
+    if (query.kookRoleId) {
+      const roleIdNum = Number(query.kookRoleId);
+      if (!isNaN(roleIdNum)) {
+        qb.andWhere(`JSON_CONTAINS(m.kookRoles, :roleJson, '$')`, {
+          roleJson: JSON.stringify({ role_id: roleIdNum }),
+        });
+      }
+    }
+
     qb.orderBy('m.status', 'ASC').addOrderBy('m.updatedAt', 'DESC');
     qb.skip((page - 1) * pageSize).take(pageSize);
 

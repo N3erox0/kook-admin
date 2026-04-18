@@ -151,6 +151,23 @@ export class GuildController {
     return this.guildService.getGuildMembers(id);
   }
 
+  /**
+   * F-102C: 一键创建子账号（超管限定）
+   * 自动生成用户名+密码，绑定到当前公会
+   */
+  @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
+  @GuildRoles(GuildRole.SUPER_ADMIN)
+  @Post(':id/sub-account')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '一键创建子账号（仅超管）' })
+  createSubAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { role?: string; nickname?: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.guildService.createSubAccount(id, dto || {}, user.sub || user.userId);
+  }
+
   /** 内部方法：校验当前用户是否为 SSVIP */
   private ensureSSVIP(user: any) {
     if (!user?.globalRole || user.globalRole !== 'ssvip') {

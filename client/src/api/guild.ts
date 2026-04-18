@@ -29,3 +29,7 @@ export const getInviteCodeById = (id: number) => request.get(`/guilds/invite-cod
 
 export const updateInviteCodeStatus = (id: number, status: string) =>
   request.put(`/guilds/invite-codes/${id}/status`, { status });
+
+/** F-102C: 一键创建子账号（仅超管） */
+export const createSubAccount = (guildId: number, data: { role?: string; nickname?: string }) =>
+  request.post(`/guilds/${guildId}/sub-account`, data);

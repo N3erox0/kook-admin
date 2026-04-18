@@ -582,8 +582,21 @@ export class KookMessageService {
       const segments = this.parseOcBrokenSegments(textContent);
       this.logger.log(`[${guild.name}] OC碎拆词: ${segments.length} 个词段: [${segments.join(', ')}]`);
 
+      // F-108: 字数分段与关键词不一致（含OC碎但拆不出有效词段）→ 整条进待识别工作区
       if (segments.length === 0) {
-        this.logger.log(`[${guild.name}] OC碎无有效装备词段，跳过`);
+        this.logger.log(`[${guild.name}] OC碎无有效装备词段，整条进待识别工作区`);
+        try {
+          await this.ocrService.createKookBatch(guild.id, null, kookUserId, kookNickname, [{
+            name: textContent.slice(0, 100) || 'OC碎未识别',
+            catalogId: null, catalogName: null,
+            level: null, quality: null, category: null,
+            gearScore: null, quantity: 1, matchScore: 0,
+          }] as any);
+        } catch (err) {
+          this.logger.error(`OC碎空段存入待识别失败: ${err}`);
+        }
+        const msg = 'OC碎消息未识别到有效装备词段，已存入待识别工作区，请管理员手动确认。';
+        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
         return;
       }
 

@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Query, Req, Res, UseGuards, Logger, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Query, Req, Res, UseGuards, Logger, ForbiddenException, Param, ParseIntPipe } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { KookSyncService } from './kook-sync.service';
 import { KookService } from './kook.service';
@@ -187,6 +187,17 @@ export class KookController {
   private ensureAdmin(user: any) {
     if (!user?.globalRole || user.globalRole !== 'ssvip') {
       throw new ForbiddenException('仅管理员可执行此操作');
+    }
+  }
+
+  /** F-100: 刷新单个公会的图标+名称（从KOOK拉取回填） */
+  @Post('guild/:guildId/refresh-info')
+  @UseGuards(JwtAuthGuard)
+  async refreshGuildInfo(@Param('guildId', ParseIntPipe) guildId: number) {
+    try {
+      return await this.syncService.refreshGuildInfoById(guildId);
+    } catch (err: any) {
+      return { error: err.message || '刷新公会信息失败' };
     }
   }
 }

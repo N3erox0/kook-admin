@@ -32,9 +32,10 @@ export class ImageMatchService {
   /**
    * 从截图中识别装备图标（图片相似度匹配）
    * @param imageBuffer 上传的截图 Buffer
+   * @param options.skipQuantity 跳过数量OCR（击杀详情模式每件=1，避免浪费 OCR 配额）
    * @returns 匹配到的装备列表
    */
-  async matchFromScreenshot(imageBuffer: Buffer): Promise<{
+  async matchFromScreenshot(imageBuffer: Buffer, options?: { skipQuantity?: boolean }): Promise<{
     catalogId: number;
     catalogName: string;
     level: number;
@@ -80,8 +81,9 @@ export class ImageMatchService {
       throw new Error('装备参考库未初始化图片指纹，请在参考库页面执行"生成图片指纹"');
     }
 
-    // 4. 对每个子图计算 pHash 并匹配
-    const results: any[] = [];
+    // 4. 对每个子图计算 pHash 并匹配（不在循环中调用数量 OCR，避免性能炸）
+    // F-104: 先完成所有 pHash 匹配，后对匹配成功的子图单独批量提取数量
+    const matches: { subBuf: Buffer; catalog: any; distance: number }[] = [];
     for (const subBuf of subImages) {
       try {
         const cropped = await this.cropCenter(sharp, subBuf, 0.60);
@@ -100,35 +102,65 @@ export class ImageMatchService {
         }
 
         if (bestMatch && bestDistance <= ImageMatchService.HAMMING_THRESHOLD) {
-          const confidence = 1 - bestDistance / 64;
-          // 防止同一装备重复匹配 — 改为累加数量
-          const existing = results.find(r => r.catalogId === bestMatch.id);
-          if (existing) {
-            // 同一装备出现多次，提取本子图数量后累加
-            const qty = await this.extractQuantityFromCorner(sharp, subBuf);
-            existing.quantity += qty;
-          } else {
-            // 提取右下角数量数字
-            const qty = await this.extractQuantityFromCorner(sharp, subBuf);
-            results.push({
-              catalogId: bestMatch.id,
-              catalogName: bestMatch.name,
-              level: bestMatch.level,
-              quality: bestMatch.quality,
-              category: bestMatch.category,
-              gearScore: bestMatch.gearScore,
-              confidence: Math.round(confidence * 100) / 100,
-              imageUrl: bestMatch.imageUrl,
-              quantity: qty,
-            });
-          }
+          matches.push({ subBuf, catalog: bestMatch, distance: bestDistance });
         }
       } catch (err) {
         this.logger.warn(`子图匹配失败: ${err}`);
       }
     }
 
-    this.logger.log(`图片相似度匹配完成: ${results.length}/${subImages.length} 匹配成功`);
+    this.logger.log(`[F-104] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功`);
+
+    // 5. 对匹配成功的子图批量提取数量（并发限制 + 总数上限）
+    // 限制数量 OCR 总调用数不超过 MAX_QUANTITY_OCR，避免刷屏和配额消耗
+    // F-106.2 击杀详情模式：skipQuantity=true 时每件=1，不做数量 OCR
+    const MAX_QUANTITY_OCR = 30;
+    const CONCURRENCY = 3;
+    const quantitySubImages = options?.skipQuantity ? [] : matches.slice(0, MAX_QUANTITY_OCR);
+    const quantityMap = new Map<Buffer, number>();
+
+    if (quantitySubImages.length > 0) {
+      this.logger.log(`[F-104] 开始数量OCR: ${quantitySubImages.length} 个子图（上限 ${MAX_QUANTITY_OCR}，并发 ${CONCURRENCY}）`);
+      for (let i = 0; i < quantitySubImages.length; i += CONCURRENCY) {
+        const batch = quantitySubImages.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async (m) => {
+          try {
+            const qty = await this.extractQuantityFromCorner(sharp, m.subBuf);
+            quantityMap.set(m.subBuf, qty);
+          } catch {
+            quantityMap.set(m.subBuf, 1);
+          }
+        }));
+      }
+      this.logger.log(`[F-104] 数量OCR完成: ${quantityMap.size}/${quantitySubImages.length}`);
+    } else if (options?.skipQuantity) {
+      this.logger.log(`[F-106.2] 击杀详情模式：跳过数量 OCR（每件=1）`);
+    }
+
+    // 6. 聚合结果（同 catalogId 合并数量 = 同名+同等级+同品质合并）
+    const results: any[] = [];
+    for (const m of matches) {
+      const qty = quantityMap.get(m.subBuf) ?? 1;
+      const confidence = 1 - m.distance / 64;
+      const existing = results.find(r => r.catalogId === m.catalog.id);
+      if (existing) {
+        existing.quantity += qty;
+      } else {
+        results.push({
+          catalogId: m.catalog.id,
+          catalogName: m.catalog.name,
+          level: m.catalog.level,
+          quality: m.catalog.quality,
+          category: m.catalog.category,
+          gearScore: m.catalog.gearScore,
+          confidence: Math.round(confidence * 100) / 100,
+          imageUrl: m.catalog.imageUrl,
+          quantity: qty,
+        });
+      }
+    }
+
+    this.logger.log(`图片相似度匹配完成: ${results.length}/${subImages.length} 匹配成功，总数量${results.reduce((s, r) => s + r.quantity, 0)}`);
     return results;
   }
 
@@ -250,8 +282,8 @@ export class ImageMatchService {
 
     this.logger.log(`裁切击杀详情左面板: left=${region.left}, top=${region.top}, ${region.width}x${region.height}`);
 
-    // 对裁切后的区域执行标准匹配
-    return this.matchFromScreenshot(regionBuffer);
+    // 对裁切后的区域执行标准匹配（击杀详情模式：跳过数量 OCR，每件=1）
+    return this.matchFromScreenshot(regionBuffer, { skipQuantity: true });
   }
 
   // ===== 内部方法 =====

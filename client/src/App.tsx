@@ -22,7 +22,6 @@ import AlertPage from '@/pages/alert';
 import LogPage from '@/pages/log';
 import InviteCodePage from '@/pages/invite-codes';
 import GuildSettingsPage from '@/pages/guild/GuildSettings';
-import KookPendingPage from '@/pages/ocr/kook-pending';
 
 function GuildRoute({ children }: { children: React.ReactNode }) {
   const { currentGuildId } = useGuildStore();
@@ -80,7 +79,8 @@ export default function App() {
               <Route path="catalog" element={<CatalogPage />} />
               <Route path="equipment" element={<EquipmentPage />} />
               <Route path="resupply" element={<ResupplyPage />} />
-              <Route path="kook-pending" element={<KookPendingPage />} />
+              {/* F-107: 旧独立路由重定向到补装管理的待识别Tab */}
+              <Route path="kook-pending" element={<Navigate to="/admin/resupply?tab=pending" replace />} />
               <Route path="alerts" element={<AlertPage />} />
               <Route path="invite-codes" element={<InviteCodePage />} />
               <Route path="logs" element={<LogPage />} />

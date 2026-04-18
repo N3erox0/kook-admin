@@ -250,6 +250,120 @@ export class GuildService {
     });
   }
 
+  /**
+   * F-102C: 一键创建子账号
+   * 用户名格式：{公会缩写2-3字母}{2随机字母}{4随机数字}
+   * 密码：8位随机（大小写字母+数字）
+   * 自动绑定到当前公会为指定角色（默认 normal）
+   */
+  async createSubAccount(
+    guildId: number,
+    data: { role?: string; nickname?: string },
+    creatorUserId: number,
+  ): Promise<{ username: string; password: string; nickname: string; memberId: number }> {
+    const guild = await this.findGuildById(guildId);
+
+    // 生成公会缩写（取公会名首字母+次字母，回退为 'gd'）
+    const guildName = guild.name || 'guild';
+    const abbr = this.generateGuildAbbr(guildName);
+
+    // 生成用户名：{abbr}{2随机字母}{4随机数字}
+    const LETTERS = 'abcdefghjkmnpqrstuvwxyz'; // 去i/o/l
+    const DIGITS = '0123456789';
+    let username = '';
+    let attempts = 0;
+    while (attempts < 10) {
+      const rand2 = LETTERS.charAt(Math.floor(Math.random() * LETTERS.length))
+        + LETTERS.charAt(Math.floor(Math.random() * LETTERS.length));
+      const rand4 = DIGITS.charAt(Math.floor(Math.random() * DIGITS.length))
+        + DIGITS.charAt(Math.floor(Math.random() * DIGITS.length))
+        + DIGITS.charAt(Math.floor(Math.random() * DIGITS.length))
+        + DIGITS.charAt(Math.floor(Math.random() * DIGITS.length));
+      const candidate = `${abbr}${rand2}${rand4}`;
+      const exists = await this.userRepo.findOne({ where: { username: candidate } });
+      if (!exists) {
+        username = candidate;
+        break;
+      }
+      attempts++;
+    }
+    if (!username) throw new BadRequestException('用户名生成冲突，请重试');
+
+    // 生成8位随机密码（大小写字母+数字）
+    const PWD_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let password = '';
+    for (let i = 0; i < 8; i++) {
+      password += PWD_CHARSET.charAt(Math.floor(Math.random() * PWD_CHARSET.length));
+    }
+
+    // 校验角色合法性
+    const validRoles = [GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN, GuildRole.RESUPPLY_STAFF, GuildRole.NORMAL];
+    const role = (data.role && validRoles.includes(data.role as GuildRole)) ? data.role : GuildRole.NORMAL;
+    const nickname = data.nickname || `${guildName}-子账号-${username.slice(-4)}`;
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    try {
+      // 创建 user
+      const user = qr.manager.create(User, {
+        username,
+        passwordHash: await hashPassword(password),
+        nickname,
+        status: 1,
+      });
+      const savedUser = await qr.manager.save(user);
+
+      // 创建 guild_member 绑定到公会
+      const member = qr.manager.create(GuildMember, {
+        guildId,
+        userId: savedUser.id,
+        kookUserId: '',
+        nickname,
+        role,
+        status: 'active',
+        joinedAt: new Date(),
+        lastSyncedAt: new Date(),
+        joinSource: 'manual',
+      });
+      const savedMember = await qr.manager.save(member);
+
+      await qr.commitTransaction();
+      this.logger.log(`[F-102C] 创建子账号成功: username=${username}, guildId=${guildId}, role=${role}, creator=${creatorUserId}`);
+
+      return {
+        username,
+        password,
+        nickname,
+        memberId: savedMember.id,
+      };
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  /** 根据公会名生成2-3字母缩写 */
+  private generateGuildAbbr(guildName: string): string {
+    // 去掉标点和空格
+    const cleaned = guildName.replace(/[\s\-_【】\[\]（）()「」『』]/g, '');
+    if (!cleaned) return 'gd';
+
+    // 如果含英文字母，取前2-3个
+    const englishMatch = cleaned.match(/[a-zA-Z]{2,3}/);
+    if (englishMatch) return englishMatch[0].toLowerCase();
+
+    // 中文场景：取拼音首字母（简化版：只取前2个字符，转为伪缩写）
+    // 用字符编码做简单 hash 生成2个字母
+    const c1 = cleaned.charCodeAt(0);
+    const c2 = cleaned.length > 1 ? cleaned.charCodeAt(1) : c1;
+    const letters = 'abcdefghjkmnpqrstuvwxyz';
+    return letters[c1 % letters.length] + letters[c2 % letters.length];
+  }
+
   // ===== 模块二：激活码验证与公会激活 =====
 
   /** 验证激活码 — 返回公会信息（分支A/B判断） */

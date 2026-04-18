@@ -26,3 +26,15 @@ export const getGroupedResupply = (guildId: number, keyword?: string) =>
 
 export const getMergedResupply = (guildId: number, params?: any) =>
   request.get(`/guild/${guildId}/resupply/merged`, { params });
+
+/** F-108: 快捷补装完成（待识别路径B） */
+export const quickCompleteResupply = (
+  guildId: number, id: number,
+  data: { equipmentEntries?: { catalogId: number; quantity: number }[]; equipmentIds?: string; remark?: string; killDate?: string; mapName?: string; gameId?: string; resupplyBox?: string; kookNickname?: string },
+) =>
+  request.post(`/guild/${guildId}/resupply/${id}/quick-complete`, data);
+
+/** F-108: 批量废弃（待识别路径A） */
+export const batchRejectResupply = (guildId: number, data: { ids: number[]; remark?: string }) =>
+  request.post(`/guild/${guildId}/resupply/batch-reject`, data);
+

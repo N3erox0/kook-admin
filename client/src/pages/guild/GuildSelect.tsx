@@ -59,7 +59,17 @@ export default function GuildSelectPage() {
             )}
           />
         ) : (
-          <Empty description="暂无公会" style={{ margin: '32px 0' }} />
+          <Empty
+            description={
+              <Space direction="vertical" align="center">
+                <Text>您尚未加入任何公会</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  请向公会管理员索取邀请码，或使用邀请码创建新公会
+                </Text>
+              </Space>
+            }
+            style={{ margin: '32px 0' }}
+          />
         )}
 
         <Space style={{ width: '100%', justifyContent: 'center', marginTop: 16 }}>

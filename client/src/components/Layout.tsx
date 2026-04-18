@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout as AntLayout, Menu, Dropdown, Avatar, Typography, Space, Tag } from 'antd';
+import { Layout as AntLayout, Menu, Dropdown, Avatar, Typography, Space, Tag, message } from 'antd';
 import {
   DashboardOutlined, TeamOutlined, DatabaseOutlined, AppstoreOutlined,
   SyncOutlined, AlertOutlined, FileTextOutlined, SwapOutlined,
   LogoutOutlined, UserOutlined, KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  SettingOutlined, PlusOutlined,
+  SettingOutlined, PlusOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
 import { ROLE_LABELS } from '@/types';
+import { refreshGuildInfo } from '@/api/kook';
+import { getProfile } from '@/api/auth';
 import type { MenuProps } from 'antd';
 
 const { Header, Sider, Content } = AntLayout;
@@ -18,13 +20,13 @@ const { Text } = Typography;
 // SSVIP 仅可见：装备参考库、邀请码管理（控制台仅显示公会数）
 // 超管：全部
 // 库存管理员/补装管理员/普通用户：仅本公会数据
+// F-107: 待识别工作区归并到补装管理页内Tab，移除独立菜单
 const allMenuItems = [
   { key: '/admin/dashboard', icon: <DashboardOutlined />, label: '控制台', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['ssvip'] },
   { key: '/admin/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
-  { key: '/admin/kook-pending', icon: <AlertOutlined />, label: '待识别工作区', roles: ['super_admin', 'inventory_admin'] },
   { key: '/admin/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
   { key: '/admin/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
   { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin', 'ssvip'] },
@@ -35,8 +37,9 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
-  const { currentGuildId, currentGuildRole, guilds } = useGuildStore();
+  const { currentGuildId, currentGuildRole, guilds, setGuilds } = useGuildStore();
   const [collapsed, setCollapsed] = useState(false);
+  const [refreshingIcon, setRefreshingIcon] = useState(false);
 
   const currentGuild = guilds.find((g) => g.guildId === currentGuildId);
   // SSVIP 用户始终使用 globalRole，不被公会角色覆盖
@@ -58,6 +61,29 @@ export default function AppLayout() {
     navigate('/login');
   };
 
+  /** F-100: 刷新当前公会图标 */
+  const handleRefreshIcon = async () => {
+    if (!currentGuildId || isSSVIP) return;
+    setRefreshingIcon(true);
+    try {
+      const res: any = await refreshGuildInfo(currentGuildId);
+      if (res?.error) {
+        message.warning(res.error);
+      } else {
+        // 重新拉取用户 profile 更新 guilds
+        try {
+          const profile: any = await getProfile();
+          if (profile?.guilds) setGuilds(profile.guilds);
+        } catch {}
+        message.success('公会图标已刷新');
+      }
+    } catch (err: any) {
+      message.error(err?.message || '刷新失败');
+    } finally {
+      setRefreshingIcon(false);
+    }
+  };
+
   const userMenuItems: MenuProps['items'] = [
     {
       key: 'role',
@@ -75,6 +101,12 @@ export default function AppLayout() {
       icon: <PlusOutlined />,
       label: '添加新公会',
       onClick: () => navigate('/guild/create'),
+    }, {
+      key: 'refresh-icon',
+      icon: <ReloadOutlined spin={refreshingIcon} />,
+      label: '刷新公会图标',
+      onClick: handleRefreshIcon,
+      disabled: refreshingIcon,
     }] : []),
     {
       key: 'logout',

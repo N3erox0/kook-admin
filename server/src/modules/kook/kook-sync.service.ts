@@ -33,6 +33,20 @@ export class KookSyncService {
     }
   }
 
+  /** F-100: 根据公会 ID 刷新 KOOK 服务器信息（图标回填入口） */
+  async refreshGuildInfoById(guildId: number): Promise<{ iconUrl: string | null; name: string }> {
+    const guild = await this.guildRepo.findOne({ where: { id: guildId } });
+    if (!guild) {
+      throw new Error(`公会 ${guildId} 不存在`);
+    }
+    if (!guild.kookGuildId || guild.kookGuildId.startsWith('test-') || guild.kookGuildId.startsWith('old_')) {
+      throw new Error('该公会未绑定有效的 KOOK 服务器');
+    }
+    await this.syncGuildInfo(guild);
+    const refreshed = await this.guildRepo.findOne({ where: { id: guildId } });
+    return { iconUrl: refreshed?.iconUrl || null, name: refreshed?.name || guild.name };
+  }
+
   /** 根据 KOOK 服务器 ID 查找公会（用于获取公会独立 Token） */
   async findGuildByKookId(kookGuildId: string): Promise<Guild | null> {
     return this.guildRepo.findOne({ where: { kookGuildId } });

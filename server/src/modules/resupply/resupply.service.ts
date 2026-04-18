@@ -1,12 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { GuildResupply } from './entities/guild-resupply.entity';
 import { GuildResupplyLog } from './entities/guild-resupply-log.entity';
 import { EquipmentService } from '../equipment/equipment.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
 import { CatalogService } from '../equipment-catalog/catalog.service';
-import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto } from './dto/resupply.dto';
+import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto, QuickCompleteResupplyDto, BatchRejectDto } from './dto/resupply.dto';
 import { ResupplyStatus } from '../../common/constants/enums';
 import * as crypto from 'crypto';
 
@@ -146,16 +146,29 @@ export class ResupplyService {
       dto['_dedupHash'] = hash;
     }
 
-    // equipment_ids 解析数量
-    const ids = (dto.equipmentIds || '').split(',').filter(Boolean);
-    const qty = dto.quantity || ids.length;
+    // F-103: 支持 equipmentEntries（含数量）— 展开成多份 catalogId 的 equipmentIds
+    let equipmentIds = dto.equipmentIds || '';
+    let qty = dto.quantity || 0;
+    if (dto.equipmentEntries && dto.equipmentEntries.length > 0) {
+      const expandedIds: number[] = [];
+      for (const entry of dto.equipmentEntries) {
+        const times = Math.max(1, entry.quantity || 1);
+        for (let i = 0; i < times; i++) expandedIds.push(entry.catalogId);
+      }
+      equipmentIds = expandedIds.join(',');
+      qty = expandedIds.length;
+    } else {
+      // 兼容旧路径：从 equipmentIds 字符串解析
+      const ids = equipmentIds.split(',').filter(Boolean);
+      qty = qty || ids.length;
+    }
 
     const r = this.resupplyRepo.create({
       guildId,
       guildMemberId: dto.guildMemberId,
       kookUserId: dto.kookUserId,
       kookNickname: dto.kookNickname,
-      equipmentIds: dto.equipmentIds,
+      equipmentIds,
       quantity: qty,
       applyType: dto.applyType || '手动创建',
       reason: dto.reason,
@@ -442,5 +455,103 @@ export class ResupplyService {
     await this.logRepo.save(this.logRepo.create({
       guildId, resupplyId, action, fromStatus: from, toStatus: to, operatorId, operatorName, remark,
     }));
+  }
+
+  /**
+   * F-108: 快捷补装完成（待识别路径B）
+   * 操作：更新装备列表+元数据 → 扣库存 → 标记为已通过+已发放（跳过常规审批流）
+   * 适用：待识别条目经人工确认后直接完成补装
+   */
+  async quickComplete(
+    guildId: number, id: number, dto: QuickCompleteResupplyDto,
+    operatorId: number, operatorName: string,
+  ) {
+    const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
+    if (!r) throw new NotFoundException('补装申请不存在');
+    if (r.status === ResupplyStatus.DISPATCHED) {
+      throw new BadRequestException('该申请已发放，不能重复快捷完成');
+    }
+
+    const fromStatus = String(r.status);
+
+    // 1. 展开 equipmentEntries 到 equipmentIds（与 create 一致）
+    let expandedIds: number[] = [];
+    if (dto.equipmentEntries && dto.equipmentEntries.length > 0) {
+      for (const entry of dto.equipmentEntries) {
+        const times = Math.max(1, entry.quantity || 1);
+        for (let i = 0; i < times; i++) expandedIds.push(entry.catalogId);
+      }
+    } else if (dto.equipmentIds) {
+      expandedIds = dto.equipmentIds.split(',').filter(Boolean).map(Number).filter(n => !isNaN(n));
+    } else if (r.equipmentIds) {
+      // 沿用原装备列表
+      expandedIds = r.equipmentIds.split(',').filter(Boolean).map(Number).filter(n => !isNaN(n));
+    }
+
+    if (expandedIds.length === 0) {
+      throw new BadRequestException('装备列表为空，无法完成补装');
+    }
+
+    // 2. 更新记录字段
+    r.equipmentIds = expandedIds.join(',');
+    r.quantity = expandedIds.length;
+    if (dto.killDate) r.killDate = dto.killDate;
+    if (dto.mapName) r.mapName = dto.mapName;
+    if (dto.gameId) r.gameId = dto.gameId;
+    if (dto.resupplyBox) r.resupplyBox = dto.resupplyBox;
+    if (dto.kookNickname) r.kookNickname = dto.kookNickname;
+    if (dto.remark) r.processRemark = dto.remark;
+
+    // 3. 扣减库存（逐个 catalogId 扣 1）
+    let deducted = 0;
+    for (const catalogId of expandedIds) {
+      if (!catalogId || isNaN(catalogId)) continue;
+      try {
+        await this.equipmentService.deductForDispatch(guildId, catalogId, 1, operatorId, operatorName);
+        deducted++;
+      } catch (err: any) {
+        this.logger.warn(`[quickComplete] 扣减库存失败 catalogId=${catalogId}: ${err.message}`);
+      }
+    }
+    this.logger.log(`[quickComplete] 申请ID=${id} 扣减库存: ${deducted}/${expandedIds.length} 件`);
+
+    // 4. 标记为已发放（最终态）
+    r.status = ResupplyStatus.DISPATCHED;
+    r.processedBy = operatorId;
+    r.processedAt = new Date();
+    r.dispatchedBy = operatorId;
+    r.dispatchedAt = new Date();
+    r.dispatchQuantity = expandedIds.length;
+    await this.resupplyRepo.save(r);
+
+    await this.addLog(guildId, id, 'quick_complete', fromStatus, String(r.status), operatorId, operatorName,
+      `快捷补装完成: 装备${expandedIds.length}件, 扣库存${deducted}件${dto.remark ? ' | ' + dto.remark : ''}`);
+
+    return { id, status: r.status, deducted, total: expandedIds.length };
+  }
+
+  /**
+   * F-108: 批量废弃补装申请
+   * 将多条申请一键标记为 rejected
+   */
+  async batchReject(
+    guildId: number, dto: BatchRejectDto, operatorId: number, operatorName: string,
+  ) {
+    if (!dto.ids || dto.ids.length === 0) return { updated: 0 };
+
+    const items = await this.resupplyRepo.find({ where: { id: In(dto.ids), guildId } });
+    let updated = 0;
+    for (const r of items) {
+      if (r.status === ResupplyStatus.DISPATCHED) continue; // 已发放的不能改
+      const fromStatus = String(r.status);
+      r.status = ResupplyStatus.REJECTED;
+      r.processedBy = operatorId;
+      r.processRemark = dto.remark || '批量废弃（待识别）';
+      r.processedAt = new Date();
+      await this.resupplyRepo.save(r);
+      await this.addLog(guildId, r.id, 'batch_reject', fromStatus, String(r.status), operatorId, operatorName, dto.remark || '批量废弃');
+      updated++;
+    }
+    return { updated, total: dto.ids.length };
   }
 }

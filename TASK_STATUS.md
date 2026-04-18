@@ -162,3 +162,20 @@
 | F-068 | 装备参考库去等级前缀 | completed | 2026-04-18 02:50 | SQL批量去除禅师级/专家级等前缀 |
 | F-069 | 补装装备显示P{装等}{名}按部位排序 | completed | 2026-04-18 02:50 | 武器→副手→头→甲→鞋顺序 |
 | F-070 | .env.example修复 | completed | 2026-04-18 02:50 | FRONTEND_URL去重 |
+| **V2.9.0** | **待识别整合+补装体验增强（Batch 1）** | | | |
+| F-100 | 公会图标回填入口 | completed | 2026-04-19 06:20 | Layout 用户菜单新增"刷新公会图标"，调用 /kook/guild/:id/refresh-info 从KOOK拉取icon_url回填 |
+| F-101 | 成员列表搜索增强 | completed | 2026-04-19 06:20 | KOOK角色下拉(从列表汇总)+昵称+状态+【查询】按钮组合触发；后端DTO新增kookRoleId，JSON_CONTAINS过滤kook_roles |
+| F-103 | 手动创建补装装备数量输入 | completed | 2026-04-19 06:20 | 创建Modal每件装备支持InputNumber 1-99；后端新增equipmentEntries DTO字段，按数量展开为equipmentIds |
+| F-105 | JWT refresh + 401自动续期 | completed | 2026-04-19 06:20 | 确认后端 /api/auth/refresh 端点与前端 axios 拦截器已就绪 |
+| F-107 | 待识别归属调整：独立菜单→补装Tab | completed | 2026-04-19 06:20 | Layout 菜单删除"待识别工作区"；ResupplyPage 顶部加 Tabs：补装列表/待识别；旧路由重定向 |
+| F-108a | 待识别批量废弃 | completed | 2026-04-19 06:20 | PendingRecognitionTab 复选框+批量废弃按钮，后端新增 batch-reject 端点 |
+| F-108b | 待识别单条修正+快捷完成 | completed | 2026-04-19 06:20 | 修改装备列表(含数量)→创建resupply→直接扣库存+标记DISPATCHED，后端新增 /quick-complete 端点 |
+| F-108c | OC碎无有效词段入待识别 | completed | 2026-04-19 06:20 | kook-message.service.ts 的 segments.length===0 分支改为 createKookBatch |
+| F-109 | 待补装备区域放大显示 | completed | 2026-04-19 06:20 | 补装详情页加【放大查看】按钮→900宽Modal全览equipmentDetails |
+| **V2.9.0** | **OCR性能修复+子账号+登录扩展（Batch 2）** | | | |
+| F-104 | OCR数量识别性能优化 | completed | 2026-04-19 06:35 | 重构matchFromScreenshot：先pHash匹配再对匹配子图并发数量OCR（MAX_QUANTITY_OCR=30，CONCURRENCY=3）；击杀详情模式skipQuantity=true每件=1 |
+| F-106.2 | 击杀详情模式跳过数量OCR | completed | 2026-04-19 06:35 | matchFromRegion传入{skipQuantity:true}；抹黑星星+等级+数量已在maskCorners |
+| F-102C | 一键创建子账号 | completed | 2026-04-19 06:40 | 后端 /guilds/:id/sub-account，超管限定，自动生成用户名{abbr}{2字母}{4数字}+8位密码；前端公会设置页Modal，一次性显示账密+复制 |
+| F-102A | KOOK OAuth登录0公会提示 | completed | 2026-04-19 06:45 | GuildSelect页 Empty 文案增强为"您尚未加入任何公会+请向公会管理员索取邀请码" |
+
+

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Body, Param, Query, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
 import { ResupplyService } from './resupply.service';
-import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto } from './dto/resupply.dto';
+import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto, QuickCompleteResupplyDto, BatchRejectDto } from './dto/resupply.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { GuildGuard } from '../../common/guards/guild.guard';
 import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
@@ -84,5 +84,42 @@ export class ResupplyController {
     @Body() dto: BatchAssignRoomDto,
   ) {
     return this.resupplyService.batchAssignRoom(guildId, dto);
+  }
+
+  /**
+   * F-108: 快捷补装完成（待识别路径B — 单条修正后直接扣库存+完成）
+   */
+  @Post(':id/quick-complete')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  @OperationLog({ module: 'resupply', action: 'quick_complete' })
+  quickComplete(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: QuickCompleteResupplyDto,
+    @CurrentUser() user: any,
+    @Request() req: any,
+  ) {
+    return this.resupplyService.quickComplete(
+      guildId, id, dto,
+      user.sub, req.guildMember?.nickname || user.username,
+    );
+  }
+
+  /**
+   * F-108: 批量废弃（待识别路径A — 多选标记为 rejected）
+   */
+  @Post('batch-reject')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  @OperationLog({ module: 'resupply', action: 'batch_reject' })
+  batchReject(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Body() dto: BatchRejectDto,
+    @CurrentUser() user: any,
+    @Request() req: any,
+  ) {
+    return this.resupplyService.batchReject(
+      guildId, dto,
+      user.sub, req.guildMember?.nickname || user.username,
+    );
   }
 }
