@@ -134,7 +134,7 @@ export class KookBotInteractionService {
       `**📋 关于邀请码**\n\n` +
       `邀请码用于开通公会管理后台，获取方式：\n\n` +
       `1️⃣ **先将我邀请到你的 KOOK 服务器**\n` +
-      `   [👉 点击邀请机器人](https://www.kookapp.cn/app/oauth2/authorize?id=44930&permissions=0&bot_id=0&scope=bot)\n\n` +
+      `   [👉 点击邀请机器人](https://www.kookapp.cn/app/oauth2/authorize?id=44930&permissions=1&bot_id=0&scope=bot)\n\n` +
       `2️⃣ **邀请成功后，回到这里回复任意消息（如"成功"）**\n` +
       `   我会自动发送你的专属邀请码\n\n` +
       `3️⃣ **使用邀请码前往官网注册**\n` +
@@ -196,7 +196,7 @@ export class KookBotInteractionService {
       const msg =
         `**📢 试用公会管理助手**\n\n` +
         `请先将我邀请到你的 KOOK 服务器：\n` +
-        `[👉 点击邀请机器人](https://www.kookapp.cn/app/oauth2/authorize?id=44930&permissions=0&bot_id=0&scope=bot)\n\n` +
+        `[👉 点击邀请机器人](https://www.kookapp.cn/app/oauth2/authorize?id=44930&permissions=1&bot_id=0&scope=bot)\n\n` +
         `邀请成功后我会自动给你发送邀请码。`;
       await this.kookService.sendDirectMessage(userId, msg, 9);
     }
