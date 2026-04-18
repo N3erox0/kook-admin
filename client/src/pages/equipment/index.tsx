@@ -220,7 +220,11 @@ export default function EquipmentPage() {
       const batchRes: any = await createOcrBatch(guildId, { imageUrl });
       setOcrBatchId(batchRes?.id || batchRes?.batchId);
       const itemsRes: any = await getOcrBatchDetail(guildId, batchRes?.id || batchRes?.batchId);
-      setOcrItems(Array.isArray(itemsRes) ? itemsRes : itemsRes?.items || itemsRes?.list || []);
+      const items = Array.isArray(itemsRes) ? itemsRes : itemsRes?.items || itemsRes?.list || [];
+      setOcrItems(items);
+      if (items.length === 0) {
+        message.warning('未识别到装备。请确认：1) 上传的是装备截图 2) 装备参考库已初始化图片指纹');
+      }
       setOcrStep('review');
     } catch (err: any) {
       const errMsg = err?.message || err?.errorMessage || '';

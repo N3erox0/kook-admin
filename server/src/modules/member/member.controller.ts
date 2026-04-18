@@ -6,6 +6,7 @@ import { GuildGuard } from '../../common/guards/guild.guard';
 import { GuildRoleGuard } from '../../common/guards/guild-role.guard';
 import { GuildRoles } from '../../common/decorators/guild-roles.decorator';
 import { GuildRole } from '../../common/constants/enums';
+import { OperationLog } from '../../common/decorators/operation-log.decorator';
 
 @UseGuards(JwtAuthGuard, GuildGuard, GuildRoleGuard)
 @Controller('api/guild/:guildId/members')
@@ -24,6 +25,7 @@ export class MemberController {
 
   @Put(':id/role')
   @GuildRoles(GuildRole.SUPER_ADMIN)
+  @OperationLog({ module: 'member', action: 'update_role' })
   updateRole(
     @Param('guildId', ParseIntPipe) guildId: number,
     @Param('id', ParseIntPipe) id: number,
