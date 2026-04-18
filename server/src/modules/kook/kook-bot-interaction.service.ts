@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { KookService } from './kook.service';
 import { BotJoinRecord } from './entities/bot-join-record.entity';
+import { InviteCode } from '../guild/entities/invite-code.entity';
+import { InviteCodeStatus } from '../../common/constants/enums';
 import { ConfigService } from '@nestjs/config';
 
 /** Bot 与用户的私信交互服务 */
@@ -15,6 +17,7 @@ export class KookBotInteractionService {
 
   constructor(
     @InjectRepository(BotJoinRecord) private joinRecordRepo: Repository<BotJoinRecord>,
+    @InjectRepository(InviteCode) private inviteRepo: Repository<InviteCode>,
     private kookService: KookService,
     private configService: ConfigService,
   ) {}
@@ -114,10 +117,20 @@ export class KookBotInteractionService {
     const record = await this.joinRecordRepo.findOne({ where: { inviterKookId: userId, status: 'pending' } });
     if (record) {
       const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://22bngm.online';
+      // 查询该记录关联的邀请码，补全 ?code=xxx
+      let codeSuffix = '';
+      let codeText = '';
+      if (record.inviteCodeId) {
+        const invite = await this.inviteRepo.findOne({ where: { id: record.inviteCodeId } });
+        if (invite && invite.status === InviteCodeStatus.ENABLED) {
+          codeSuffix = `?code=${invite.code}`;
+          codeText = `\n\n您的专属邀请码：\`${invite.code}\``;
+        }
+      }
       const msg =
         `**🎉 检测到你的服务器 ${record.guildName || record.kookGuildId} 已添加了机器人！**\n\n` +
         `请使用以下链接注册管理后台：\n` +
-        `[${baseUrl}/join](${baseUrl}/join)\n\n` +
+        `[${baseUrl}/join${codeSuffix}](${baseUrl}/join${codeSuffix})${codeText}\n\n` +
         `如已有邀请码，直接在注册页输入即可。`;
       await this.kookService.sendDirectMessage(userId, msg, 9);
     } else {

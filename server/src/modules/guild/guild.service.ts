@@ -39,8 +39,8 @@ export class GuildService {
     return { valid: true, message: '邀请码有效' };
   }
 
-  // 12位随机邀请码字符集（排除 I/O/o/l 避免混淆）
-  private static readonly INVITE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789';
+  // 12位随机邀请码字符集（大小写字母去I/O/i/o + 数字0-9，共58字符）
+  private static readonly INVITE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz0123456789';
 
   private generateInviteCode12(): string {
     const chars = GuildService.INVITE_CHARSET;

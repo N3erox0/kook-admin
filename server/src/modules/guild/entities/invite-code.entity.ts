@@ -5,7 +5,7 @@ export class InviteCode {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'varchar', length: 32, unique: true, comment: '邀请码' })
+  @Column({ type: 'varchar', length: 32, unique: true, comment: '邀请码（12位随机字符串）' })
   code: string;
 
   @Column({ type: 'varchar', length: 10, default: 'disabled', comment: '状态: enabled/used/disabled/revoked' })
