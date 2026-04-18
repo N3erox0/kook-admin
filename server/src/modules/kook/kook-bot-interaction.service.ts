@@ -25,6 +25,15 @@ export class KookBotInteractionService {
   /** 处理私信消息（channel_type=PERSON） */
   async handlePrivateMessage(authorId: string, content: string): Promise<void> {
     const text = (content || '').trim();
+    this.logger.log(`[私信] 收到用户 ${authorId} 的消息: "${text.slice(0, 100)}"`);
+
+    // 最优先：检查该用户是否有未完成的 Bot 加入事件（dm_failed / pending）
+    // 用户主动私聊 Bot 后，KOOK 允许 Bot 回信 → 此时补发邀请码
+    const autoSent = await this.tryAutoDeliverInviteCode(authorId);
+    if (autoSent) {
+      this.logger.log(`[私信] 已为 ${authorId} 自动补发邀请码`);
+      return;
+    }
 
     // 关键词路由
     if (this.matchKeyword(text, ['邀请码', '注册码', '激活码'])) {
@@ -42,6 +51,52 @@ export class KookBotInteractionService {
 
     // 非关键词 → 检查是否首次私信，首次发送宣导
     await this.replyWelcomeIfFirst(authorId);
+  }
+
+  /**
+   * 尝试给用户自动补发邀请码。
+   * 场景：Bot 被邀请进某服务器时，因"用户未主动私聊过 Bot"导致首次私信失败(dm_failed)。
+   * 现在用户私聊 Bot，KOOK 允许 Bot 回信，此时我们主动补发。
+   */
+  private async tryAutoDeliverInviteCode(userId: string): Promise<boolean> {
+    // 查找该用户作为邀请者的未完成记录（dm_failed 或 pending 且有邀请码）
+    const records = await this.joinRecordRepo.find({
+      where: [
+        { inviterKookId: userId, status: 'dm_failed' },
+        { inviterKookId: userId, status: 'pending' },
+      ],
+      order: { joinedAt: 'DESC' },
+    });
+    if (!records || records.length === 0) return false;
+
+    const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://22bngm.online';
+    let delivered = false;
+
+    for (const rec of records) {
+      if (!rec.inviteCodeId) continue;
+      const invite = await this.inviteRepo.findOne({ where: { id: rec.inviteCodeId } });
+      if (!invite || invite.status !== InviteCodeStatus.ENABLED) continue;
+
+      const msg =
+        `**🎉 您之前邀请我加入了 ${rec.guildName || rec.kookGuildId}！**\n\n` +
+        `现在可以使用您的专属邀请码开通管理后台：\n\n` +
+        `**邀请码**：\`${invite.code}\`\n` +
+        `**立即开通**：[👉 点击配置](${baseUrl}/join?code=${invite.code})\n\n` +
+        `该邀请码在公会绑定成功前始终有效。\n` +
+        `如有疑问，发送 \`/帮助\` 查看指令列表。`;
+
+      const ok = await this.kookService.sendDirectMessage(userId, msg, 9);
+      if (ok) {
+        rec.status = 'pending';
+        await this.joinRecordRepo.save(rec);
+        delivered = true;
+        this.logger.log(`[私信-补发] ${userId} 获取邀请码 ${invite.code} (服务器 ${rec.kookGuildId})`);
+      } else {
+        this.logger.warn(`[私信-补发] ${userId} 补发邀请码失败 (code=${invite.code})`);
+      }
+    }
+
+    return delivered;
   }
 
   /** 首次私信 → 发送宣导链接 */

@@ -297,20 +297,22 @@ export class KookService {
     return result.data.code;
   }
 
-  /** 发送私信给用户 */
-  async sendDirectMessage(targetId: string, content: string, type = 1, token?: string): Promise<void> {
+  /** 发送私信给用户。直接用 target_id=用户ID，KOOK 后端会自动建会话。
+   *  返回 true 表示 KOOK API 返回 code=0（接受了消息），false 表示失败。 */
+  async sendDirectMessage(targetId: string, content: string, type = 1, token?: string): Promise<boolean> {
     try {
-      const chatCode = await this.createUserChat(targetId, token);
       const result = await this.request<KookApiResponse>(
-        'POST', '/direct-message/create', { type, target_id: chatCode, content }, token,
+        'POST', '/direct-message/create', { type, target_id: targetId, content }, token,
       );
       if (result.code !== 0) {
-        this.logger.error(`发送私信失败: ${result.message}`);
-      } else {
-        this.logger.log(`KOOK 私信发送成功 -> ${targetId}`);
+        this.logger.error(`发送私信失败 target=${targetId}: code=${result.code} msg=${result.message}`);
+        return false;
       }
-    } catch (err) {
-      this.logger.error(`发送私信异常: ${err}`);
+      this.logger.log(`KOOK 私信发送成功 -> ${targetId}`);
+      return true;
+    } catch (err: any) {
+      this.logger.error(`发送私信异常 target=${targetId}: ${err?.message || err}`);
+      return false;
     }
   }
 

@@ -271,11 +271,21 @@ export class KookMessageService {
             `您的专属邀请码：\`${savedInvite.code}\`\n\n` +
             `该邀请码在公会绑定成功前始终有效，可重复使用。\n` +
             `如有疑问，请发送 \`/帮助\` 查看使用说明。`;
-          try {
-            await this.kookService.sendDirectMessage(inviterKookId, msg, 9);
-            this.logger.log(`[self_joined_guild] 邀请码 ${savedInvite.code} 已${reused ? '重新' : ''}私信发送给服务器主 ${inviterKookId}`);
-          } catch (err) {
-            this.logger.error(`[self_joined_guild] 发送邀请码私信失败: ${err}`);
+          const dmOk = await this.kookService.sendDirectMessage(inviterKookId, msg, 9);
+          if (dmOk) {
+            this.logger.log(`[self_joined_guild] ✅ 邀请码 ${savedInvite.code} 已${reused ? '重新' : ''}私信发送给服务器主 ${inviterKookId}`);
+          } else {
+            // 标记 dm_failed，用户后续主动私聊 Bot 时由 KookBotInteractionService 自动补发
+            this.logger.warn(`[self_joined_guild] ⚠️ 私信发送失败(KOOK要求用户先私聊过Bot)，已标记 dm_failed；用户 ${inviterKookId} 私聊 Bot 后将自动补发`);
+            try {
+              const rec = await this.joinRecordRepo.findOne({ where: { kookGuildId } });
+              if (rec) {
+                rec.status = 'dm_failed';
+                await this.joinRecordRepo.save(rec);
+              }
+            } catch (err) {
+              this.logger.error(`[self_joined_guild] 标记 dm_failed 失败: ${err}`);
+            }
           }
         } else {
           this.logger.warn(`[self_joined_guild] 未识别到服务器主 inviter_kook_id，邀请码 ${savedInvite.code} 已生成但未发送私信`);
