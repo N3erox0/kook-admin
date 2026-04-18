@@ -131,6 +131,8 @@ export class KookMessageService {
         if (!kookGuildId) return { ok: true };
 
         this.logger.log(`[self_joined_guild] Bot 加入服务器: guild_id=${kookGuildId}`);
+        this.logger.log(`[self_joined_guild] 原始 body: ${JSON.stringify(body)}`);
+        this.logger.log(`[self_joined_guild] d.author_id=${d.author_id}, extra.author=${JSON.stringify(d.extra?.author || null)}`);
 
         // ========== 先查公会是否已绑定成功（ACTIVE）==========
         const boundGuild = await this.guildRepo.findOne({ where: { kookGuildId } });
