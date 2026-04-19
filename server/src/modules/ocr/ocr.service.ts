@@ -62,7 +62,7 @@ export class OcrService {
       try {
         const imageBuffer = await this.fetchImageBuffer(batch.imageUrl);
         if (imageBuffer) {
-          const matches = await this.imageMatchService.matchFromScreenshot(imageBuffer);
+          const matches = await this.imageMatchService.matchFromScreenshot(imageBuffer, { strict: true });
           if (matches.length > 0) {
             enriched = matches.map(m => ({
               name: m.catalogName,

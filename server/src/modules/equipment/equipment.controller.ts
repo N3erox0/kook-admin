@@ -38,6 +38,26 @@ export class EquipmentController {
     return this.equipmentService.batchUpsert(guildId, dto.items, user.sub, req.guildMember?.nickname || user.username);
   }
 
+  // V2.9.2 网格识别入库（方案D）
+  @Post('grid-parse')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
+  @OperationLog({ module: 'equipment', action: 'grid_parse' })
+  gridParse(@Param('guildId', ParseIntPipe) _guildId: number, @Body() body: { imageUrl: string }) {
+    return this.equipmentService.gridParse(body.imageUrl);
+  }
+
+  @Post('grid-save')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
+  @OperationLog({ module: 'equipment', action: 'grid_save' })
+  gridSave(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Body() body: { items: Array<{ aliasName: string; level: number; quality: number; quantity: number; location?: string }> },
+    @CurrentUser() user: any,
+    @Request() req: any,
+  ) {
+    return this.equipmentService.gridSave(guildId, body.items, user.sub, req.guildMember?.nickname || user.username);
+  }
+
   @Patch(':id')
   @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
   updateFields(

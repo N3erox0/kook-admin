@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OcrController } from './ocr.controller';
 import { OcrService } from './ocr.service';
@@ -15,7 +15,7 @@ import { User } from '../user/entities/user.entity';
   imports: [
     TypeOrmModule.forFeature([OcrRecognitionBatch, OcrRecognitionItem, EquipmentCatalog, GuildMember, User]),
     EquipmentCatalogModule,
-    EquipmentModule,
+    forwardRef(() => EquipmentModule),
   ],
   controllers: [OcrController],
   providers: [OcrService, ImageMatchService],

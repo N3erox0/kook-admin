@@ -15,14 +15,18 @@ import { join } from 'path';
  * 1. 上传截图 → 按网格切割为单个装备图标子图
  * 2. 每个子图遮盖角标(五角星/等级/数量)→裁切中心60%（去品质边框）→ 缩放为 32x32 灰度 → DCT → 取低频 8x8 → 生成 64bit 哈希
  * 3. 与参考库所有装备的 imagePhash 比较汉明距离
- * 4. 距离 ≤ 25 (相似度 ≥ 0.60) → 匹配成功
+ * 4. 距离 ≤ 阈值（严格模式19≥70%/宽松模式25≥60%）且与次佳差距 ≥ 3 → 匹配成功
  */
 @Injectable()
 export class ImageMatchService {
   private readonly logger = new Logger(ImageMatchService.name);
 
-  /** 匹配阈值：汉明距离 ≤ 25/64 即相似度 ≥ 0.60 */
-  private static readonly HAMMING_THRESHOLD = 25;
+  /** 严格阈值：装备库存页用，汉明距离 ≤ 19/64 即相似度 ≥ 0.70 */
+  private static readonly STRICT_HAMMING_THRESHOLD = 19;
+  /** 宽松阈值：击杀详情页用，汉明距离 ≤ 25/64 即相似度 ≥ 0.60 */
+  private static readonly LOOSE_HAMMING_THRESHOLD = 25;
+  /** 歧义差距阈值：最佳 vs 次佳差距 < 3 时判定为歧义匹配，丢弃 */
+  private static readonly AMBIGUITY_GAP = 3;
 
   constructor(
     @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
@@ -33,9 +37,10 @@ export class ImageMatchService {
    * 从截图中识别装备图标（图片相似度匹配）
    * @param imageBuffer 上传的截图 Buffer
    * @param options.skipQuantity 跳过数量OCR（击杀详情模式每件=1，避免浪费 OCR 配额）
+   * @param options.strict 严格模式（装备库存=true/宽松模式=false，默认宽松）
    * @returns 匹配到的装备列表
    */
-  async matchFromScreenshot(imageBuffer: Buffer, options?: { skipQuantity?: boolean }): Promise<{
+  async matchFromScreenshot(imageBuffer: Buffer, options?: { skipQuantity?: boolean; strict?: boolean }): Promise<{
     catalogId: number;
     catalogName: string;
     level: number;
@@ -53,6 +58,12 @@ export class ImageMatchService {
       this.logger.error('sharp 模块未安装，图片相似度匹配不可用。请执行: npm install sharp');
       throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖');
     }
+
+    // V2.9.1 分档阈值
+    const threshold = options?.strict
+      ? ImageMatchService.STRICT_HAMMING_THRESHOLD
+      : ImageMatchService.LOOSE_HAMMING_THRESHOLD;
+    this.logger.log(`[V2.9.1] 匹配模式: ${options?.strict ? '严格(≥70%)' : '宽松(≥60%)'}, 阈值=${threshold}`);
 
     // 1. 获取图片尺寸
     const metadata = await sharp(imageBuffer).metadata();
@@ -83,7 +94,10 @@ export class ImageMatchService {
 
     // 4. 对每个子图计算 pHash 并匹配（不在循环中调用数量 OCR，避免性能炸）
     // F-104: 先完成所有 pHash 匹配，后对匹配成功的子图单独批量提取数量
+    // V2.9.1: 新增次佳差距检验，过滤歧义匹配
     const matches: { subBuf: Buffer; catalog: any; distance: number }[] = [];
+    let discardedByThreshold = 0;
+    let discardedByAmbiguity = 0;
     for (const subBuf of subImages) {
       try {
         const cropped = await this.cropCenter(sharp, subBuf, 0.60);
@@ -91,25 +105,40 @@ export class ImageMatchService {
 
         let bestMatch: any = null;
         let bestDistance = 64;
+        let secondBestDistance = 64;
 
         for (const cat of catalogs) {
           if (!cat.imagePhash) continue;
           const dist = this.hammingDistance(hash, cat.imagePhash);
           if (dist < bestDistance) {
+            secondBestDistance = bestDistance;
             bestDistance = dist;
             bestMatch = cat;
+          } else if (dist < secondBestDistance) {
+            secondBestDistance = dist;
           }
         }
 
-        if (bestMatch && bestDistance <= ImageMatchService.HAMMING_THRESHOLD) {
-          matches.push({ subBuf, catalog: bestMatch, distance: bestDistance });
+        if (!bestMatch || bestDistance > threshold) {
+          discardedByThreshold++;
+          continue;
         }
+
+        // V2.9.1 歧义检验：最佳 vs 次佳差距 < AMBIGUITY_GAP 时丢弃
+        const gap = secondBestDistance - bestDistance;
+        if (gap < ImageMatchService.AMBIGUITY_GAP) {
+          discardedByAmbiguity++;
+          this.logger.debug(`[V2.9.1] 歧义匹配丢弃: best=${bestDistance} 2nd=${secondBestDistance} gap=${gap} name=${bestMatch.name}`);
+          continue;
+        }
+
+        matches.push({ subBuf, catalog: bestMatch, distance: bestDistance });
       } catch (err) {
         this.logger.warn(`子图匹配失败: ${err}`);
       }
     }
 
-    this.logger.log(`[F-104] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功`);
+    this.logger.log(`[V2.9.1] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（丢弃: 阈值${discardedByThreshold}+歧义${discardedByAmbiguity}）`);
 
     // 5. 对匹配成功的子图批量提取数量（并发限制 + 总数上限）
     // 限制数量 OCR 总调用数不超过 MAX_QUANTITY_OCR，避免刷屏和配额消耗
@@ -586,11 +615,11 @@ export class ImageMatchService {
   // ===== 右下角数量提取 =====
 
   /**
-   * 从装备子图右下角提取数量数字
+   * 从装备子图右下角提取数量数字（V2.9.2 改为 public 供 EquipmentService 调用）
    * 流程：裁切右下角约35%区域 → 放大3倍 → 灰度 → 阈值二值化 → 腾讯云OCR识别数字
    * 识别失败或未识别到数字则返回 1（默认数量）
    */
-  private async extractQuantityFromCorner(sharp: any, subBuf: Buffer): Promise<number> {
+  async extractQuantityFromCorner(sharp: any, subBuf: Buffer): Promise<number> {
     try {
       const meta = await sharp(subBuf).metadata();
       const w = meta.width || 64;
@@ -696,6 +725,200 @@ export class ImageMatchService {
       return null;
     } catch (err: any) {
       this.logger.debug(`数量OCR调用失败: ${err.message}`);
+      return null;
+    }
+  }
+
+  // ===== V2.9.2 网格识别入库（方案D） =====
+
+  /**
+   * 方案D：将截图按网格切成装备子图，每格提取 缩略图+数量+等级(罗马数字)+品质(边框色)
+   * 不做装备名匹配——由用户手动填写别名
+   * @param imageBuffer 完整截图 Buffer
+   * @param options 选项：cols 强制列数，defaultLocation 默认位置
+   * @returns 每格的解析结果（按行列顺序）
+   */
+  async gridParseForManualInput(imageBuffer: Buffer): Promise<{
+    gridSize: { cols: number; rows: number };
+    cells: Array<{
+      row: number;
+      col: number;
+      thumbnail: string;
+      quantity: number;
+      detectedLevel: number | null;
+      detectedQuality: number | null;
+    }>;
+  }> {
+    let sharp: any;
+    try { sharp = require('sharp'); }
+    catch { throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖'); }
+
+    const metadata = await sharp(imageBuffer).metadata();
+    const { width, height } = metadata;
+    if (!width || !height) throw new Error('无法读取图片尺寸');
+
+    // 估算图标大小（复用现有逻辑），按行方差检测装备网格区域
+    const iconSize = this.estimateIconSize(width, height);
+    const region = await this.detectGridRegion(sharp, imageBuffer, width, height);
+    this.logger.log(`[V2.9.2 gridParse] 装备区域: top=${region.top}, height=${region.height}, iconSize=${iconSize}`);
+
+    const regionBuf = (region.top === 0 && region.height === height)
+      ? imageBuffer
+      : await sharp(imageBuffer).extract(region).toBuffer();
+    const cols = Math.floor(region.width / iconSize);
+    const rows = Math.floor(region.height / iconSize);
+
+    if (cols <= 0 || rows <= 0) {
+      // 退化为单图标
+      const thumbnail = await sharp(imageBuffer).resize(120, 120, { fit: 'cover' }).png().toBuffer();
+      const quantity = await this.extractQuantityFromCorner(sharp, imageBuffer);
+      return {
+        gridSize: { cols: 1, rows: 1 },
+        cells: [{
+          row: 0, col: 0,
+          thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
+          quantity,
+          detectedLevel: null,
+          detectedQuality: null,
+        }],
+      };
+    }
+
+    const cells: any[] = [];
+    // 限制总格子数（防止恶意大图）
+    const MAX_CELLS = 60;
+    const totalCells = cols * rows;
+    if (totalCells > MAX_CELLS) {
+      this.logger.warn(`[V2.9.2] 网格数 ${totalCells} 超过上限 ${MAX_CELLS}，仅处理前 ${MAX_CELLS} 格`);
+    }
+
+    // 并发限制（数量OCR有配额）
+    const CONCURRENCY = 3;
+    const tasks: Array<() => Promise<void>> = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (cells.length + tasks.length >= MAX_CELLS) break;
+        const row = r, col = c;
+        tasks.push(async () => {
+          try {
+            const left = col * iconSize, top = row * iconSize;
+            const subBuf = await sharp(regionBuf)
+              .extract({ left, top, width: iconSize, height: iconSize })
+              .toBuffer();
+
+            // 过滤纯空白格子（平均亮度过低）
+            const stats = await sharp(subBuf).stats();
+            const avgBrightness = stats.channels[0]?.mean || 0;
+            if (avgBrightness < 15 || avgBrightness > 240) {
+              return; // 跳过空白/全白格子
+            }
+
+            // 生成 120x120 缩略图 base64
+            const thumbnail = await sharp(subBuf)
+              .resize(120, 120, { fit: 'cover' })
+              .png()
+              .toBuffer();
+
+            // 右下角数量OCR
+            const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
+
+            // 边框色检测品质
+            const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
+
+            // 左上角罗马数字（占用配额，仅识别30个以下时启用，暂默认关闭以节省配额）
+            // 如需启用：const detectedLevel = await this.detectLevelFromCorner(sharp, subBuf);
+            const detectedLevel = null;
+
+            cells.push({
+              row, col,
+              thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
+              quantity,
+              detectedLevel,
+              detectedQuality,
+            });
+          } catch (err) {
+            this.logger.warn(`[V2.9.2] 格子(${row},${col})解析失败: ${err}`);
+          }
+        });
+      }
+    }
+
+    // 分批并发执行
+    for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+      await Promise.all(tasks.slice(i, i + CONCURRENCY).map(t => t()));
+    }
+
+    // 按 row, col 排序返回
+    cells.sort((a, b) => a.row - b.row || a.col - b.col);
+    this.logger.log(`[V2.9.2 gridParse] 解析完成: ${cells.length}/${totalCells} 格有效`);
+
+    return {
+      gridSize: { cols, rows },
+      cells,
+    };
+  }
+
+  /**
+   * 检测装备图标的品质边框颜色
+   * Albion 品质边框：灰(Q0) / 绿(Q1) / 蓝(Q2) / 紫(Q3) / 金(Q4)
+   * 采样四条边中央的像素平均色 → HSV → 映射到品质等级
+   */
+  private async detectQualityFromBorder(sharp: any, subBuf: Buffer): Promise<number | null> {
+    try {
+      const meta = await sharp(subBuf).metadata();
+      const w = meta.width || 64;
+      const h = meta.height || 64;
+      if (w < 32 || h < 32) return null;
+
+      // 从图片边缘3~6像素厚度的外圈采样平均颜色
+      const borderThickness = Math.max(3, Math.round(Math.min(w, h) * 0.04));
+
+      // 采样上边中央 20%×厚度 的像素
+      const { data } = await sharp(subBuf)
+        .extract({
+          left: Math.round(w * 0.30),
+          top: 1,
+          width: Math.round(w * 0.40),
+          height: borderThickness,
+        })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      // 计算平均 RGB
+      let rSum = 0, gSum = 0, bSum = 0;
+      const pixelCount = data.length / 3;
+      for (let i = 0; i < data.length; i += 3) {
+        rSum += data[i];
+        gSum += data[i + 1];
+        bSum += data[i + 2];
+      }
+      const r = rSum / pixelCount, g = gSum / pixelCount, b = bSum / pixelCount;
+
+      // RGB → HSV 色相判断
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      const lightness = max / 255;
+
+      // 饱和度太低 → 灰色（Q0）
+      if (delta < 25 || lightness < 0.3) return 0;
+
+      // 色相判断（0-360度）
+      let hue = 0;
+      if (max === r) hue = ((g - b) / delta) % 6;
+      else if (max === g) hue = (b - r) / delta + 2;
+      else hue = (r - g) / delta + 4;
+      hue *= 60;
+      if (hue < 0) hue += 360;
+
+      // 色相映射：绿90~150，蓝180~250，紫260~310，金40~60
+      if (hue >= 80 && hue <= 160) return 1;  // 绿
+      if (hue >= 180 && hue <= 250) return 2; // 蓝
+      if (hue >= 260 && hue <= 320) return 3; // 紫
+      if (hue >= 30 && hue <= 70 && lightness > 0.5) return 4; // 金/橙
+      return 0; // 默认灰
+    } catch {
       return null;
     }
   }

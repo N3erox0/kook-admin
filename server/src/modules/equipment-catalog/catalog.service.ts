@@ -189,15 +189,50 @@ export class CatalogService {
     return results.sort((a, b) => b.score - a.score);
   }
 
-  /** 批量精确匹配 */
+  /**
+   * 批量匹配（V2.9.1: 支持别称/模糊匹配）
+   * 匹配策略：
+   * 1. 先按 name + level + quality 精确匹配
+   * 2. 失败后用 findByNameFuzzy 模糊匹配（包含别称），取 level+quality 也相等的最高分结果
+   */
   async batchMatch(items: { name: string; level: number; quality: number }[]) {
     const all = await this.catalogRepo.find();
-    return items.map((req, index) => {
-      const match = all.find(
+    const results: { index: number; catalogId: number | null; catalogName: string | null; matchType: 'exact' | 'alias' | 'fuzzy' | 'none'; score?: number }[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const req = items[i];
+
+      // 1. 精确匹配
+      const exact = all.find(
         (c) => c.name === req.name && c.level === req.level && c.quality === req.quality,
       );
-      return { index, catalogId: match?.id || null, catalogName: match?.name || null };
-    });
+      if (exact) {
+        results.push({ index: i, catalogId: exact.id, catalogName: exact.name, matchType: 'exact' });
+        continue;
+      }
+
+      // 2. 模糊匹配（别称/去前缀/子串）— 阈值 0.7
+      const fuzzyMatches = await this.findByNameFuzzy(req.name, 0.7);
+      // 仅保留 level + quality 完全匹配的
+      const validMatches = fuzzyMatches.filter(m => m.item.level === req.level && m.item.quality === req.quality);
+
+      if (validMatches.length > 0) {
+        const best = validMatches[0]; // findByNameFuzzy 已按 score 降序
+        // 判断是别称匹配还是模糊匹配
+        const isAliasMatch = best.item.aliases && best.item.aliases.split(',').some(a => a.trim().toLowerCase() === req.name.toLowerCase());
+        results.push({
+          index: i,
+          catalogId: best.item.id,
+          catalogName: best.item.name,
+          matchType: isAliasMatch ? 'alias' : 'fuzzy',
+          score: best.score,
+        });
+      } else {
+        results.push({ index: i, catalogId: null, catalogName: null, matchType: 'none' });
+      }
+    }
+
+    return results;
   }
 
   // ===== 图片管理 =====

@@ -177,5 +177,26 @@
 | F-106.2 | 击杀详情模式跳过数量OCR | completed | 2026-04-19 06:35 | matchFromRegion传入{skipQuantity:true}；抹黑星星+等级+数量已在maskCorners |
 | F-102C | 一键创建子账号 | completed | 2026-04-19 06:40 | 后端 /guilds/:id/sub-account，超管限定，自动生成用户名{abbr}{2字母}{4数字}+8位密码；前端公会设置页Modal，一次性显示账密+复制 |
 | F-102A | KOOK OAuth登录0公会提示 | completed | 2026-04-19 06:45 | GuildSelect页 Empty 文案增强为"您尚未加入任何公会+请向公会管理员索取邀请码" |
+| **V2.9.1** | **CSV别称导入+OCR精度修复** | | | |
+| F-110 | CSV模板下载带Token | completed | 2026-04-19 07:50 | 前端改用axios request.get+responseType:blob下载，解决401 |
+| F-111 | CSV模板字段调整 | completed | 2026-04-19 07:50 | 新格式：别称,等级,品质,装等,数量,位置（兼容旧格式5列） |
+| F-112 | batchMatch支持别称+模糊匹配 | completed | 2026-04-19 07:50 | 先精确匹配，失败后调findByNameFuzzy(0.7)，返回matchType(exact/alias/fuzzy/none) |
+| F-113 | CSV导入预览显示匹配结果 | completed | 2026-04-19 07:50 | 新增"匹配装备"列+matchType Tag（绿=精确/蓝=别称/橙=模糊/红=未匹配） |
+| F-114 | pHash阈值分档策略 | completed | 2026-04-19 07:50 | STRICT(19≥70%)装备库存页/LOOSE(25≥60%)击杀详情，matchFromScreenshot新增strict参数 |
+| F-115 | 次佳差距歧义检验 | completed | 2026-04-19 07:50 | 匹配时记录bestDistance+secondBestDistance，差距<3判定为歧义匹配丢弃 |
+| F-116 | 装备库存OCR使用严格模式 | completed | 2026-04-19 07:50 | ocr.service.ts processRecognition调用matchFromScreenshot传{strict:true} |
+| **V2.9.2** | **网格识别入库（方案D）+ 按钮整理** | | | |
+| F-117 | ImageMatchService.gridParseForManualInput | completed | 2026-04-19 08:15 | 按网格切图→每格缩略图base64+右下角数量OCR+边框色品质检测，最多60格并发3 |
+| F-118 | detectQualityFromBorder | completed | 2026-04-19 08:15 | HSV色相判定品质：灰Q0/绿Q1/蓝Q2/紫Q3/金Q4 |
+| F-119 | extractQuantityFromCorner改public | completed | 2026-04-19 08:15 | 供EquipmentService复用 |
+| F-120 | POST grid-parse端点+gridParse方法 | completed | 2026-04-19 08:15 | EquipmentController+Service，获取imageUrl→Buffer→调用imageMatchService.gridParseForManualInput |
+| F-121 | POST grid-save端点+gridSave方法 | completed | 2026-04-19 08:15 | 逐条findByNameFuzzy(0.7)匹配catalogId→upsert叠加入库，返回success/failed/failures明细 |
+| F-122 | EquipmentModule/OcrModule循环依赖修复 | completed | 2026-04-19 08:15 | 双向forwardRef防循环，EquipmentService注入ImageMatchService+CatalogService |
+| F-123 | 前端API: gridParseInventory/gridSaveInventory | completed | 2026-04-19 08:15 | client/src/api/equipment.ts |
+| F-124 | 前端网格识别入库Modal | completed | 2026-04-19 08:15 | 1200宽Modal：上传→解析→缩略图+AutoComplete别名+等级/品质/数量/位置可编辑+套用↓+只显示未填筛选 |
+| F-125 | AutoComplete别名搜索 | completed | 2026-04-19 08:15 | 输入时实时调searchCatalog，显示装备名(T/Q)+别称 |
+| F-126 | 批量"套用↓"功能 | completed | 2026-04-19 08:15 | 将当前行别名/等级/品质/位置应用到下方所有未填行 |
+| F-127 | OCR/CSV按钮折叠到Dropdown | completed | 2026-04-19 08:15 | "网格识别入库"设为主按钮，OCR/Excel导入/下载CSV模板收入"更多导入"Dropdown |
+
 
 

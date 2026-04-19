@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined } from '@ant-design/icons';
-import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs } from '@/api/equipment';
+import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin, Dropdown, MenuProps } from 'antd';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined, DownloadOutlined, AppstoreOutlined, MoreOutlined } from '@ant-design/icons';
+import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs, gridParseInventory, gridSaveInventory } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
 import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
 import { uploadFile } from '@/api/upload';
+import request from '@/api/request';
 import { useGuildStore } from '@/stores/guild.store';
 import { CATEGORIES, QUALITY_LABELS, formatEquipName } from '@/types';
 import dayjs from 'dayjs';
@@ -80,6 +81,19 @@ export default function EquipmentPage() {
   const [ocrBatchId, setOcrBatchId] = useState<number | null>(null);
   const [ocrItems, setOcrItems] = useState<any[]>([]);
   const [ocrImageUrl, setOcrImageUrl] = useState('');
+
+  // V2.9.2 网格识别入库（方案D）
+  const [gridModal, setGridModal] = useState(false);
+  const [gridLoading, setGridLoading] = useState(false);
+  const [gridImageUrl, setGridImageUrl] = useState('');
+  const [gridCells, setGridCells] = useState<Array<{
+    row: number; col: number; thumbnail: string; quantity: number;
+    detectedLevel: number | null; detectedQuality: number | null;
+    aliasName: string; level: number; quality: number; location: string;
+    aliasOptions?: any[]; // AutoComplete 候选
+  }>>([]);
+  const [gridSaving, setGridSaving] = useState(false);
+  const [gridOnlyUnfilled, setGridOnlyUnfilled] = useState(false);
 
   const fetchList = async (p = page, f = filters) => {
     if (!guildId) return;
@@ -158,16 +172,50 @@ export default function EquipmentPage() {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      const lines = text.split('\n').filter(l => l.trim());
+      // 去掉 BOM
+      const cleanText = text.replace(/^\uFEFF/, '');
+      const lines = cleanText.split(/\r?\n/).filter(l => l.trim());
       if (lines.length < 2) { message.error('文件至少需要表头和一行数据'); return; }
       const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+
+      // 自动检测格式：
+      // V2.9.1+ 新格式: 别称,等级,品质,装等,数量,位置 (6列)
+      // 旧格式: 装备名称,等级,品质,数量,位置 (5列)
+      const isNewFormat = headers.length >= 6 && (headers[0].includes('别称') || headers[0].includes('名称'));
+      const isOldFormat = headers.length === 5;
+
       const rows = lines.slice(1).map((line, idx) => {
         const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
+        if (isNewFormat) {
+          // 别称,等级,品质,装等,数量,位置
+          return {
+            key: idx,
+            name: cols[0] || '',
+            level: parseInt(cols[1]) || 1,
+            quality: parseInt(cols[2]) || 0,
+            gearScore: cols[3] ? parseInt(cols[3].replace(/^P/i, '')) || 0 : 0,
+            quantity: parseInt(cols[4]) || 1,
+            location: cols[5] || '公会仓库',
+          };
+        } else if (isOldFormat) {
+          // 装备名称,等级,品质,数量,位置
+          return {
+            key: idx,
+            name: cols[0] || '',
+            level: parseInt(cols[1]) || 1,
+            quality: parseInt(cols[2]) || 0,
+            gearScore: 0,
+            quantity: parseInt(cols[3]) || 1,
+            location: cols[4] || '公会仓库',
+          };
+        }
+        // 兜底
         return {
           key: idx,
           name: cols[0] || '',
           level: parseInt(cols[1]) || 1,
           quality: parseInt(cols[2]) || 0,
+          gearScore: 0,
           quantity: parseInt(cols[3]) || 1,
           location: cols[4] || '公会仓库',
         };
@@ -182,18 +230,32 @@ export default function EquipmentPage() {
   const handleExcelImport = async () => {
     setExcelImporting(true);
     try {
-      // 先根据名称+等级+品质匹配 catalogId
+      // 先根据名称/别称+等级+品质匹配 catalogId（后端支持精确/别称/模糊三档）
       const matchRes: any = await import('@/api/catalog').then(m =>
         m.batchMatchCatalog(excelData.map(r => ({ name: r.name, level: r.level, quality: r.quality })))
       );
-      const items = excelData.map((row, i) => {
+
+      // 将匹配结果回填到 excelData 以供预览展示
+      const enriched = excelData.map((row, i) => {
         const match = matchRes?.[i] || matchRes?.find?.((m: any) => m.index === i);
-        if (!match?.catalogId) return null;
-        return { catalogId: match.catalogId, quantity: row.quantity, location: row.location };
+        return { ...row, catalogId: match?.catalogId || null, matchedName: match?.catalogName || null, matchType: match?.matchType || 'none' };
+      });
+      setExcelData(enriched);
+
+      const items = enriched.map(row => {
+        if (!row.catalogId) return null;
+        return { catalogId: row.catalogId, quantity: row.quantity, location: row.location };
       }).filter(Boolean);
-      if (items.length === 0) { message.error('没有匹配到任何装备，请确认参考库中已有对应装备'); setExcelImporting(false); return; }
+
+      const unmatched = enriched.filter(r => !r.catalogId).length;
+      if (items.length === 0) {
+        message.error('没有匹配到任何装备，请确认参考库中已有对应装备（含别称）');
+        setExcelImporting(false);
+        return;
+      }
+
       const res: any = await batchUpsertInventory(guildId, items);
-      message.success(`导入完成: ${res.upserted || items.length} 条`);
+      message.success(`导入成功 ${res.upserted || items.length} 条${unmatched > 0 ? `，${unmatched} 条未匹配（已跳过）` : ''}`);
       setExcelModal(false);
       fetchList();
     } catch {} finally { setExcelImporting(false); }
@@ -261,6 +323,117 @@ export default function EquipmentPage() {
       setOcrStep('done');
       fetchList();
     } catch {} finally { setOcrLoading(false); }
+  };
+
+  // V2.9.2 网格识别入库（方案D）
+  const handleGridUpload = async (file: File) => {
+    setGridLoading(true);
+    try {
+      const uploadRes: any = await uploadFile(file);
+      const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
+      setGridImageUrl(imageUrl);
+      const parseRes: any = await gridParseInventory(guildId, imageUrl);
+      const cells = (parseRes?.cells || []).map((c: any) => ({
+        ...c,
+        aliasName: '',
+        level: c.detectedLevel || 6,
+        quality: c.detectedQuality ?? 0,
+        location: '公会仓库',
+        aliasOptions: [],
+      }));
+      setGridCells(cells);
+      if (cells.length === 0) {
+        message.warning('未检测到装备图标，请确认截图内容');
+      } else {
+        message.success(`识别完成，共 ${cells.length} 格（数量已自动填充，请填写装备别名）`);
+      }
+    } catch (err: any) {
+      message.error(err?.message || '网格识别失败');
+    } finally {
+      setGridLoading(false);
+    }
+    return false;
+  };
+
+  const handleGridCellChange = (index: number, field: string, value: any) => {
+    setGridCells(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  // 别名自动补全：调用参考库搜索
+  const handleGridAliasSearch = async (index: number, keyword: string) => {
+    if (!keyword || keyword.length < 1) return;
+    try {
+      const res: any = await searchCatalog(keyword);
+      const list = Array.isArray(res) ? res : (res?.list || []);
+      const options = list.slice(0, 10).map((c: any) => ({
+        value: c.aliases?.split(',')[0]?.trim() || c.name,
+        label: `${c.name} (T${c.level}Q${c.quality})${c.aliases ? ' - ' + c.aliases : ''}`,
+      }));
+      setGridCells(prev => {
+        const next = [...prev];
+        if (next[index]) next[index] = { ...next[index], aliasOptions: options };
+        return next;
+      });
+    } catch {}
+  };
+
+  // 批量套用：将第 idx 行的别名应用到所有下方空白行
+  const handleGridApplyDown = (idx: number) => {
+    const src = gridCells[idx];
+    if (!src?.aliasName) {
+      message.warning('请先填写该行的装备别名');
+      return;
+    }
+    setGridCells(prev => prev.map((c, i) => {
+      if (i > idx && !c.aliasName) {
+        return { ...c, aliasName: src.aliasName, level: src.level, quality: src.quality, location: src.location };
+      }
+      return c;
+    }));
+    message.success(`已套用到下方空白行`);
+  };
+
+  const handleGridSave = async () => {
+    const items = gridCells
+      .filter(c => c.aliasName && c.aliasName.trim())
+      .map(c => ({
+        aliasName: c.aliasName.trim(),
+        level: c.level,
+        quality: c.quality,
+        quantity: c.quantity || 1,
+        location: c.location || '公会仓库',
+      }));
+
+    if (items.length === 0) {
+      message.warning('请至少填写一件装备的别名');
+      return;
+    }
+
+    setGridSaving(true);
+    try {
+      const res: any = await gridSaveInventory(guildId, items);
+      if (res?.success > 0) {
+        message.success(`入库成功 ${res.success} 条${res.failed > 0 ? `，失败 ${res.failed} 条` : ''}`);
+      }
+      if (res?.failures && res.failures.length > 0) {
+        const detail = res.failures.slice(0, 5).map((f: any) => `第${f.index + 1}格: ${f.reason}`).join('\n');
+        Modal.warning({ title: `${res.failures.length} 条失败明细`, content: <pre style={{ fontSize: 12 }}>{detail}</pre>, width: 500 });
+      }
+      if (res?.failed === 0) {
+        setGridModal(false);
+        setGridCells([]);
+        setGridImageUrl('');
+      }
+      fetchList();
+    } catch (err: any) {
+      message.error(err?.message || '保存失败');
+    } finally {
+      setGridSaving(false);
+    }
   };
 
   const columns = [
@@ -341,12 +514,57 @@ export default function EquipmentPage() {
         <Title level={4} style={{ margin: 0 }}>装备库存</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
-          <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
-            <Button icon={<UploadOutlined />}>Excel/CSV导入</Button>
-          </Upload>
-          <a href="/api/catalog/csv-template" download="库存导入模板.csv" style={{ fontSize: 12, color: '#1677ff' }}>下载CSV模板</a>
-          <Button icon={<ScanOutlined />} onClick={() => { setOcrModal(true); setOcrStep('upload'); setOcrItems([]); setOcrBatchId(null); }}>OCR识别入库</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
+          <Button type="primary" icon={<AppstoreOutlined />} onClick={() => {
+            setGridModal(true);
+            setGridCells([]);
+            setGridImageUrl('');
+          }}>网格识别入库</Button>
+          <Button icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'ocr',
+                  icon: <ScanOutlined />,
+                  label: 'OCR全自动识别',
+                  onClick: () => { setOcrModal(true); setOcrStep('upload'); setOcrItems([]); setOcrBatchId(null); },
+                },
+                {
+                  key: 'csv-upload',
+                  icon: <UploadOutlined />,
+                  label: (
+                    <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
+                      <span>Excel/CSV导入</span>
+                    </Upload>
+                  ),
+                },
+                {
+                  key: 'csv-template',
+                  icon: <DownloadOutlined />,
+                  label: '下载CSV模板',
+                  onClick: async () => {
+                    try {
+                      const res = await request.get('/catalog/csv-template', { responseType: 'blob' });
+                      const blob = res as unknown as Blob;
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = '库存导入模板.csv';
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      window.URL.revokeObjectURL(url);
+                    } catch {
+                      message.error('下载模板失败');
+                    }
+                  },
+                },
+              ] as MenuProps['items'],
+            }}
+            trigger={['click']}
+          >
+            <Button icon={<MoreOutlined />}>更多导入</Button>
+          </Dropdown>
         </Space>
       </div>
 
@@ -425,21 +643,217 @@ export default function EquipmentPage() {
       </Modal>
 
       {/* Excel 导入预览 */}
-      <Modal title="Excel/CSV 导入预览" open={excelModal} onCancel={() => setExcelModal(false)} width={700}
+      <Modal title="Excel/CSV 导入预览" open={excelModal} onCancel={() => setExcelModal(false)} width={900}
         footer={<Space><Button onClick={() => setExcelModal(false)}>取消</Button><Button type="primary" loading={excelImporting} onClick={handleExcelImport}>确认导入 ({excelData.length} 条)</Button></Space>}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>模板格式: 装备名称,等级,品质,数量,位置</Text>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+          模板格式: 别称,等级,品质,装等,数量,位置（兼容旧格式: 装备名称,等级,品质,数量,位置）
+        </Text>
         <Table size="small" dataSource={excelData} rowKey="key" pagination={{ pageSize: 10 }}
           columns={[
-            { title: '名称', dataIndex: 'name' },
+            { title: '输入别称/名称', dataIndex: 'name', width: 130 },
+            { title: '匹配装备', dataIndex: 'matchedName', width: 140, render: (v: string, row: any) => {
+              if (!row.matchType || row.matchType === 'none') {
+                return <Text type="secondary">点击导入后匹配</Text>;
+              }
+              if (!v) return <Tag color="red">未匹配</Tag>;
+              const colorMap: any = { exact: 'green', alias: 'blue', fuzzy: 'orange' };
+              const labelMap: any = { exact: '精确', alias: '别称', fuzzy: '模糊' };
+              return <Space size={4}><Text>{v}</Text><Tag color={colorMap[row.matchType]}>{labelMap[row.matchType]}</Tag></Space>;
+            }},
             { title: '等级', dataIndex: 'level', width: 60 },
             { title: '品质', dataIndex: 'quality', width: 60 },
+            { title: '装等', dataIndex: 'gearScore', width: 70, render: (v: number) => v > 0 ? `P${v}` : '-' },
             { title: '数量', dataIndex: 'quantity', width: 60 },
             { title: '位置', dataIndex: 'location', width: 120 },
           ]}
         />
       </Modal>
 
-      {/* 变动日志 Drawer */}
+      {/* V2.9.2 网格识别入库（方案D） */}
+      <Modal
+        title="网格识别入库"
+        open={gridModal}
+        onCancel={() => { setGridModal(false); setGridCells([]); setGridImageUrl(''); }}
+        width={1200}
+        destroyOnClose
+        footer={
+          <Space>
+            <Button onClick={() => { setGridModal(false); setGridCells([]); setGridImageUrl(''); }}>取消</Button>
+            <Button
+              type="primary"
+              loading={gridSaving}
+              disabled={gridCells.filter(c => c.aliasName?.trim()).length === 0}
+              onClick={handleGridSave}
+            >
+              确认入库（已填 {gridCells.filter(c => c.aliasName?.trim()).length} / {gridCells.length} 条）
+            </Button>
+          </Space>
+        }
+      >
+        {gridCells.length === 0 ? (
+          <Upload.Dragger
+            accept="image/*"
+            showUploadList={false}
+            beforeUpload={handleGridUpload}
+            disabled={gridLoading}
+          >
+            {gridLoading ? (
+              <><Spin /> <Text>识别中...（数量OCR需要几秒）</Text></>
+            ) : (
+              <>
+                <p><AppstoreOutlined style={{ fontSize: 48, color: '#1677ff' }} /></p>
+                <p style={{ fontSize: 16, fontWeight: 500 }}>点击或拖拽上传装备截图</p>
+                <p style={{ fontSize: 12, color: '#999' }}>
+                  系统将自动按网格切图并识别数量+品质；装备名由您手动填写（支持别名输入+自动补全）
+                </p>
+              </>
+            )}
+          </Upload.Dragger>
+        ) : (
+          <>
+            <Space style={{ marginBottom: 12 }}>
+              <Text type="secondary">
+                共 {gridCells.length} 格，已填装备别名 {gridCells.filter(c => c.aliasName?.trim()).length} 条
+              </Text>
+              <Button
+                size="small"
+                onClick={() => setGridOnlyUnfilled(v => !v)}
+              >
+                {gridOnlyUnfilled ? '显示全部' : '只显示未填'}
+              </Button>
+              <Button
+                size="small"
+                onClick={() => { setGridCells([]); setGridImageUrl(''); }}
+              >
+                重新上传
+              </Button>
+            </Space>
+            <Table
+              size="small"
+              rowKey={(r) => `${r.row}-${r.col}`}
+              dataSource={gridOnlyUnfilled ? gridCells.filter(c => !c.aliasName?.trim()) : gridCells}
+              pagination={{ pageSize: 15, showSizeChanger: false }}
+              columns={[
+                {
+                  title: '#', width: 40,
+                  render: (_: any, _r: any, i: number) => i + 1,
+                },
+                {
+                  title: '缩略图', width: 90, dataIndex: 'thumbnail',
+                  render: (src: string) => src ? <img src={src} alt="" style={{ width: 64, height: 64, objectFit: 'cover', border: '1px solid #ddd', borderRadius: 4 }} /> : '-',
+                },
+                {
+                  title: '装备别名*', width: 200,
+                  render: (_: any, row: any) => {
+                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    return (
+                      <AutoComplete
+                        value={row.aliasName}
+                        placeholder="输入装备别名..."
+                        style={{ width: '100%' }}
+                        options={row.aliasOptions || []}
+                        onSearch={(kw) => handleGridAliasSearch(idx, kw)}
+                        onChange={(v) => handleGridCellChange(idx, 'aliasName', v)}
+                        allowClear
+                      />
+                    );
+                  },
+                },
+                {
+                  title: '等级', width: 80,
+                  render: (_: any, row: any) => {
+                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    return (
+                      <Select
+                        size="small"
+                        value={row.level}
+                        style={{ width: 70 }}
+                        onChange={(v) => handleGridCellChange(idx, 'level', v)}
+                        options={[1, 2, 3, 4, 5, 6, 7, 8].map(l => ({ value: l, label: `T${l}` }))}
+                      />
+                    );
+                  },
+                },
+                {
+                  title: '品质', width: 90,
+                  render: (_: any, row: any) => {
+                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    const detectedLabel = row.detectedQuality !== null ? `(识别:Q${row.detectedQuality})` : '';
+                    return (
+                      <Select
+                        size="small"
+                        value={row.quality}
+                        style={{ width: 80 }}
+                        onChange={(v) => handleGridCellChange(idx, 'quality', v)}
+                        options={[0, 1, 2, 3, 4].map(q => ({ value: q, label: `Q${q}` }))}
+                        title={detectedLabel}
+                      />
+                    );
+                  },
+                },
+                {
+                  title: '数量', width: 90,
+                  render: (_: any, row: any) => {
+                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    return (
+                      <InputNumber
+                        size="small"
+                        min={1}
+                        value={row.quantity}
+                        style={{ width: 80 }}
+                        onChange={(v) => handleGridCellChange(idx, 'quantity', v || 1)}
+                      />
+                    );
+                  },
+                },
+                {
+                  title: '位置', width: 120,
+                  render: (_: any, row: any) => {
+                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    return (
+                      <Input
+                        size="small"
+                        value={row.location}
+                        style={{ width: 110 }}
+                        onChange={(e) => handleGridCellChange(idx, 'location', e.target.value)}
+                      />
+                    );
+                  },
+                },
+                {
+                  title: '操作', width: 100,
+                  render: (_: any, row: any) => {
+                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    return (
+                      <Space size={4}>
+                        <Button
+                          size="small"
+                          type="link"
+                          disabled={!row.aliasName?.trim()}
+                          onClick={() => handleGridApplyDown(idx)}
+                          title="将此行的别名/等级/品质/位置应用到下方所有未填行"
+                        >
+                          套用↓
+                        </Button>
+                        <Button
+                          size="small"
+                          type="link"
+                          danger
+                          onClick={() => {
+                            setGridCells(prev => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          删除
+                        </Button>
+                      </Space>
+                    );
+                  },
+                },
+              ]}
+            />
+          </>
+        )}
+      </Modal>
       <Drawer title={`变动日志 - ${logTarget?.catalog?.name || ''}`} open={logDrawer} onClose={() => setLogDrawer(false)} width={450}>
         {logsLoading ? <Text type="secondary">加载中...</Text> : (
           <Timeline items={logs.map((log: any) => ({

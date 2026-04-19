@@ -24,13 +24,13 @@ export class CatalogController {
   @ApiOperation({ summary: '下载CSV导入模板' })
   downloadCsvTemplate(@Res() res: Response) {
     const BOM = '\uFEFF';
-    const header = '装备名称,等级,品质,装等,部位';
+    const header = '别称,等级,品质,装等,数量,位置';
     const examples = [
-      '迅捷之刃,5,3,P8,武器',
-      '守护之盾,4,2,,副手',
-      '风行者头盔,6,4,P10,头',
-      '初级治疗药水,1,0,,药水',
-      '战马坐骑,3,1,,坐骑',
+      '堕神,7,0,,5,公会仓库',
+      '冰箱头,8,2,,3,主仓库',
+      '挣脱鞋,6,2,,10,公会仓库',
+      '平法杖,7,0,,1,公会仓库',
+      '大角羊,4,0,,2,公会仓库',
     ];
     const csv = BOM + [header, ...examples].join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
