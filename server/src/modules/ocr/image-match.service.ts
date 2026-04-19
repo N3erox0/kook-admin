@@ -729,6 +729,153 @@ export class ImageMatchService {
     }
   }
 
+  // ===== V2.9.3 预览匹配（方框级 Top5 候选，供补装识别预览UI用） =====
+
+  /**
+   * V2.9.3：预览匹配 — 返回每个方框的 Top N 候选（含切图 base64）
+   * 用于补装申请「图像识别预览」UI：原图 + 方框 + Top5 候选 + 勾选确认
+   *
+   * 与 matchFromScreenshot 的差异：
+   *  - 本方法返回每个方框的 Top N 候选（不聚合、不合并、不丢弃歧义）
+   *  - 返回每个方框的切图 base64 + 原图坐标（供前端画红框）
+   *  - 不做数量 OCR（每件=1，若需要可在前端手动编辑）
+   *
+   * @param imageBuffer 原图 Buffer
+   * @param options.topN 每个方框返回的候选数（默认 5）
+   * @param options.autoThreshold 自动勾选的相似度阈值（默认 0.80）
+   */
+  async previewMatchWithCandidates(
+    imageBuffer: Buffer,
+    options?: { topN?: number; autoThreshold?: number },
+  ): Promise<{
+    imgWidth: number;
+    imgHeight: number;
+    boxes: Array<{
+      boxId: string;
+      cropBase64: string;
+      rect: { left: number; top: number; width: number; height: number };
+      candidates: Array<{
+        catalogId: number;
+        name: string;
+        imageUrl: string | null;
+        level: number;
+        quality: number;
+        category: string;
+        gearScore: number;
+        similarity: number;
+        autoChecked: boolean;
+      }>;
+      selectedCatalogId: number | null;
+      checked: boolean;
+    }>;
+  }> {
+    const topN = options?.topN ?? 5;
+    const autoThreshold = options?.autoThreshold ?? 0.80;
+
+    let sharp: any;
+    try { sharp = require('sharp'); }
+    catch { throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖'); }
+
+    const metadata = await sharp(imageBuffer).metadata();
+    const imgWidth = metadata.width || 0;
+    const imgHeight = metadata.height || 0;
+    if (!imgWidth || !imgHeight) throw new Error('无法读取图片尺寸');
+
+    // 1. 装备区域检测 + 网格切割（记录坐标）
+    const region = await this.detectGridRegion(sharp, imageBuffer, imgWidth, imgHeight);
+    const iconSize = this.estimateIconSize(imgWidth, imgHeight);
+    const regionBuf = (region.top === 0 && region.height === imgHeight)
+      ? imageBuffer
+      : await sharp(imageBuffer).extract(region).toBuffer();
+    const cols = Math.floor(region.width / iconSize);
+    const rows = Math.floor(region.height / iconSize);
+
+    this.logger.log(`[V2.9.3 previewMatch] 区域=${region.width}x${region.height}@(${region.left},${region.top}), iconSize=${iconSize}, 网格=${cols}x${rows}`);
+
+    // 2. 加载参考库
+    const catalogs = await this.catalogRepo
+      .createQueryBuilder('c')
+      .where('c.imagePhash IS NOT NULL')
+      .andWhere('c.imagePhash != :empty', { empty: '' })
+      .getMany();
+    if (catalogs.length === 0) {
+      throw new Error('装备参考库未初始化图片指纹，请先执行 "生成图片指纹"');
+    }
+
+    const MAX_BOXES = 30;
+    const boxes: any[] = [];
+
+    // 3. 遍历每个格子
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (boxes.length >= MAX_BOXES) break;
+        try {
+          const cellLeft = c * iconSize;
+          const cellTop = r * iconSize;
+          const subBuf = await sharp(regionBuf)
+            .extract({ left: cellLeft, top: cellTop, width: iconSize, height: iconSize })
+            .toBuffer();
+
+          // 过滤空白格子
+          const stats = await sharp(subBuf).stats();
+          const avgBrightness = stats.channels[0]?.mean || 0;
+          if (avgBrightness < 15 || avgBrightness > 240) continue;
+
+          // 计算该格 pHash
+          const cropped = await this.cropCenter(sharp, subBuf, 0.60);
+          const hash = await this.computePhash(sharp, cropped);
+
+          // 与全库比对 → Top N
+          const scored = catalogs.map(cat => ({
+            cat,
+            distance: this.hammingDistance(hash, cat.imagePhash),
+          })).sort((a, b) => a.distance - b.distance).slice(0, topN);
+
+          // 生成缩略图 base64（展示用，120x120）
+          const thumb = await sharp(subBuf).resize(120, 120, { fit: 'cover' }).png().toBuffer();
+          const cropBase64 = `data:image/png;base64,${thumb.toString('base64')}`;
+
+          const candidates = scored.map(s => {
+            const sim = 1 - s.distance / 64;
+            return {
+              catalogId: s.cat.id,
+              name: s.cat.name,
+              imageUrl: s.cat.imageUrl || null,
+              level: s.cat.level,
+              quality: s.cat.quality,
+              category: s.cat.category,
+              gearScore: s.cat.gearScore,
+              similarity: Math.round(sim * 100) / 100,
+              autoChecked: sim >= autoThreshold,
+            };
+          });
+
+          const top = candidates[0];
+          boxes.push({
+            boxId: `r${r}c${c}`,
+            cropBase64,
+            rect: {
+              left: region.left + cellLeft,
+              top: region.top + cellTop,
+              width: iconSize,
+              height: iconSize,
+            },
+            candidates,
+            selectedCatalogId: top && top.autoChecked ? top.catalogId : null,
+            checked: !!(top && top.autoChecked),
+          });
+        } catch (err) {
+          this.logger.warn(`[V2.9.3] 方框(${r},${c})处理失败: ${err}`);
+        }
+      }
+      if (boxes.length >= MAX_BOXES) break;
+    }
+
+    this.logger.log(`[V2.9.3 previewMatch] 生成 ${boxes.length} 个方框候选（阈值=${autoThreshold}，自动勾选=${boxes.filter(b => b.checked).length}）`);
+
+    return { imgWidth, imgHeight, boxes };
+  }
+
   // ===== V2.9.2 网格识别入库（方案D） =====
 
   /**

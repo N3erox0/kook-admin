@@ -197,6 +197,18 @@
 | F-125 | AutoComplete别名搜索 | completed | 2026-04-19 08:15 | 输入时实时调searchCatalog，显示装备名(T/Q)+别称 |
 | F-126 | 批量"套用↓"功能 | completed | 2026-04-19 08:15 | 将当前行别名/等级/品质/位置应用到下方所有未填行 |
 | F-127 | OCR/CSV按钮折叠到Dropdown | completed | 2026-04-19 08:15 | "网格识别入库"设为主按钮，OCR/Excel导入/下载CSV模板收入"更多导入"Dropdown |
+| **V2.9.3** | **补装申请图像识别预览（原图+方框+Top5候选+勾选确认）** | | | |
+| F-128 | ImageMatchService.previewMatchWithCandidates | completed | 2026-04-19 08:30 | 新方法：返回每个方框的Top N候选+切图base64+原图坐标，不聚合不去歧义，供预览UI使用 |
+| F-129 | ResupplyService.previewMatchForResupply/FromUrl | completed | 2026-04-19 08:30 | 下载screenshotUrl→调用ImageMatchService→返回{originalUrl,imgWidth,imgHeight,boxes[]} |
+| F-130 | POST resupply/:id/preview-match + preview-from-url | completed | 2026-04-19 08:30 | ResupplyController两个新端点，SUPER_ADMIN/RESUPPLY_STAFF可用 |
+| F-131 | ResupplyModule forwardRef(OcrModule) | completed | 2026-04-19 08:30 | 引入ImageMatchService依赖 |
+| F-132 | 前端API previewMatchResupply/previewMatchFromUrl | completed | 2026-04-19 08:30 | client/src/api/resupply.ts 两个新方法 |
+| F-133 | MatchPreview.tsx 通用组件 | completed | 2026-04-19 08:30 | 原图预览(红框标注已勾选)+方框列表(小图+勾选)+匹配结果表(相似度排序/Top5展开/自动勾选)+确认按钮 |
+| F-134 | 补装详情Modal嵌入"图像识别预览"按钮 | completed | 2026-04-19 08:30 | 点击截图旁按钮→1100宽子Modal→勾选确认→调quickCompleteResupply扣库存+完成 |
+| F-135 | PendingRecognitionTab嵌入MatchPreview | completed | 2026-04-19 08:30 | 修正Modal改1100宽+Collapse折叠面板，勾选结果自动合并到editEquipList |
+
+
+
 
 
 

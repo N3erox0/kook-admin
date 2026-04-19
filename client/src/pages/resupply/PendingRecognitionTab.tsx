@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Space, Tag, Typography, message, Modal, Image, Popconfirm, Input, Form, InputNumber, AutoComplete } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Tag, Typography, message, Modal, Image, Popconfirm, Input, Form, InputNumber, AutoComplete, Collapse } from 'antd';
+import { ReloadOutlined, DeleteOutlined, EyeOutlined, ThunderboltOutlined, ScanOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getKookPending, getOcrBatchDetail } from '@/api/ocr';
 import { searchCatalog } from '@/api/catalog';
 import { quickCompleteResupply, batchRejectResupply, createResupply } from '@/api/resupply';
 import { formatEquipName } from '@/types';
+import MatchPreview, { ConfirmedItem } from './components/MatchPreview';
 
 const { Text } = Typography;
 
@@ -92,6 +93,28 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
         item,
       })));
     } catch { setCatalogOptions([]); }
+  };
+
+  /** V2.9.3: 图像识别预览回调 — 将勾选结果合并进修正装备列表 */
+  const handleMatchConfirm = (items: ConfirmedItem[]) => {
+    if (items.length === 0) return;
+    setEditEquipList(prev => {
+      const map = new Map<number, typeof prev[0]>();
+      for (const e of prev) map.set(e.id, { ...e });
+      for (const it of items) {
+        const ex = map.get(it.catalogId);
+        if (ex) ex.quantity += it.quantity;
+        else map.set(it.catalogId, {
+          id: it.catalogId,
+          name: it.name,
+          gearScore: it.gearScore,
+          category: it.category,
+          quantity: it.quantity,
+        });
+      }
+      return Array.from(map.values());
+    });
+    message.success(`已添加 ${items.length} 件装备到列表（合计 ${items.reduce((s, i) => s + i.quantity, 0)} 件）`);
   };
 
   /** 路径A: 批量废弃 — 将选中批次关联的所有补装申请废弃（当前批次source=kook本身不在resupply中，故只更新批次状态） */
@@ -269,7 +292,7 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
         title="待识别记录 - 修正并完成补装"
         open={detailModal}
         onCancel={() => { setDetailModal(false); setDetail(null); setEditEquipList([]); }}
-        width={720}
+        width={1100}
         centered
         footer={null}
         destroyOnClose
@@ -288,6 +311,25 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
                 </div>
               )}
             </Space>
+
+            {/* V2.9.3: 图像识别预览（可折叠） */}
+            {(detail.batch?.imageUrl || detail.imageUrl) && (
+              <Collapse
+                style={{ marginBottom: 12 }}
+                items={[{
+                  key: 'match-preview',
+                  label: <Space><ScanOutlined /><span>图像识别预览（点击展开，勾选后自动加入装备列表）</span></Space>,
+                  children: (
+                    <MatchPreview
+                      guildId={guildId}
+                      imageUrl={detail.batch?.imageUrl || detail.imageUrl}
+                      onConfirm={handleMatchConfirm}
+                      confirmText="加入装备列表"
+                    />
+                  ),
+                }]}
+              />
+            )}
 
             {/* OCR 原始识别结果（参考） */}
             {detail.items?.length > 0 && (

@@ -9,6 +9,7 @@ import { User } from '../user/entities/user.entity';
 import { EquipmentModule } from '../equipment/equipment.module';
 import { EquipmentCatalogModule } from '../equipment-catalog/catalog.module';
 import { KookModule } from '../kook/kook.module';
+import { OcrModule } from '../ocr/ocr.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { KookModule } from '../kook/kook.module';
     EquipmentModule,
     EquipmentCatalogModule,
     forwardRef(() => KookModule),
+    forwardRef(() => OcrModule),
   ],
   controllers: [ResupplyController],
   providers: [ResupplyService],

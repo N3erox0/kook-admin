@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { GuildResupply } from './entities/guild-resupply.entity';
 import { GuildResupplyLog } from './entities/guild-resupply-log.entity';
 import { EquipmentService } from '../equipment/equipment.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
 import { CatalogService } from '../equipment-catalog/catalog.service';
+import { ImageMatchService } from '../ocr/image-match.service';
 import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto, QuickCompleteResupplyDto, BatchRejectDto } from './dto/resupply.dto';
 import { ResupplyStatus } from '../../common/constants/enums';
 import * as crypto from 'crypto';
@@ -41,6 +43,8 @@ export class ResupplyService {
     private equipmentService: EquipmentService,
     private kookNotifyService: KookNotifyService,
     private catalogService: CatalogService,
+    private imageMatchService: ImageMatchService,
+    private configService: ConfigService,
   ) {}
 
   async findAll(guildId: number, query: QueryResupplyDto) {
@@ -553,5 +557,49 @@ export class ResupplyService {
       updated++;
     }
     return { updated, total: dto.ids.length };
+  }
+
+  // ===== V2.9.3 图像识别预览（方框Top5候选+勾选确认） =====
+
+  /**
+   * V2.9.3：获取补装申请的图像识别预览（原图 + 方框 + Top5 候选）
+   * 用于详情 Modal 中点击"图像识别预览"后展示
+   */
+  async previewMatchForResupply(guildId: number, id: number, options?: { topN?: number; autoThreshold?: number }) {
+    const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
+    if (!r) throw new NotFoundException('补装申请不存在');
+    if (!r.screenshotUrl) throw new BadRequestException('该申请无截图，无法预览');
+    const buffer = await this.fetchImageBuffer(r.screenshotUrl);
+    if (!buffer) throw new BadRequestException('截图下载失败，请检查 URL');
+    const preview = await this.imageMatchService.previewMatchWithCandidates(buffer, options);
+    return { ...preview, originalUrl: r.screenshotUrl };
+  }
+
+  /**
+   * V2.9.3：按 URL 直接预览（供待识别 Tab 无 resupplyId 时使用）
+   */
+  async previewMatchFromUrl(imageUrl: string, options?: { topN?: number; autoThreshold?: number }) {
+    if (!imageUrl) throw new BadRequestException('imageUrl 必填');
+    const buffer = await this.fetchImageBuffer(imageUrl);
+    if (!buffer) throw new BadRequestException('截图下载失败，请检查 URL');
+    const preview = await this.imageMatchService.previewMatchWithCandidates(buffer, options);
+    return { ...preview, originalUrl: imageUrl };
+  }
+
+  /** 下载图片为 Buffer（支持相对路径/绝对 URL） */
+  private async fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
+    let fullUrl = imageUrl;
+    if (imageUrl && !imageUrl.startsWith('http')) {
+      const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:3000';
+      fullUrl = `${baseUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+    try {
+      const response = await fetch(fullUrl, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return null;
+      return Buffer.from(await response.arrayBuffer());
+    } catch (err) {
+      this.logger.warn(`[V2.9.3] 图片下载失败 ${fullUrl}: ${err}`);
+      return null;
+    }
   }
 }

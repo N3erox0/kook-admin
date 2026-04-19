@@ -122,4 +122,33 @@ export class ResupplyController {
       user.sub, req.guildMember?.nickname || user.username,
     );
   }
+
+  /**
+   * V2.9.3: 补装申请图像识别预览（原图 + 方框 + Top5 候选）
+   * 根据 resupplyId 取 screenshotUrl 进行 pHash 匹配
+   */
+  @Post(':id/preview-match')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  previewMatch(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { topN?: number; autoThreshold?: number },
+  ) {
+    return this.resupplyService.previewMatchForResupply(guildId, id, body || {});
+  }
+
+  /**
+   * V2.9.3: 按 URL 直接预览（供待识别 Tab 的 OCR 批次截图使用）
+   */
+  @Post('preview-from-url')
+  @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
+  previewFromUrl(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Body() body: { imageUrl: string; topN?: number; autoThreshold?: number },
+  ) {
+    return this.resupplyService.previewMatchFromUrl(body.imageUrl, {
+      topN: body.topN,
+      autoThreshold: body.autoThreshold,
+    });
+  }
 }

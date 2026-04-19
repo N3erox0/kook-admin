@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Image, DatePicker, AutoComplete, Tabs } from 'antd';
-import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined, ExpandAltOutlined, DeleteOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined, ExpandAltOutlined, DeleteOutlined, ScanOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
-import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply } from '@/api/resupply';
+import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply } from '@/api/resupply';
 import { searchCatalog } from '@/api/catalog';
 import { useGuildStore } from '@/stores/guild.store';
 import { RESUPPLY_STATUS, formatEquipName } from '@/types';
 import type { GuildResupply } from '@/types';
 import dayjs from 'dayjs';
 import PendingRecognitionTab from './PendingRecognitionTab';
+import MatchPreview, { ConfirmedItem } from './components/MatchPreview';
 
 const { Title, Text } = Typography;
 
@@ -50,6 +51,9 @@ export default function ResupplyPage() {
 
   // F-109: 装备放大显示 Modal
   const [equipExpandModal, setEquipExpandModal] = useState(false);
+
+  // V2.9.3: 图像识别预览 Modal
+  const [matchPreviewModal, setMatchPreviewModal] = useState(false);
 
   // 新建
   const [createModal, setCreateModal] = useState(false);
@@ -182,6 +186,25 @@ export default function ResupplyPage() {
       setCreateEquipList([]);
       fetchList();
     } catch {}
+  };
+
+  // V2.9.3：图像识别预览确认回调（快捷补装完成）
+  const handleMatchConfirm = async (items: ConfirmedItem[]) => {
+    if (!detail) return;
+    if (items.length === 0) { message.warning('请至少勾选一件装备'); return; }
+    try {
+      const equipmentEntries = items.map(it => ({ catalogId: it.catalogId, quantity: it.quantity }));
+      await quickCompleteResupply(guildId, detail.id, {
+        equipmentEntries,
+        remark: `图像识别确认：${items.map(i => `${i.name}×${i.quantity}`).join('、')}`,
+      });
+      message.success('已根据图像识别结果完成补装（库存已扣减）');
+      setMatchPreviewModal(false);
+      setDetailDrawer(false);
+      fetchList();
+    } catch (err: any) {
+      message.error(err?.message || '快捷完成失败');
+    }
   };
 
   // 需求4A：批量分配房间
@@ -344,7 +367,14 @@ export default function ResupplyPage() {
             </div>
             {detail.screenshotUrl && (
               <div style={{ marginBottom: 16 }}>
-                <Text strong>截图：</Text><br />
+                <Text strong>截图：</Text>
+                {canProcess && (
+                  <Button size="small" type="link" icon={<ScanOutlined />}
+                    onClick={() => setMatchPreviewModal(true)} style={{ marginLeft: 8 }}>
+                    图像识别预览
+                  </Button>
+                )}
+                <br />
                 <Image src={detail.screenshotUrl} width={200} style={{ borderRadius: 8, marginTop: 8 }} />
               </div>
             )}
@@ -392,6 +422,26 @@ export default function ResupplyPage() {
           />
         ) : (
           <Text type="secondary">无装备详情</Text>
+        )}
+      </Modal>
+
+      {/* V2.9.3: 图像识别预览 Modal */}
+      <Modal
+        title={<Space><ScanOutlined /><span>图像识别预览 - 补装申请 #{detail?.id}</span></Space>}
+        open={matchPreviewModal}
+        onCancel={() => setMatchPreviewModal(false)}
+        width={1100}
+        footer={null}
+        centered
+        destroyOnClose
+      >
+        {detail?.screenshotUrl && (
+          <MatchPreview
+            guildId={guildId}
+            resupplyId={detail.id}
+            onConfirm={handleMatchConfirm}
+            confirmText="确认并快捷补装完成"
+          />
         )}
       </Modal>
 
