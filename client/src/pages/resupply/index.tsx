@@ -319,14 +319,39 @@ export default function ResupplyPage() {
                         const dates = (window as any).__pullDateRange;
                         const sd = dates?.[0]?.format('YYYY-MM-DD');
                         const ed = dates?.[1]?.format('YYYY-MM-DD');
-                        try {
-                          message.loading({ content: '正在拉取...', key: 'pull', duration: 0 });
-                          const res: any = await pullKookHistory(guildId, 50, sd, ed);
-                          message.destroy('pull');
-                          if (res?.error) { message.error(res.error); return; }
-                          message.success(`拉取完成：${res.channels}频道, ${res.messages}条消息, 处理${res.processed}, 跳过${res.skipped}${res.filtered ? ', 日期过滤' + res.filtered : ''}`);
-                          fetchList();
-                        } catch (err: any) { message.destroy('pull'); message.error(err?.message || '拉取失败'); }
+                        if (!sd && !ed) {
+                          Modal.confirm({
+                            title: '未选择日期范围',
+                            content: '不选日期将拉取每个频道最近1000条消息（约需1-3分钟），确认继续？',
+                            okText: '继续拉取',
+                            cancelText: '返回选择日期',
+                            onOk: async () => {
+                              await doPull(sd, ed);
+                            },
+                          });
+                          return;
+                        }
+                        await doPull(sd, ed);
+
+                        async function doPull(startDate?: string, endDate?: string) {
+                          try {
+                            message.loading({ content: '正在拉取KOOK频道历史消息，请稍候（可能需要1-3分钟）...', key: 'pull', duration: 0 });
+                            const res: any = await pullKookHistory(guildId, 50, startDate, endDate);
+                            message.destroy('pull');
+                            if (res?.error) { message.error(res.error); return; }
+                            Modal.success({
+                              title: '拉取完成',
+                              content: (
+                                <div>
+                                  <p>频道数：{res.channels}，共拉取 {res.pages} 页 {res.messages} 条消息</p>
+                                  <p>处理：{res.processed} 条 | 跳过：{res.skipped} 条 | 日期过滤：{res.filtered || 0} 条 | 错误：{res.errors} 条</p>
+                                  <p style={{ color: '#999', fontSize: 12 }}>已处理过的消息会自动去重跳过</p>
+                                </div>
+                              ),
+                            });
+                            fetchList();
+                          } catch (err: any) { message.destroy('pull'); message.error(err?.message || '拉取失败'); }
+                        }
                       }}
                     >
                       开始拉取

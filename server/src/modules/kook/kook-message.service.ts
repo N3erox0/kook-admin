@@ -968,8 +968,8 @@ export class KookMessageService {
    * 遍历公会的所有监听频道，用 KOOK API 拉取最近 pageSize 条消息
    * 每条消息走 processImageMessage / processOcBrokenMessage（含去重）
    */
-  async pullHistoryMessages(guildId: number, pageSize = 20, startDate?: string, endDate?: string): Promise<{
-    channels: number; messages: number; processed: number; skipped: number; errors: number; filtered: number;
+  async pullHistoryMessages(guildId: number, _pageSize = 50, startDate?: string, endDate?: string): Promise<{
+    channels: number; messages: number; processed: number; skipped: number; errors: number; filtered: number; pages: number;
   }> {
     const guild = await this.guildRepo.findOne({ where: { id: guildId, status: GuildStatus.ACTIVE } });
     if (!guild) throw new Error('公会不存在或未激活');
@@ -977,72 +977,105 @@ export class KookMessageService {
     const channelIds = guild.kookListenChannelIds || [];
     if (channelIds.length === 0) throw new Error('未配置监听频道，请先在公会设置中选择频道');
 
-    // V2.9.5: 日期过滤（KOOK消息时间戳为毫秒）
+    // 日期过滤（KOOK消息 create_at 为毫秒时间戳）
     const startTs = startDate ? new Date(`${startDate}T00:00:00`).getTime() : 0;
     const endTs = endDate ? new Date(`${endDate}T23:59:59`).getTime() : Infinity;
+    // 无日期限制时最多拉取 20 页（1000条），有日期限制时最多 40 页（2000条）
+    const MAX_PAGES_PER_CHANNEL = (startDate || endDate) ? 40 : 20;
+    const PAGE_SIZE = 50;
 
-    this.logger.log(`[V2.9.5 pullHistory] 开始拉取 ${channelIds.length} 个频道, 每频道 ${pageSize} 条, 日期范围: ${startDate || '无'} ~ ${endDate || '无'}`);
+    this.logger.log(`[V2.9.5 pullHistory] 开始: ${channelIds.length}频道, 日期=${startDate || '无'}~${endDate || '无'}, 每频道最多${MAX_PAGES_PER_CHANNEL}页`);
 
-    let totalMessages = 0, processed = 0, skipped = 0, errors = 0, filtered = 0;
+    let totalMessages = 0, processed = 0, skipped = 0, errors = 0, filtered = 0, totalPages = 0;
 
     for (const channelId of channelIds) {
-      try {
-        const messages = await this.kookService.getChannelMessages(channelId, undefined, 'after', pageSize);
-        this.logger.log(`[V2.9.5] 频道 ${channelId}: 拉取到 ${messages.length} 条消息`);
-        totalMessages += messages.length;
+      let lastMsgId: string | undefined = undefined;
+      let pageCount = 0;
+      let hasMore = true;
+      let reachedStartDate = false;
 
-        for (const msg of messages) {
-          try {
-            // 跳过 Bot 自身消息
-            if (msg.author?.bot) { skipped++; continue; }
+      while (hasMore && pageCount < MAX_PAGES_PER_CHANNEL) {
+        try {
+          // KOOK API: flag=before 表示获取 msg_id 之前的消息（从新到旧）
+          const messages = await this.kookService.getChannelMessages(
+            channelId, lastMsgId, lastMsgId ? 'before' : 'after', PAGE_SIZE,
+          );
+          pageCount++;
+          totalPages++;
 
-            // V2.9.5: 日期过滤（create_at 为毫秒时间戳）
-            const msgTime = (msg as any).create_at || 0;
-            if (msgTime > 0 && (msgTime < startTs || msgTime > endTs)) { filtered++; continue; }
+          if (messages.length === 0) { hasMore = false; break; }
+          if (messages.length < PAGE_SIZE) hasMore = false;
 
-            const authorId = msg.author?.id || '';
-            const authorName = msg.author?.nickname || msg.author?.username || authorId;
+          this.logger.log(`[V2.9.5] 频道 ${channelId} 第${pageCount}页: ${messages.length}条`);
+          totalMessages += messages.length;
 
-            // 构造与 Webhook 一致的消息结构
-            const fakeD: any = {
-              type: msg.type,
-              content: msg.content,
-              msg_id: msg.id,
-              author_id: authorId,
-              target_id: channelId,
-              extra: {
-                guild_id: guild.kookGuildId,
-                author: msg.author,
-                attachments: msg.attachments || [],
-              },
-            };
+          // 更新游标为最旧的消息ID
+          lastMsgId = messages[messages.length - 1]?.id;
 
-            const imageUrls = this.extractAllImageUrls(fakeD);
-            const textContent = typeof msg.content === 'string' ? msg.content : '';
+          for (const msg of messages) {
+            try {
+              if (msg.author?.bot) { skipped++; continue; }
 
-            if (imageUrls.length > 0) {
-              for (const imgUrl of imageUrls) {
-                await this.processImageMessage(guild, authorId, authorName, imgUrl, textContent, msg.id);
+              // 日期过滤
+              const msgTime = (msg as any).create_at || 0;
+              if (msgTime > 0) {
+                if (msgTime > endTs) { filtered++; continue; } // 太新，跳过
+                if (msgTime < startTs) {
+                  filtered++;
+                  reachedStartDate = true; // 已超出开始日期，后续更旧的消息都不需要了
+                  continue;
+                }
               }
-              processed++;
-            } else if (this.isOcBrokenMessage(textContent)) {
-              await this.processOcBrokenMessage(guild, authorId, authorName, textContent, msg.id);
-              processed++;
-            } else {
-              skipped++;
+
+              const authorId = msg.author?.id || '';
+              const authorName = msg.author?.nickname || msg.author?.username || authorId;
+
+              const fakeD: any = {
+                type: msg.type,
+                content: msg.content,
+                msg_id: msg.id,
+                author_id: authorId,
+                target_id: channelId,
+                extra: {
+                  guild_id: guild.kookGuildId,
+                  author: msg.author,
+                  attachments: msg.attachments || [],
+                },
+              };
+
+              const imageUrls = this.extractAllImageUrls(fakeD);
+              const textContent = typeof msg.content === 'string' ? msg.content : '';
+
+              if (imageUrls.length > 0) {
+                for (const imgUrl of imageUrls) {
+                  await this.processImageMessage(guild, authorId, authorName, imgUrl, textContent, msg.id);
+                }
+                processed++;
+              } else if (this.isOcBrokenMessage(textContent)) {
+                await this.processOcBrokenMessage(guild, authorId, authorName, textContent, msg.id);
+                processed++;
+              } else {
+                skipped++;
+              }
+            } catch (err) {
+              errors++;
+              this.logger.warn(`[V2.9.5] 消息处理失败 ${msg.id}: ${err}`);
             }
-          } catch (err) {
-            errors++;
-            this.logger.warn(`[V2.9.5] 消息处理失败 ${msg.id}: ${err}`);
           }
+
+          // 如果已经超出开始日期范围，不再翻页
+          if (reachedStartDate) { hasMore = false; }
+        } catch (err) {
+          errors++;
+          this.logger.warn(`[V2.9.5] 频道 ${channelId} 第${pageCount + 1}页拉取失败: ${err}`);
+          hasMore = false;
         }
-      } catch (err) {
-        errors++;
-        this.logger.warn(`[V2.9.5] 频道 ${channelId} 拉取失败: ${err}`);
       }
+
+      this.logger.log(`[V2.9.5] 频道 ${channelId} 完成: ${pageCount}页`);
     }
 
-    this.logger.log(`[V2.9.5 pullHistory] 完成: ${channelIds.length}频道, ${totalMessages}消息, 处理${processed}, 跳过${skipped}, 日期过滤${filtered}, 错误${errors}`);
-    return { channels: channelIds.length, messages: totalMessages, processed, skipped, errors, filtered };
+    this.logger.log(`[V2.9.5 pullHistory] 全部完成: ${channelIds.length}频道, ${totalPages}页, ${totalMessages}消息, 处理${processed}, 跳过${skipped}, 日期过滤${filtered}, 错误${errors}`);
+    return { channels: channelIds.length, messages: totalMessages, processed, skipped, errors, filtered, pages: totalPages };
   }
 }
