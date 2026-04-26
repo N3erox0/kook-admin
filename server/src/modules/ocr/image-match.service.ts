@@ -92,59 +92,48 @@ export class ImageMatchService {
       throw new Error('装备参考库未初始化图片指纹，请在参考库页面执行"生成图片指纹"');
     }
 
-    // 4. 对每个子图计算 pHash 并匹配（不在循环中调用数量 OCR，避免性能炸）
-    // F-104: 先完成所有 pHash 匹配，后对匹配成功的子图单独批量提取数量
-    // V2.9.6 F-152: 歧义检验改为比较不同装备名之间的距离（同名不同品质不算歧义）
+    // 4. 对每个子图计算 pHash 并匹配
+    // V2.9.6.1: 取消歧义检验（参考库装备多时gap永远<3导致全丢弃），直接取best结果
     const matches: { subBuf: Buffer; catalog: any; distance: number }[] = [];
     let discardedByThreshold = 0;
-    let discardedByAmbiguity = 0;
     for (const subBuf of subImages) {
       try {
         const cropped = await this.cropCenter(sharp, subBuf, 0.60);
         const hash = await this.computePhash(sharp, cropped);
 
-        // V2.9.6: 按装备名分组记录最佳距离
-        // 同名不同品质(如"堕神法杖"Q0~Q4)的pHash几乎相同，不应算歧义
+        // 按装备名分组，同名不同品质取最佳
         const bestByName = new Map<string, { cat: any; distance: number }>();
 
         for (const cat of catalogs) {
           if (!cat.imagePhash) continue;
           const dist = this.hammingDistance(hash, cat.imagePhash);
-          const name = cat.name; // 装备名称（不含品质）
+          const name = cat.name;
           const existing = bestByName.get(name);
           if (!existing || dist < existing.distance) {
             bestByName.set(name, { cat, distance: dist });
           }
         }
 
-        // 从按名分组的结果中找最佳和次佳（不同装备名）
+        // 取距离最小的装备名
         const sortedByName = [...bestByName.values()].sort((a, b) => a.distance - b.distance);
         if (sortedByName.length === 0) { discardedByThreshold++; continue; }
 
         const best = sortedByName[0];
-        const secondBest = sortedByName.length > 1 ? sortedByName[1] : null;
 
         if (best.distance > threshold) {
           discardedByThreshold++;
           continue;
         }
 
-        // V2.9.6 歧义检验：最佳 vs 次佳（不同装备名）差距 < AMBIGUITY_GAP 时丢弃
-        const secondBestDistance = secondBest ? secondBest.distance : 64;
-        const gap = secondBestDistance - best.distance;
-        if (gap < ImageMatchService.AMBIGUITY_GAP) {
-          discardedByAmbiguity++;
-          this.logger.debug(`[V2.9.6] 歧义匹配丢弃: best=${best.distance}(${best.cat.name}) 2nd=${secondBestDistance}(${secondBest?.cat.name}) gap=${gap}`);
-          continue;
-        }
-
+        // 直接取best，不做歧义丢弃
         matches.push({ subBuf, catalog: best.cat, distance: best.distance });
+        this.logger.debug(`[V2.9.6] 匹配成功: dist=${best.distance} name=${best.cat.name}`);
       } catch (err) {
         this.logger.warn(`子图匹配失败: ${err}`);
       }
     }
 
-    this.logger.log(`[V2.9.6] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（丢弃: 阈值${discardedByThreshold}+歧义${discardedByAmbiguity}）`);
+    this.logger.log(`[V2.9.6] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（阈值丢弃${discardedByThreshold}）`);
 
     // 5. 对匹配成功的子图批量提取数量（并发限制 + 总数上限）
     // 限制数量 OCR 总调用数不超过 MAX_QUANTITY_OCR，避免刷屏和配额消耗
@@ -252,10 +241,9 @@ export class ImageMatchService {
 
   /**
    * 批量为所有参考库装备生成 pHash
-   * 优先从本地文件读取图片，fallback 远程 URL
-   * @returns 成功/失败统计
+   * V2.9.6.1: 默认强制重算所有（force=true），修复alpha通道后需刷新全部
    */
-  async batchGeneratePhash(): Promise<{ total: number; success: number; failed: number }> {
+  async batchGeneratePhash(force = true): Promise<{ total: number; success: number; failed: number }> {
     const catalogs = await this.catalogRepo.find({
       where: {},
       select: ['id', 'imageUrl', 'imagePhash', 'localImagePath'],
@@ -267,7 +255,7 @@ export class ImageMatchService {
     for (let i = 0; i < catalogs.length; i += batchSize) {
       const batch = catalogs.slice(i, i + batchSize);
       const promises = batch.map(async (cat) => {
-        if (cat.imagePhash) { success++; return; } // 已有则跳过
+        if (!force && cat.imagePhash) { success++; return; } // 非强制模式：已有则跳过
         if (!cat.imageUrl && !cat.localImagePath) { failed++; return; }
 
         const hash = await this.generatePhashForCatalog(cat.id, cat.imageUrl, cat.localImagePath);
@@ -548,11 +536,13 @@ export class ImageMatchService {
     const blackTR = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
     const blackBR = await sharp({ create: { width: brCornerW, height: brCornerH, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
 
+    // V2.9.6.1: flatten先消除alpha通道，确保composite通道一致
     return sharp(buffer)
+      .flatten({ background: { r: 0, g: 0, b: 0 } })
       .composite([
-        { input: blackTL, left: 0, top: 0 },                           // 左上角：等级
-        { input: blackTR, left: w - cornerSize, top: 0 },              // 右上角：五角星
-        { input: blackBR, left: w - brCornerW, top: h - brCornerH },   // 右下角：数量
+        { input: blackTL, left: 0, top: 0 },
+        { input: blackTR, left: w - cornerSize, top: 0 },
+        { input: blackBR, left: w - brCornerW, top: h - brCornerH },
       ])
       .toBuffer();
   }
@@ -562,8 +552,9 @@ export class ImageMatchService {
    * 步骤：缩放 32x32 → 灰度 → DCT → 取 8x8 低频 → 中值二值化 → 64bit hex
    */
   private async computePhash(sharp: any, buffer: Buffer): Promise<string> {
-    // 缩放为 32x32 灰度
+    // V2.9.6.1: flatten() 消除 alpha 通道差异（参考库PNG透明图 vs 用户截图JPEG）
     const pixels = await sharp(buffer)
+      .flatten({ background: { r: 0, g: 0, b: 0 } })
       .resize(32, 32, { fit: 'fill' })
       .grayscale()
       .raw()
