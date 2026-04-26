@@ -962,4 +962,79 @@ export class KookMessageService {
 
     return urls;
   }
+
+  /**
+   * V2.9.5: 主动拉取监听频道历史消息并按现有逻辑处理
+   * 遍历公会的所有监听频道，用 KOOK API 拉取最近 pageSize 条消息
+   * 每条消息走 processImageMessage / processOcBrokenMessage（含去重）
+   */
+  async pullHistoryMessages(guildId: number, pageSize = 20): Promise<{
+    channels: number; messages: number; processed: number; skipped: number; errors: number;
+  }> {
+    const guild = await this.guildRepo.findOne({ where: { id: guildId, status: GuildStatus.ACTIVE } });
+    if (!guild) throw new Error('公会不存在或未激活');
+
+    const channelIds = guild.kookListenChannelIds || [];
+    if (channelIds.length === 0) throw new Error('未配置监听频道，请先在公会设置中选择频道');
+
+    this.logger.log(`[V2.9.5 pullHistory] 开始拉取 ${channelIds.length} 个频道, 每频道 ${pageSize} 条`);
+
+    let totalMessages = 0, processed = 0, skipped = 0, errors = 0;
+
+    for (const channelId of channelIds) {
+      try {
+        const messages = await this.kookService.getChannelMessages(channelId, undefined, 'after', pageSize);
+        this.logger.log(`[V2.9.5] 频道 ${channelId}: 拉取到 ${messages.length} 条消息`);
+        totalMessages += messages.length;
+
+        for (const msg of messages) {
+          try {
+            // 跳过 Bot 自身消息
+            if (msg.author?.bot) { skipped++; continue; }
+
+            const authorId = msg.author?.id || '';
+            const authorName = msg.author?.nickname || msg.author?.username || authorId;
+
+            // 构造与 Webhook 一致的消息结构
+            const fakeD: any = {
+              type: msg.type,
+              content: msg.content,
+              msg_id: msg.id,
+              author_id: authorId,
+              target_id: channelId,
+              extra: {
+                guild_id: guild.kookGuildId,
+                author: msg.author,
+                attachments: msg.attachments || [],
+              },
+            };
+
+            const imageUrls = this.extractAllImageUrls(fakeD);
+            const textContent = typeof msg.content === 'string' ? msg.content : '';
+
+            if (imageUrls.length > 0) {
+              for (const imgUrl of imageUrls) {
+                await this.processImageMessage(guild, authorId, authorName, imgUrl, textContent, msg.id);
+              }
+              processed++;
+            } else if (this.isOcBrokenMessage(textContent)) {
+              await this.processOcBrokenMessage(guild, authorId, authorName, textContent, msg.id);
+              processed++;
+            } else {
+              skipped++;
+            }
+          } catch (err) {
+            errors++;
+            this.logger.warn(`[V2.9.5] 消息处理失败 ${msg.id}: ${err}`);
+          }
+        }
+      } catch (err) {
+        errors++;
+        this.logger.warn(`[V2.9.5] 频道 ${channelId} 拉取失败: ${err}`);
+      }
+    }
+
+    this.logger.log(`[V2.9.5 pullHistory] 完成: ${channelIds.length}频道, ${totalMessages}消息, 处理${processed}, 跳过${skipped}, 错误${errors}`);
+    return { channels: channelIds.length, messages: totalMessages, processed, skipped, errors };
+  }
 }

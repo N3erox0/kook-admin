@@ -200,4 +200,21 @@ export class KookController {
       return { error: err.message || '刷新公会信息失败' };
     }
   }
+
+  /**
+   * V2.9.5: 主动拉取监听频道历史消息并处理（Webhook备用方案）
+   * 遍历公会的所有监听频道，拉取最近N条消息，按现有逻辑处理（含去重）
+   */
+  @Post('guild/:guildId/pull-history')
+  @UseGuards(JwtAuthGuard)
+  async pullHistory(
+    @Param('guildId', ParseIntPipe) guildId: number,
+    @Body() body: { pageSize?: number },
+  ) {
+    try {
+      return await this.messageService.pullHistoryMessages(guildId, body?.pageSize || 20);
+    } catch (err: any) {
+      return { error: err.message || '拉取历史消息失败' };
+    }
+  }
 }

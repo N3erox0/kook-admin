@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Image, DatePicker, AutoComplete, Tabs } from 'antd';
-import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined, ExpandAltOutlined, DeleteOutlined, ScanOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined, ExpandAltOutlined, DeleteOutlined, ScanOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
-import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply } from '@/api/resupply';
+import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply, pullKookHistory } from '@/api/resupply';
 import { searchCatalog } from '@/api/catalog';
 import { useGuildStore } from '@/stores/guild.store';
 import { RESUPPLY_STATUS, formatEquipName } from '@/types';
@@ -296,6 +296,21 @@ export default function ResupplyPage() {
           {activeTab === 'list' && (
             <>
               <Button icon={<ReloadOutlined />} onClick={() => mergedView ? fetchMergedList() : fetchList()}>刷新</Button>
+              <Button
+                icon={<CloudDownloadOutlined />}
+                onClick={async () => {
+                  try {
+                    message.loading({ content: '正在拉取KOOK频道历史消息...', key: 'pull', duration: 0 });
+                    const res: any = await pullKookHistory(guildId, 50);
+                    message.destroy('pull');
+                    if (res?.error) { message.error(res.error); return; }
+                    message.success(`拉取完成：${res.channels}个频道, ${res.messages}条消息, 处理${res.processed}条, 跳过${res.skipped}条`);
+                    fetchList();
+                  } catch (err: any) { message.destroy('pull'); message.error(err?.message || '拉取失败'); }
+                }}
+              >
+                拉取历史消息
+              </Button>
               <Button
                 icon={<MergeCellsOutlined />}
                 type={mergedView ? 'primary' : 'default'}
