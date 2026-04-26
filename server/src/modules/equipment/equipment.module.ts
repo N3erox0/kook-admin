@@ -15,7 +15,7 @@ import { EquipmentCatalogModule } from '../equipment-catalog/catalog.module';
     TypeOrmModule.forFeature([GuildInventory, EquipmentCatalog, GuildMember, User]),
     InventoryLogModule,
     forwardRef(() => OcrModule),
-    EquipmentCatalogModule,
+    forwardRef(() => EquipmentCatalogModule),
   ],
   controllers: [EquipmentController],
   providers: [EquipmentService],
