@@ -309,6 +309,166 @@ export class ImageMatchService {
     return this.matchFromScreenshot(regionBuffer, { skipQuantity: true });
   }
 
+  /**
+   * V2.9.7 F-156: 击杀详情左面板固定格子分类匹配
+   * 左面板装备格子布局（固定 3列×4行，共10个有效格子）：
+   *   行0: [其他(包)] [头]     [披风]
+   *   行1: [武器]    [甲]     [副手]
+   *   行2: [药水]    [鞋]     [食物]
+   *   行3: [坐骑]    [空]     [空]
+   * 每个格子只在对应category范围内匹配参考库
+   */
+  private static readonly KILL_DETAIL_SLOT_MAP: Array<{ row: number; col: number; category: string }> = [
+    { row: 0, col: 0, category: '其他' },   // 包
+    { row: 0, col: 1, category: '头' },
+    { row: 0, col: 2, category: '披风' },
+    { row: 1, col: 0, category: '武器' },
+    { row: 1, col: 1, category: '甲' },
+    { row: 1, col: 2, category: '副手' },
+    { row: 2, col: 0, category: '药水' },
+    { row: 2, col: 1, category: '鞋' },
+    { row: 2, col: 2, category: '食物' },
+    { row: 3, col: 0, category: '坐骑' },
+  ];
+
+  async matchKillDetailSlots(leftPanelBuffer: Buffer): Promise<{
+    catalogId: number;
+    catalogName: string;
+    level: number;
+    quality: number;
+    category: string;
+    gearScore: number;
+    confidence: number;
+    imageUrl: string | null;
+    quantity: number;
+    slotCategory: string;
+  }[]> {
+    let sharp: any;
+    try { sharp = require('sharp'); } catch {
+      throw new Error('图片处理模块未安装');
+    }
+
+    const metadata = await sharp(leftPanelBuffer).metadata();
+    const panelW = metadata.width || 0;
+    const panelH = metadata.height || 0;
+    if (!panelW || !panelH) throw new Error('无法读取左面板尺寸');
+
+    // 左面板是 3列×4行 的网格，计算每格尺寸
+    const cellW = Math.floor(panelW / 3);
+    const cellH = Math.floor(panelH / 4);
+    // 如果格子太小可能裁切不对，用面板高度/3.5估算（3行半，第4行只有1格）
+    const effectiveCellH = Math.min(cellH, Math.floor(panelH / 3.5));
+    const effectiveCellW = Math.min(cellW, effectiveCellH * 1.1); // 格子接近正方形
+
+    this.logger.log(`[V2.9.7] 左面板 ${panelW}x${panelH}, 格子 ${effectiveCellW}x${effectiveCellH}`);
+
+    // 加载参考库（带pHash的），按category分组
+    const allCatalogs = await this.catalogRepo
+      .createQueryBuilder('c')
+      .where('c.imagePhash IS NOT NULL')
+      .andWhere('c.imagePhash != :empty', { empty: '' })
+      .orderBy('c.popularity', 'DESC') // F-158: 热度高的优先
+      .getMany();
+
+    if (allCatalogs.length === 0) {
+      this.logger.warn('参考库中没有已计算 pHash 的装备');
+      return [];
+    }
+
+    // 按category分组
+    const catalogsByCategory = new Map<string, typeof allCatalogs>();
+    for (const cat of allCatalogs) {
+      const arr = catalogsByCategory.get(cat.category) || [];
+      arr.push(cat);
+      catalogsByCategory.set(cat.category, arr);
+    }
+
+    const threshold = ImageMatchService.LOOSE_HAMMING_THRESHOLD; // 宽松模式
+    const results: any[] = [];
+
+    for (const slot of ImageMatchService.KILL_DETAIL_SLOT_MAP) {
+      try {
+        // 裁切该格子
+        const left = slot.col * effectiveCellW;
+        const top = slot.row * effectiveCellH;
+        if (left + effectiveCellW > panelW || top + effectiveCellH > panelH) {
+          this.logger.debug(`[V2.9.7] 格子(${slot.row},${slot.col}) 越界，跳过`);
+          continue;
+        }
+
+        const cellBuf = await sharp(leftPanelBuffer)
+          .extract({ left, top, width: effectiveCellW, height: effectiveCellH })
+          .toBuffer();
+
+        // 过滤空白格子
+        const stats = await sharp(cellBuf).stats();
+        const avg = stats.channels[0]?.mean || 0;
+        if (avg < 15 || avg > 240) {
+          this.logger.debug(`[V2.9.7] 格子(${slot.row},${slot.col}) ${slot.category} 空白，跳过`);
+          continue;
+        }
+
+        // 计算 pHash
+        const cropped = await this.cropCenter(sharp, cellBuf, 0.60);
+        const hash = await this.computePhash(sharp, cropped);
+
+        // 只在对应 category 内匹配
+        let candidateCatalogs = catalogsByCategory.get(slot.category) || [];
+        // 副手格也可能是主手（双手武器），所以副手格额外搜索武器分类
+        if (slot.category === '副手') {
+          const weaponCatalogs = catalogsByCategory.get('武器') || [];
+          candidateCatalogs = [...candidateCatalogs, ...weaponCatalogs];
+        }
+
+        if (candidateCatalogs.length === 0) {
+          this.logger.debug(`[V2.9.7] ${slot.category} 分类无参考库装备，跳过`);
+          continue;
+        }
+
+        // 按装备名分组取最佳
+        const bestByName = new Map<string, { cat: any; distance: number }>();
+        for (const cat of candidateCatalogs) {
+          if (!cat.imagePhash) continue;
+          const dist = this.hammingDistance(hash, cat.imagePhash);
+          const name = cat.name;
+          const existing = bestByName.get(name);
+          if (!existing || dist < existing.distance) {
+            bestByName.set(name, { cat, distance: dist });
+          }
+        }
+
+        const sorted = [...bestByName.values()].sort((a, b) => a.distance - b.distance);
+        if (sorted.length === 0) continue;
+
+        const best = sorted[0];
+        if (best.distance > threshold) {
+          this.logger.debug(`[V2.9.7] 格子(${slot.row},${slot.col}) ${slot.category} best=${best.distance}(${best.cat.name}) 超阈值${threshold}`);
+          continue;
+        }
+
+        const confidence = Math.round((1 - best.distance / 64) * 100) / 100;
+        results.push({
+          catalogId: best.cat.id,
+          catalogName: best.cat.name,
+          level: best.cat.level,
+          quality: best.cat.quality,
+          category: best.cat.category,
+          gearScore: best.cat.gearScore,
+          confidence,
+          imageUrl: best.cat.imageUrl,
+          quantity: 1,
+          slotCategory: slot.category,
+        });
+        this.logger.log(`[V2.9.7] 格子(${slot.row},${slot.col}) ${slot.category} → ${best.cat.name} dist=${best.distance} conf=${confidence}`);
+      } catch (err) {
+        this.logger.warn(`[V2.9.7] 格子(${slot.row},${slot.col}) 处理失败: ${err}`);
+      }
+    }
+
+    this.logger.log(`[V2.9.7] 击杀详情分类匹配完成: ${results.length}/10 格子匹配成功`);
+    return results;
+  }
+
   // ===== 内部方法 =====
 
   /**

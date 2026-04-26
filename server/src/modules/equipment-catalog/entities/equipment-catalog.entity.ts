@@ -43,6 +43,9 @@ export class EquipmentCatalog {
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '描述' })
   description: string;
 
+  @Column({ type: 'int', default: 1, comment: '装备热度 1~5（基于库存扣减频率）' })
+  popularity: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

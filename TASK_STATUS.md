@@ -228,6 +228,11 @@
 | F-153 | OC碎关键词扩展 | completed | 2026-04-26 22:55 | isOcBrokenMessage改为匹配"碎"字，覆盖OC碎/mass碎/领地碎等所有变体 |
 | F-154 | OC碎解析优化-"碎"后文字为装备区 | completed | 2026-04-26 22:55 | 以第一个"碎"字为分界，"碎"后文字作为装备描述区高亮解析 |
 | F-155 | 繁体关键词支持 | completed | 2026-04-26 22:55 | parseKillDetail增加"擊殺詳細資訊"/"擊殺詳情"正则匹配 |
+| **V2.9.7** | **击杀详情分类匹配+装备热度** | | | |
+| F-156 | 击杀详情左面板固定格子分类匹配 | completed | 2026-04-27 00:14 | 左面板3×4网格固定布局(包/头/披风/主手/甲/副手/药水/鞋/食物/坐骑)，每格只在对应category内匹配 |
+| F-157 | 装备热度字段+定时任务 | completed | 2026-04-27 00:14 | equipment_catalog新增popularity 1~5，每天03:00统计inventory_logs扣减次数更新热度 |
+| F-158 | 分类匹配按热度排序 | completed | 2026-04-27 00:14 | matchKillDetailSlots查询参考库时按popularity DESC排序，热门装备优先匹配 |
+| F-159 | V2.9.6.1修复整合 | completed | 2026-04-27 00:14 | 移除歧义检验+flatten修复alpha通道+batchGeneratePhash默认强制重算 |
 
 
 

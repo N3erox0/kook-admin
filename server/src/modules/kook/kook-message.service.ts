@@ -430,21 +430,25 @@ export class KookMessageService {
       // Step 3: pHash 匹配装备（仅击杀详情流程）
       let matchResults: any[] = [];
 
-      // 尝试定位左面板区域后裁切匹配
+      // V2.9.7 F-156: 优先使用固定格子分类匹配（左面板3×4网格，每格只匹配对应category）
       const leftRegion = this.detectLeftPanel(detections, imageBuffer);
       if (leftRegion) {
         try {
-          matchResults = await this.imageMatchService.matchFromRegion(imageBuffer, leftRegion);
-          this.logger.log(`[${guild.name}] 击杀详情左面板匹配: ${matchResults.length} 件`);
+          const sharp = require('sharp');
+          const leftPanelBuf = await sharp(imageBuffer)
+            .extract({ left: leftRegion.left, top: leftRegion.top, width: leftRegion.width, height: leftRegion.height })
+            .toBuffer();
+          matchResults = await this.imageMatchService.matchKillDetailSlots(leftPanelBuf);
+          this.logger.log(`[${guild.name}] V2.9.7 击杀详情分类匹配: ${matchResults.length} 件`);
         } catch (err) {
-          this.logger.warn(`左面板裁切匹配失败，降级为全图匹配: ${err}`);
+          this.logger.warn(`V2.9.7 分类匹配失败，降级为全图匹配: ${err}`);
         }
       }
-      // 左面板匹配无结果时降级为全图匹配
+      // 分类匹配无结果时降级为全图匹配
       if (matchResults.length === 0) {
         try {
           matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
-          this.logger.log(`[${guild.name}] 全图pHash匹配: ${matchResults.length} 件`);
+          this.logger.log(`[${guild.name}] 全图pHash匹配(降级): ${matchResults.length} 件`);
         } catch (err) {
           this.logger.warn(`全图pHash匹配失败: ${err}`);
         }

@@ -9,6 +9,8 @@ import { KookService } from '../kook/kook.service';
 import { AlertService } from '../alert/alert.service';
 import { ResupplyService } from '../resupply/resupply.service';
 import { ScheduledTask } from './entities/scheduled-task.entity';
+import { InventoryLog } from '../inventory-log/entities/inventory-log.entity';
+import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
 import { GuildStatus } from '../../common/constants/enums';
 
 @Injectable()
@@ -18,6 +20,8 @@ export class SchedulerService {
   constructor(
     @InjectRepository(Guild) private guildRepo: Repository<Guild>,
     @InjectRepository(ScheduledTask) private taskRepo: Repository<ScheduledTask>,
+    @InjectRepository(InventoryLog) private inventoryLogRepo: Repository<InventoryLog>,
+    @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
     private kookSyncService: KookSyncService,
     private kookNotifyService: KookNotifyService,
     private kookService: KookService,
@@ -148,6 +152,61 @@ export class SchedulerService {
     }
 
     await this.recordTask('resupply_reaction', Date.now() - startTime, `已回应 ${totalReacted} 条`);
+  }
+
+  /**
+   * V2.9.7 F-157: 每天 03:00 — 装备热度统计
+   * 统计每个catalogId在inventory_logs中action=resupply_deduct的总扣减次数
+   * 规则：>1次→2, >100次→3, >1000次→4, >10000次→5
+   */
+  @Cron('0 0 3 * * *')
+  async refreshEquipmentPopularity() {
+    this.logger.log('定时任务：开始刷新装备热度（03:00）');
+    const startTime = Date.now();
+
+    try {
+      // 统计每个catalogId的总扣减次数（所有公会合计）
+      const deductCounts: { catalogId: number; cnt: string }[] = await this.inventoryLogRepo
+        .createQueryBuilder('l')
+        .select('l.catalog_id', 'catalogId')
+        .addSelect('COUNT(*)', 'cnt')
+        .where('l.action = :action', { action: 'resupply_deduct' })
+        .groupBy('l.catalog_id')
+        .getRawMany();
+
+      let updated = 0;
+      for (const row of deductCounts) {
+        if (!row.catalogId) continue;
+        const count = parseInt(row.cnt, 10) || 0;
+        let popularity = 1;
+        if (count > 10000) popularity = 5;
+        else if (count > 1000) popularity = 4;
+        else if (count > 100) popularity = 3;
+        else if (count > 1) popularity = 2;
+
+        if (popularity > 1) {
+          await this.catalogRepo.update(row.catalogId, { popularity });
+          updated++;
+        }
+      }
+
+      // 未出现在扣减记录中的装备重置为1
+      await this.catalogRepo
+        .createQueryBuilder()
+        .update(EquipmentCatalog)
+        .set({ popularity: 1 })
+        .where('popularity > 1')
+        .andWhere('id NOT IN (:...ids)', {
+          ids: deductCounts.filter(r => r.catalogId).map(r => r.catalogId).concat([0]),
+        })
+        .execute();
+
+      this.logger.log(`装备热度刷新完成: ${updated} 件装备热度已更新`);
+      await this.recordTask('equipment_popularity', Date.now() - startTime, `已更新 ${updated} 件装备热度`);
+    } catch (err) {
+      this.logger.error(`装备热度刷新失败: ${err}`);
+      await this.recordTask('equipment_popularity', Date.now() - startTime, `失败: ${err}`);
+    }
   }
 
   private async recordTask(name: string, durationMs: number, result: string) {
