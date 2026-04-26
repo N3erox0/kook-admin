@@ -307,22 +307,22 @@ export class ResupplyService {
     await this.resupplyRepo.save(r);
     await this.addLog(guildId, id, dto.action, fromStatus, String(r.status), operatorId, operatorName, dto.remark);
 
-    // KOOK 通知（异步）
-    try {
-      const eqDisplay = r.equipmentIds || '未知装备';
-      if (dto.action === 'reject' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyRejected(r.kookUserId, eqDisplay, r.quantity, dto.remark || '');
-      } else if (dto.action === 'approve' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyApproved(r.kookUserId, eqDisplay, r.quantity);
-      } else if (dto.action === 'dispatch' && r.kookUserId) {
-        this.kookNotifyService.notifyResupplyDispatched(r.kookUserId, eqDisplay, r.dispatchQuantity || r.quantity);
-      }
-      this.kookNotifyService.notifyResupplyStatusChange(
-        r.kookNickname || '未知', eqDisplay, r.quantity, r.status, dto.remark,
-      );
-    } catch (err) {
-      this.logger.error(`KOOK 通知发送失败: ${err}`);
-    }
+    // V2.9.7: 暂停所有KOOK补装通知，待重新设计通知规则
+    // try {
+    //   const eqDisplay = r.equipmentIds || '未知装备';
+    //   if (dto.action === 'reject' && r.kookUserId) {
+    //     this.kookNotifyService.notifyResupplyRejected(r.kookUserId, eqDisplay, r.quantity, dto.remark || '');
+    //   } else if (dto.action === 'approve' && r.kookUserId) {
+    //     this.kookNotifyService.notifyResupplyApproved(r.kookUserId, eqDisplay, r.quantity);
+    //   } else if (dto.action === 'dispatch' && r.kookUserId) {
+    //     this.kookNotifyService.notifyResupplyDispatched(r.kookUserId, eqDisplay, r.dispatchQuantity || r.quantity);
+    //   }
+    //   this.kookNotifyService.notifyResupplyStatusChange(
+    //     r.kookNickname || '未知', eqDisplay, r.quantity, r.status, dto.remark,
+    //   );
+    // } catch (err) {
+    //   this.logger.error(`KOOK 通知发送失败: ${err}`);
+    // }
 
     return { id, status: r.status };
   }

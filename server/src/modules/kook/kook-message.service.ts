@@ -497,15 +497,11 @@ export class KookMessageService {
       if (result.skipped) {
         this.logger.log(`[${guild.name}] 补装去重命中，跳过`);
       } else {
-        const msg = catalogIds.length > 0
-          ? `收到击杀详情补装申请：${catalogIds.length} 件装备已识别，待管理员确认。`
-          : `收到击杀详情截图，已创建待确认补装记录。装备未能自动识别，请管理员在后台手动补充。`;
-        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        // V2.9.7: 暂停私信通知，待重新设计通知规则
         this.logger.log(`[${guild.name}] ${kookNickname} 击杀详情补装记录已创建 (${catalogIds.length}件装备)`);
       }
     } catch (err) {
       this.logger.error(`处理图片消息失败: ${err}`);
-      try { await this.kookService.sendDirectMessage(kookUserId, '补装申请处理失败，请稍后重试或联系管理员。'); } catch {}
     }
   }
 
@@ -545,7 +541,8 @@ export class KookMessageService {
           this.logger.error(`OC碎空段存入待识别失败: ${err}`);
         }
         const msg = 'OC碎消息未识别到有效装备词段，已存入待识别工作区，请管理员手动确认。';
-        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        // V2.9.7: 暂停私信通知
+        this.logger.log(`[${guild.name}] ${msg}`);
         return;
       }
 
@@ -614,7 +611,8 @@ export class KookMessageService {
           this.logger.error(`OC碎存入待识别失败: ${err}`);
         }
         const msg = `OC碎消息中有${unmatchedSegments.length}个未识别词段（${unmatchedSegments.join('、')}），已存入待识别工作区，请管理员手动确认。`;
-        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        // V2.9.7: 暂停私信通知
+        this.logger.log(`[${guild.name}] ${msg}`);
         return;
       }
 
@@ -631,8 +629,7 @@ export class KookMessageService {
         };
         await this.resupplyService.create(guild.id, createDto);
 
-        const msg = `收到OC碎补装申请：${matchedIds.length} 件装备已匹配提交（${matchedNames.join('、')}）。`;
-        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        // V2.9.7: 暂停私信通知
         this.logger.log(`[${guild.name}] ${kookNickname} OC碎补装创建成功: ${matchedIds.length}件`);
       }
     } catch (err) {

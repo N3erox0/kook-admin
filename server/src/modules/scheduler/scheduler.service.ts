@@ -108,9 +108,12 @@ export class SchedulerService {
     await this.recordTask('death_count_alert', Date.now() - startTime, `已推送 ${totalAlerts} 条死亡预警`);
   }
 
-  /** 每天 14:00 — 补装通过回应表情 */
-  @Cron('0 0 14 * * *')
+  /** 每天 14:00 — 补装通过回应表情（V2.9.7: 暂停，待重新设计通知规则） */
+  // @Cron('0 0 14 * * *')
   async addResupplyApprovalReaction() {
+    this.logger.log('定时任务：补装回应表情已暂停');
+    return;
+    /* 原逻辑暂停
     this.logger.log('定时任务：开始给已通过补装添加回应表情（14:00）');
     const guilds = await this.guildRepo.find({ where: { status: 1 } });
     const startTime = Date.now();
@@ -153,6 +156,7 @@ export class SchedulerService {
 
     await this.recordTask('resupply_reaction', Date.now() - startTime, `已回应 ${totalReacted} 条`);
   }
+  原逻辑暂停结束 */
 
   /**
    * V2.9.7 F-157: 每天 03:00 — 装备热度统计
