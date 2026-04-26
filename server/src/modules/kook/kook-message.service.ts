@@ -968,8 +968,8 @@ export class KookMessageService {
    * 遍历公会的所有监听频道，用 KOOK API 拉取最近 pageSize 条消息
    * 每条消息走 processImageMessage / processOcBrokenMessage（含去重）
    */
-  async pullHistoryMessages(guildId: number, pageSize = 20): Promise<{
-    channels: number; messages: number; processed: number; skipped: number; errors: number;
+  async pullHistoryMessages(guildId: number, pageSize = 20, startDate?: string, endDate?: string): Promise<{
+    channels: number; messages: number; processed: number; skipped: number; errors: number; filtered: number;
   }> {
     const guild = await this.guildRepo.findOne({ where: { id: guildId, status: GuildStatus.ACTIVE } });
     if (!guild) throw new Error('公会不存在或未激活');
@@ -977,9 +977,13 @@ export class KookMessageService {
     const channelIds = guild.kookListenChannelIds || [];
     if (channelIds.length === 0) throw new Error('未配置监听频道，请先在公会设置中选择频道');
 
-    this.logger.log(`[V2.9.5 pullHistory] 开始拉取 ${channelIds.length} 个频道, 每频道 ${pageSize} 条`);
+    // V2.9.5: 日期过滤（KOOK消息时间戳为毫秒）
+    const startTs = startDate ? new Date(`${startDate}T00:00:00`).getTime() : 0;
+    const endTs = endDate ? new Date(`${endDate}T23:59:59`).getTime() : Infinity;
 
-    let totalMessages = 0, processed = 0, skipped = 0, errors = 0;
+    this.logger.log(`[V2.9.5 pullHistory] 开始拉取 ${channelIds.length} 个频道, 每频道 ${pageSize} 条, 日期范围: ${startDate || '无'} ~ ${endDate || '无'}`);
+
+    let totalMessages = 0, processed = 0, skipped = 0, errors = 0, filtered = 0;
 
     for (const channelId of channelIds) {
       try {
@@ -991,6 +995,10 @@ export class KookMessageService {
           try {
             // 跳过 Bot 自身消息
             if (msg.author?.bot) { skipped++; continue; }
+
+            // V2.9.5: 日期过滤（create_at 为毫秒时间戳）
+            const msgTime = (msg as any).create_at || 0;
+            if (msgTime > 0 && (msgTime < startTs || msgTime > endTs)) { filtered++; continue; }
 
             const authorId = msg.author?.id || '';
             const authorName = msg.author?.nickname || msg.author?.username || authorId;
@@ -1034,7 +1042,7 @@ export class KookMessageService {
       }
     }
 
-    this.logger.log(`[V2.9.5 pullHistory] 完成: ${channelIds.length}频道, ${totalMessages}消息, 处理${processed}, 跳过${skipped}, 错误${errors}`);
-    return { channels: channelIds.length, messages: totalMessages, processed, skipped, errors };
+    this.logger.log(`[V2.9.5 pullHistory] 完成: ${channelIds.length}频道, ${totalMessages}消息, 处理${processed}, 跳过${skipped}, 日期过滤${filtered}, 错误${errors}`);
+    return { channels: channelIds.length, messages: totalMessages, processed, skipped, errors, filtered };
   }
 }

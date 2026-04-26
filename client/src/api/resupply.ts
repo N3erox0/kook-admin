@@ -53,7 +53,7 @@ export const previewMatchFromUrl = (
   request.post(`/guild/${guildId}/resupply/preview-from-url`, data);
 
 /** V2.9.5: 主动拉取KOOK频道历史消息 */
-export const pullKookHistory = (guildId: number, pageSize = 20) =>
-  request.post(`/kook/guild/${guildId}/pull-history`, { pageSize });
+export const pullKookHistory = (guildId: number, pageSize = 20, startDate?: string, endDate?: string) =>
+  request.post(`/kook/guild/${guildId}/pull-history`, { pageSize, startDate, endDate });
 
 

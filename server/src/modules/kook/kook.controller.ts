@@ -209,10 +209,10 @@ export class KookController {
   @UseGuards(JwtAuthGuard)
   async pullHistory(
     @Param('guildId', ParseIntPipe) guildId: number,
-    @Body() body: { pageSize?: number },
+    @Body() body: { pageSize?: number; startDate?: string; endDate?: string },
   ) {
     try {
-      return await this.messageService.pullHistoryMessages(guildId, body?.pageSize || 20);
+      return await this.messageService.pullHistoryMessages(guildId, body?.pageSize || 20, body?.startDate, body?.endDate);
     } catch (err: any) {
       return { error: err.message || '拉取历史消息失败' };
     }

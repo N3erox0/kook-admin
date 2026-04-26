@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Image, DatePicker, AutoComplete, Tabs } from 'antd';
+import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Image, DatePicker, AutoComplete, Tabs, Popover } from 'antd';
 import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined, ExpandAltOutlined, DeleteOutlined, ScanOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply, pullKookHistory } from '@/api/resupply';
@@ -296,21 +296,46 @@ export default function ResupplyPage() {
           {activeTab === 'list' && (
             <>
               <Button icon={<ReloadOutlined />} onClick={() => mergedView ? fetchMergedList() : fetchList()}>刷新</Button>
-              <Button
-                icon={<CloudDownloadOutlined />}
-                onClick={async () => {
-                  try {
-                    message.loading({ content: '正在拉取KOOK频道历史消息...', key: 'pull', duration: 0 });
-                    const res: any = await pullKookHistory(guildId, 50);
-                    message.destroy('pull');
-                    if (res?.error) { message.error(res.error); return; }
-                    message.success(`拉取完成：${res.channels}个频道, ${res.messages}条消息, 处理${res.processed}条, 跳过${res.skipped}条`);
-                    fetchList();
-                  } catch (err: any) { message.destroy('pull'); message.error(err?.message || '拉取失败'); }
-                }}
+              <Popover
+                trigger="click"
+                title="拉取KOOK频道历史消息"
+                content={
+                  <div style={{ width: 280 }}>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+                      从已监听频道主动拉取消息，已处理的不会重复添加
+                    </Text>
+                    <DatePicker.RangePicker
+                      style={{ width: '100%', marginBottom: 8 }}
+                      onChange={(dates) => {
+                        (window as any).__pullDateRange = dates;
+                      }}
+                      placeholder={['开始日期', '结束日期']}
+                    />
+                    <Button
+                      type="primary"
+                      block
+                      icon={<CloudDownloadOutlined />}
+                      onClick={async () => {
+                        const dates = (window as any).__pullDateRange;
+                        const sd = dates?.[0]?.format('YYYY-MM-DD');
+                        const ed = dates?.[1]?.format('YYYY-MM-DD');
+                        try {
+                          message.loading({ content: '正在拉取...', key: 'pull', duration: 0 });
+                          const res: any = await pullKookHistory(guildId, 50, sd, ed);
+                          message.destroy('pull');
+                          if (res?.error) { message.error(res.error); return; }
+                          message.success(`拉取完成：${res.channels}频道, ${res.messages}条消息, 处理${res.processed}, 跳过${res.skipped}${res.filtered ? ', 日期过滤' + res.filtered : ''}`);
+                          fetchList();
+                        } catch (err: any) { message.destroy('pull'); message.error(err?.message || '拉取失败'); }
+                      }}
+                    >
+                      开始拉取
+                    </Button>
+                  </div>
+                }
               >
-                拉取历史消息
-              </Button>
+                <Button icon={<CloudDownloadOutlined />}>拉取历史消息</Button>
+              </Popover>
               <Button
                 icon={<MergeCellsOutlined />}
                 type={mergedView ? 'primary' : 'default'}
