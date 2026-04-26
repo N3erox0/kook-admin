@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
+import { ImageMatchService } from '../ocr/image-match.service';
 import { CreateCatalogDto, UpdateCatalogDto, QueryCatalogDto, BatchCreateCatalogDto, BatchMatchCatalogDto } from './dto/catalog.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
@@ -12,7 +13,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard)
 @Controller('api/catalog')
 export class CatalogController {
-  constructor(private readonly catalogService: CatalogService) {}
+  constructor(
+    private readonly catalogService: CatalogService,
+    private readonly imageMatchService: ImageMatchService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: '查询装备参考库列表' })
@@ -141,5 +145,15 @@ export class CatalogController {
     @Param('imageId', ParseIntPipe) imageId: number,
   ) {
     return this.catalogService.setPrimaryImage(catalogId, imageId);
+  }
+
+  /** V2.9.7: 批量重算所有装备pHash（SSVIP限定） */
+  @Post('generate-phash')
+  @ApiOperation({ summary: '批量生成/重算图片指纹(pHash)' })
+  async generatePhash(@CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new BadRequestException('仅SSVIP可执行此操作');
+    }
+    return this.imageMatchService.batchGeneratePhash(true);
   }
 }

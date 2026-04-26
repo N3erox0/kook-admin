@@ -1,12 +1,16 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CatalogController } from './catalog.controller';
 import { CatalogService } from './catalog.service';
 import { EquipmentCatalog } from './entities/equipment-catalog.entity';
 import { EquipmentImage } from './entities/equipment-image.entity';
+import { OcrModule } from '../ocr/ocr.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([EquipmentCatalog, EquipmentImage])],
+  imports: [
+    TypeOrmModule.forFeature([EquipmentCatalog, EquipmentImage]),
+    forwardRef(() => OcrModule),
+  ],
   controllers: [CatalogController],
   providers: [CatalogService],
   exports: [CatalogService],
