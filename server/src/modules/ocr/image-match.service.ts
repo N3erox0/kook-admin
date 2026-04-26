@@ -947,16 +947,69 @@ export class ImageMatchService {
     const { width, height } = metadata;
     if (!width || !height) throw new Error('无法读取图片尺寸');
 
-    // 估算图标大小（复用现有逻辑），按行方差检测装备网格区域
-    const iconSize = this.estimateIconSize(width, height);
+    // 检测装备网格区域（裁掉UI）
     const region = await this.detectGridRegion(sharp, imageBuffer, width, height);
-    this.logger.log(`[V2.9.2 gridParse] 装备区域: top=${region.top}, height=${region.height}, iconSize=${iconSize}`);
-
     const regionBuf = (region.top === 0 && region.height === height)
       ? imageBuffer
       : await sharp(imageBuffer).extract(region).toBuffer();
-    const cols = Math.floor(region.width / iconSize);
-    const rows = Math.floor(region.height / iconSize);
+    const regionW = region.width;
+    const regionH = region.height;
+
+    this.logger.log(`[V2.9.5 gridParse] 装备区域: top=${region.top}, ${regionW}x${regionH}`);
+
+    // V2.9.5: 多候选 iconSize 探索 — 尝试多种格子大小，选出产生最多有效（非空白）格子的尺寸
+    const baseIconSize = this.estimateIconSize(width, height);
+    const candidateSizes = [
+      baseIconSize,
+      Math.round(baseIconSize * 0.80),
+      Math.round(baseIconSize * 0.90),
+      Math.round(baseIconSize * 1.10),
+      Math.round(baseIconSize * 1.20),
+      Math.round(baseIconSize * 0.70),
+      Math.round(baseIconSize * 1.35),
+    ].filter((s, i, arr) => s >= 30 && s <= 250 && arr.indexOf(s) === i);
+
+    let bestIconSize = baseIconSize;
+    let bestValidCount = 0;
+    let bestCols = 0;
+    let bestRows = 0;
+
+    for (const size of candidateSizes) {
+      const cols = Math.floor(regionW / size);
+      const rows = Math.floor(regionH / size);
+      if (cols <= 0 || rows <= 0) continue;
+
+      // 快速扫描：统计有效（非空白）格子数
+      let validCount = 0;
+      for (let r = 0; r < rows && r < 12; r++) {
+        for (let c = 0; c < cols && c < 8; c++) {
+          try {
+            const left = c * size, top = r * size;
+            if (left + size > regionW || top + size > regionH) continue;
+            const subBuf = await sharp(regionBuf)
+              .extract({ left, top, width: size, height: size })
+              .toBuffer();
+            const stats = await sharp(subBuf).stats();
+            const avg = stats.channels[0]?.mean || 0;
+            if (avg > 15 && avg < 240) validCount++;
+          } catch { /* ignore */ }
+        }
+      }
+
+      this.logger.debug(`[V2.9.5] iconSize=${size}, cols=${cols}, rows=${rows}, validCells=${validCount}`);
+      if (validCount > bestValidCount) {
+        bestValidCount = validCount;
+        bestIconSize = size;
+        bestCols = cols;
+        bestRows = rows;
+      }
+    }
+
+    this.logger.log(`[V2.9.5 gridParse] 最优 iconSize=${bestIconSize}, ${bestCols}x${bestRows}, validCells=${bestValidCount}`);
+
+    const iconSize = bestIconSize;
+    const cols = bestCols;
+    const rows = bestRows;
 
     if (cols <= 0 || rows <= 0) {
       // 退化为单图标
@@ -975,14 +1028,12 @@ export class ImageMatchService {
     }
 
     const cells: any[] = [];
-    // 限制总格子数（防止恶意大图）
     const MAX_CELLS = 60;
     const totalCells = cols * rows;
     if (totalCells > MAX_CELLS) {
-      this.logger.warn(`[V2.9.2] 网格数 ${totalCells} 超过上限 ${MAX_CELLS}，仅处理前 ${MAX_CELLS} 格`);
+      this.logger.warn(`[V2.9.5] 网格数 ${totalCells} 超过上限 ${MAX_CELLS}，仅处理前 ${MAX_CELLS} 格`);
     }
 
-    // 并发限制（数量OCR有配额）
     const CONCURRENCY = 3;
     const tasks: Array<() => Promise<void>> = [];
 
@@ -1041,7 +1092,7 @@ export class ImageMatchService {
 
     // 按 row, col 排序返回
     cells.sort((a, b) => a.row - b.row || a.col - b.col);
-    this.logger.log(`[V2.9.2 gridParse] 解析完成: ${cells.length}/${totalCells} 格有效`);
+    this.logger.log(`[V2.9.5 gridParse] 解析完成: ${cells.length}/${totalCells} 格有效 (iconSize=${iconSize})`);
 
     return {
       gridSize: { cols, rows },
