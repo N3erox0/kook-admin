@@ -140,6 +140,25 @@ export default function GuildSettingsPage() {
         style={{ marginBottom: 16 }}
         extra={<Button size="small" icon={<ReloadOutlined />} onClick={fetchChannels} loading={channelsLoading}>获取频道列表</Button>}
       >
+        {/* V2.9.5: 显示当前已监听频道列表 */}
+        {selectedChannels.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '8px 12px', background: '#f0f5ff', borderRadius: 6, border: '1px solid #d6e4ff' }}>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>当前已监听频道（{selectedChannels.length}个）：</Text>
+            {selectedChannels.map((chId: string) => {
+              const chInfo = channels.find((c: any) => c.id === chId);
+              return (
+                <Tag key={chId} color="blue" style={{ marginBottom: 4 }}>
+                  {chInfo ? `# ${chInfo.name}` : chId}
+                </Tag>
+              );
+            })}
+            {guild?.updatedAt && (
+              <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                最后配置时间：{new Date(guild.updatedAt).toLocaleString('zh-CN')}
+              </Text>
+            )}
+          </div>
+        )}
         <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
           选择需要监听补装消息的频道（已选 {selectedChannels.length} 个）
         </Text>

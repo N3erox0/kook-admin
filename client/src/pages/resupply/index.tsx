@@ -79,12 +79,10 @@ export default function ResupplyPage() {
   const [createEquipList, setCreateEquipList] = useState<{ id: number; name: string; gearScore?: number; category?: string; quantity: number }[]>([]);
   const handleCatalogSearch = async (kw: string) => {
     if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
-    const cleanKw = kw.replace(/^\d+/, '').trim();
-    if (!cleanKw) { setCatalogOptions([]); return; }
     try {
-      const res: any = await searchCatalog(cleanKw);
+      const res: any = await searchCatalog(kw.trim());
       setCatalogOptions((res || []).map((item: any) => ({
-        value: `${item.id}_${item.name}`,
+        value: formatEquipName(item),
         label: formatEquipName(item),
         item,
       })));
@@ -719,6 +717,17 @@ export default function ResupplyPage() {
                 getCheckboxProps: (r: GuildResupply) => ({ disabled: r.status !== 0 }),
               } : undefined}
               pagination={{ current: page, total, pageSize: 20, showTotal: t => `共 ${t} 条`, onChange: p => { setPage(p); fetchList(p); } }}
+              locale={{ emptyText: (
+                <div style={{ padding: '24px 0' }}>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>暂无补装申请数据</Text>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                    可能原因：① KOOK 频道未配置监听 → 前往「公会设置」配置监听频道<br/>
+                    ② KOOK Webhook 未正确到达服务器 → 检查 KOOK 后台 Webhook URL 配置<br/>
+                    ③ 公会未激活（status≠ACTIVE）→ 联系管理员确认公会状态<br/>
+                    ④ 您也可以点击右上角「手动创建」直接添加补装申请
+                  </Text>
+                </div>
+              )}}
             />
           )}
         </Card>

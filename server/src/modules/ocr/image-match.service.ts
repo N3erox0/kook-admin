@@ -323,22 +323,32 @@ export class ImageMatchService {
    * - 手机截图：宽约 440~700px，图标 70~100px，一行约 5~6 列
    * - PC截图：宽约 800~1920px，图标 60~90px
    */
+  /**
+   * 估算装备图标大小
+   * Albion 截图常见尺寸：
+   * - 手机截图：宽约 370~700px，装备栏每行 5~7 列，图标 50~100px
+   * - PC截图：宽约 800~1920px，图标 60~90px
+   * V2.9.5: 对不同宽度使用更细粒度的列数估算
+   */
   private estimateIconSize(imgWidth: number, imgHeight: number): number {
     if (imgWidth <= 120 && imgHeight <= 120) return Math.min(imgWidth, imgHeight);
-    if (imgWidth <= 300) return Math.round(imgWidth / 3);
-    // 按宽度推算，假设每行 5~7 列图标，取中位数 6
-    // 手机截图（宽约440）→ 图标约73px；宽700 → 图标约116px
-    return Math.round(imgWidth / 6);
+    if (imgWidth <= 200) return Math.round(imgWidth / 3);
+    if (imgWidth <= 400) return Math.round(imgWidth / 5);  // 手机小截图，5列
+    if (imgWidth <= 600) return Math.round(imgWidth / 6);  // 中等截图，6列
+    if (imgWidth <= 900) return Math.round(imgWidth / 7);  // 大截图，7列
+    return Math.round(imgWidth / 8);  // 超宽截图，8列
   }
 
   /**
    * 智能检测装备网格区域（裁掉顶部/底部/侧边的UI元素）
-   * 通过计算每一行/每一列的像素方差，定位装备网格所在的矩形区域
+   * V2.9.5 增强策略：
+   *  1. 基于行方差分析 + 连续高方差行块检测
+   *  2. 跳过顶部UI区域（标题栏+搜索栏约占15%）和底部UI（底部按钮约占10%）
+   *  3. 找到最大的连续高方差行块作为装备网格区域
    * @returns 装备网格的 {left, top, width, height} 区域
    */
   private async detectGridRegion(sharp: any, buffer: Buffer, width: number, height: number): Promise<{ left: number; top: number; width: number; height: number }> {
     try {
-      // 缩放为固定宽度 200 做分析（加速）
       const analyzeW = 200;
       const analyzeH = Math.round((height / width) * analyzeW);
       const { data } = await sharp(buffer)
@@ -347,7 +357,7 @@ export class ImageMatchService {
         .raw()
         .toBuffer({ resolveWithObject: true });
 
-      // 计算每一行的方差（方差高=有图标边缘，方差低=纯色UI区域）
+      // 计算每一行的方差
       const rowVariances: number[] = [];
       for (let y = 0; y < analyzeH; y++) {
         let sum = 0, sumSq = 0;
@@ -360,32 +370,65 @@ export class ImageMatchService {
         rowVariances.push(variance);
       }
 
-      // 找到方差阈值（中位数的50%）
-      const sortedVar = [...rowVariances].sort((a, b) => a - b);
-      const threshold = sortedVar[Math.floor(sortedVar.length / 2)] * 0.5;
+      // V2.9.5: 安全裁剪 — 跳过顶部 12% 和底部 8% 的 UI 区域
+      const safeTop = Math.round(analyzeH * 0.12);
+      const safeBottom = Math.round(analyzeH * 0.92);
 
-      // 从上往下找第一个方差 > 阈值的行（装备网格顶部）
-      let topRow = 0;
-      for (let y = 0; y < analyzeH; y++) {
-        if (rowVariances[y] > threshold) { topRow = y; break; }
+      // 在安全区域内找方差阈值
+      const safeVariances = rowVariances.slice(safeTop, safeBottom);
+      const sortedVar = [...safeVariances].sort((a, b) => a - b);
+      const medianVar = sortedVar[Math.floor(sortedVar.length / 2)];
+      const threshold = Math.max(medianVar * 0.4, 200); // 至少200的方差才认为是装备区域
+
+      // 在安全区域内找最大的连续高方差行块
+      let bestStart = safeTop, bestEnd = safeBottom;
+      let maxBlockLen = 0;
+      let curStart = -1;
+      for (let y = safeTop; y < safeBottom; y++) {
+        if (rowVariances[y] > threshold) {
+          if (curStart < 0) curStart = y;
+        } else {
+          if (curStart >= 0) {
+            const blockLen = y - curStart;
+            if (blockLen > maxBlockLen) {
+              maxBlockLen = blockLen;
+              bestStart = curStart;
+              bestEnd = y;
+            }
+            curStart = -1;
+          }
+        }
       }
-      // 从下往上找最后一个方差 > 阈值的行（装备网格底部）
-      let bottomRow = analyzeH - 1;
-      for (let y = analyzeH - 1; y >= 0; y--) {
-        if (rowVariances[y] > threshold) { bottomRow = y; break; }
+      // 处理尾部
+      if (curStart >= 0) {
+        const blockLen = safeBottom - curStart;
+        if (blockLen > maxBlockLen) {
+          bestStart = curStart;
+          bestEnd = safeBottom;
+        }
       }
 
-      // 映射回原图坐标
+      // 如果没找到有效块，退化为安全区域
+      if (maxBlockLen < 5) {
+        bestStart = safeTop;
+        bestEnd = safeBottom;
+      }
+
+      // 向外扩展 2 行确保不裁到边框
+      bestStart = Math.max(0, bestStart - 2);
+      bestEnd = Math.min(analyzeH, bestEnd + 2);
+
       const scale = width / analyzeW;
-      const top = Math.max(0, Math.round(topRow * scale));
-      const bottom = Math.min(height, Math.round(bottomRow * scale) + 1);
+      const top = Math.max(0, Math.round(bestStart * scale));
+      const bottom = Math.min(height, Math.round(bestEnd * scale));
 
-      // 左右两侧简单保留全宽（通常左右也是UI但影响较小）
+      this.logger.log(`[V2.9.5 detectGridRegion] 安全区域: ${safeTop}~${safeBottom}, 装备块: ${bestStart}~${bestEnd} (方差阈值=${Math.round(threshold)})`);
+
       return {
         left: 0,
         top,
         width,
-        height: bottom - top,
+        height: Math.max(50, bottom - top),
       };
     } catch (err) {
       this.logger.warn(`装备区域检测失败，使用全图: ${err}`);

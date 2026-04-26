@@ -214,6 +214,12 @@
 | F-140 | 登录页引导区 | completed | 2026-04-26 17:00 | 底部"邀请BOT进入KOOK服务器"+"有邀请码？前往创建公会"引导 |
 | F-141 | join页无邀请码防护 | completed | 2026-04-26 17:00 | 无OAuth code且无邀请码且未登录→跳/login |
 | F-142 | join页handleKookLogin传purpose=invite | completed | 2026-04-26 17:00 | 确保邀请场景始终回调到/join |
+| **V2.9.5** | **网格切图优化+搜索增强+UI优化** | | | |
+| F-143 | 网格识别切图优化 | completed | 2026-04-26 18:25 | detectGridRegion增强：安全裁剪12%+8%UI区域、连续高方差行块定位、estimateIconSize细粒度列数估算 |
+| F-144 | 装备搜索增强 | completed | 2026-04-26 18:25 | catalog.service.search()支持P装等格式/数字前缀连写/别称aliases双字段搜索 |
+| F-145 | 装备录入显示优化 | completed | 2026-04-26 18:25 | 选中后显示友好名称(62堕神法杖 P8 武器)而非catalogId，统一所有搜索页面 |
+| F-146 | 已监听频道列表显示 | completed | 2026-04-26 18:25 | GuildSettings.tsx增加已监听频道Tag列表+最后配置时间 |
+| F-147 | 补装管理空数据引导 | completed | 2026-04-26 18:25 | Table locale.emptyText增加4种可能原因和操作指引 |
 
 
 

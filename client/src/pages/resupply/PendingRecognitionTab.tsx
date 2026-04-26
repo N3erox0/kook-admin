@@ -83,12 +83,10 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
 
   const handleCatalogSearch = async (kw: string) => {
     if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
-    const cleanKw = kw.replace(/^\d+/, '').trim();
-    if (!cleanKw) { setCatalogOptions([]); return; }
     try {
-      const res: any = await searchCatalog(cleanKw);
+      const res: any = await searchCatalog(kw.trim());
       setCatalogOptions((res || []).map((item: any) => ({
-        value: `${item.id}_${item.name}`,
+        value: formatEquipName(item),
         label: formatEquipName(item),
         item,
       })));

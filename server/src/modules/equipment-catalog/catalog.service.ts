@@ -272,10 +272,52 @@ export class CatalogService {
     return { catalogId, imageId };
   }
 
-  /** 搜索装备（模糊匹配，用于库存录入下拉） */
+  /**
+   * 搜索装备（模糊匹配，用于库存录入下拉）
+   * V2.9.5: 支持多种输入格式：
+   *  - P8堕神 / P8 堕神 → 按装等+名称搜索
+   *  - 80牧师风帽 / 62堕神 → 按level+quality+名称搜索
+   *  - 冰箱头 → 同时匹配 name 和 aliases
+   *  - 普通关键词 → name + aliases 双字段模糊
+   */
   async search(keyword: string, limit = 200) {
+    if (!keyword || !keyword.trim()) return [];
+    const raw = keyword.trim();
+
+    // 1. 解析 P{装等} 前缀: "P8堕神" / "P8 堕神"
+    const pMatch = raw.match(/^[pP](\d{1,2})\s*(.*)$/);
+    if (pMatch) {
+      const gs = parseInt(pMatch[1]);
+      const name = pMatch[2].trim();
+      const qb = this.catalogRepo.createQueryBuilder('c')
+        .where('c.gearScore = :gs', { gs });
+      if (name) {
+        qb.andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${name}%` });
+      }
+      return qb.orderBy('c.level', 'ASC').addOrderBy('c.quality', 'ASC').addOrderBy('c.name', 'ASC').take(limit).getMany();
+    }
+
+    // 2. 解析数字前缀: "80牧师风帽" → level=8, quality=0, name=牧师风帽
+    //    "62堕神" → level=6, quality=2, name=堕神
+    const lvqMatch = raw.match(/^(\d)(\d)(.{2,})$/);
+    if (lvqMatch) {
+      const lv = parseInt(lvqMatch[1]);
+      const q = parseInt(lvqMatch[2]);
+      const name = lvqMatch[3].trim();
+      if (lv >= 1 && lv <= 8 && q >= 0 && q <= 4) {
+        return this.catalogRepo.createQueryBuilder('c')
+          .where('c.level = :lv', { lv })
+          .andWhere('c.quality = :q', { q })
+          .andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${name}%` })
+          .orderBy('c.name', 'ASC')
+          .take(limit)
+          .getMany();
+      }
+    }
+
+    // 3. 通用搜索: name + aliases 双字段模糊
     return this.catalogRepo.createQueryBuilder('c')
-      .where('c.name LIKE :kw', { kw: `%${keyword}%` })
+      .where('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${raw}%` })
       .orderBy('c.level', 'ASC')
       .addOrderBy('c.quality', 'ASC')
       .addOrderBy('c.name', 'ASC')

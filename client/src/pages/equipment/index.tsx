@@ -115,16 +115,13 @@ export default function EquipmentPage() {
     fetchList(1, f);
   };
 
-  // 搜索装备参考库（下拉）
+  // 搜索装备参考库（下拉）— V2.9.5: 支持P格式/别称/数字前缀，后端已处理解析
   const handleCatalogSearch = async (keyword: string) => {
     if (!keyword || keyword.length < 1) { setCatalogOptions([]); return; }
-    // 过滤数字前缀（如"44堕神" → "堕神"）
-    const cleanKw = keyword.replace(/^\d+/, '').trim();
-    if (!cleanKw) { setCatalogOptions([]); return; }
     try {
-      const res: any = await searchCatalog(cleanKw);
+      const res: any = await searchCatalog(keyword.trim());
       setCatalogOptions((res || []).map((item: any) => ({
-        value: `${item.id}_${item.name}`,
+        value: formatEquipName(item),
         label: formatEquipName(item),
         item,
       })));
@@ -132,8 +129,10 @@ export default function EquipmentPage() {
   };
 
   const handleCatalogSelect = (_: string, option: any) => {
-    setSelectedCatalogId(option.item.id);
-    upsertForm.setFieldsValue({ catalogId: option.item.id });
+    if (option?.item?.id) {
+      setSelectedCatalogId(option.item.id);
+      upsertForm.setFieldsValue({ catalogId: option.item.id });
+    }
   };
 
   const handleUpsert = async (values: any) => {
@@ -363,15 +362,15 @@ export default function EquipmentPage() {
     });
   };
 
-  // 别名自动补全：调用参考库搜索
+  // 别名自动补全：调用参考库搜索（V2.9.5: 后端已支持别称+P格式）
   const handleGridAliasSearch = async (index: number, keyword: string) => {
     if (!keyword || keyword.length < 1) return;
     try {
-      const res: any = await searchCatalog(keyword);
+      const res: any = await searchCatalog(keyword.trim());
       const list = Array.isArray(res) ? res : (res?.list || []);
       const options = list.slice(0, 10).map((c: any) => ({
         value: c.aliases?.split(',')[0]?.trim() || c.name,
-        label: `${c.name} (T${c.level}Q${c.quality})${c.aliases ? ' - ' + c.aliases : ''}`,
+        label: `${formatEquipName(c)}${c.aliases ? ' - 别称:' + c.aliases : ''}`,
       }));
       setGridCells(prev => {
         const next = [...prev];
