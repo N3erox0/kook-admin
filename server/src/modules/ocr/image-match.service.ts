@@ -94,7 +94,7 @@ export class ImageMatchService {
 
     // 4. 对每个子图计算 pHash 并匹配（不在循环中调用数量 OCR，避免性能炸）
     // F-104: 先完成所有 pHash 匹配，后对匹配成功的子图单独批量提取数量
-    // V2.9.1: 新增次佳差距检验，过滤歧义匹配
+    // V2.9.6 F-152: 歧义检验改为比较不同装备名之间的距离（同名不同品质不算歧义）
     const matches: { subBuf: Buffer; catalog: any; distance: number }[] = [];
     let discardedByThreshold = 0;
     let discardedByAmbiguity = 0;
@@ -103,42 +103,48 @@ export class ImageMatchService {
         const cropped = await this.cropCenter(sharp, subBuf, 0.60);
         const hash = await this.computePhash(sharp, cropped);
 
-        let bestMatch: any = null;
-        let bestDistance = 64;
-        let secondBestDistance = 64;
+        // V2.9.6: 按装备名分组记录最佳距离
+        // 同名不同品质(如"堕神法杖"Q0~Q4)的pHash几乎相同，不应算歧义
+        const bestByName = new Map<string, { cat: any; distance: number }>();
 
         for (const cat of catalogs) {
           if (!cat.imagePhash) continue;
           const dist = this.hammingDistance(hash, cat.imagePhash);
-          if (dist < bestDistance) {
-            secondBestDistance = bestDistance;
-            bestDistance = dist;
-            bestMatch = cat;
-          } else if (dist < secondBestDistance) {
-            secondBestDistance = dist;
+          const name = cat.name; // 装备名称（不含品质）
+          const existing = bestByName.get(name);
+          if (!existing || dist < existing.distance) {
+            bestByName.set(name, { cat, distance: dist });
           }
         }
 
-        if (!bestMatch || bestDistance > threshold) {
+        // 从按名分组的结果中找最佳和次佳（不同装备名）
+        const sortedByName = [...bestByName.values()].sort((a, b) => a.distance - b.distance);
+        if (sortedByName.length === 0) { discardedByThreshold++; continue; }
+
+        const best = sortedByName[0];
+        const secondBest = sortedByName.length > 1 ? sortedByName[1] : null;
+
+        if (best.distance > threshold) {
           discardedByThreshold++;
           continue;
         }
 
-        // V2.9.1 歧义检验：最佳 vs 次佳差距 < AMBIGUITY_GAP 时丢弃
-        const gap = secondBestDistance - bestDistance;
+        // V2.9.6 歧义检验：最佳 vs 次佳（不同装备名）差距 < AMBIGUITY_GAP 时丢弃
+        const secondBestDistance = secondBest ? secondBest.distance : 64;
+        const gap = secondBestDistance - best.distance;
         if (gap < ImageMatchService.AMBIGUITY_GAP) {
           discardedByAmbiguity++;
-          this.logger.debug(`[V2.9.1] 歧义匹配丢弃: best=${bestDistance} 2nd=${secondBestDistance} gap=${gap} name=${bestMatch.name}`);
+          this.logger.debug(`[V2.9.6] 歧义匹配丢弃: best=${best.distance}(${best.cat.name}) 2nd=${secondBestDistance}(${secondBest?.cat.name}) gap=${gap}`);
           continue;
         }
 
-        matches.push({ subBuf, catalog: bestMatch, distance: bestDistance });
+        matches.push({ subBuf, catalog: best.cat, distance: best.distance });
       } catch (err) {
         this.logger.warn(`子图匹配失败: ${err}`);
       }
     }
 
-    this.logger.log(`[V2.9.1] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（丢弃: 阈值${discardedByThreshold}+歧义${discardedByAmbiguity}）`);
+    this.logger.log(`[V2.9.6] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（丢弃: 阈值${discardedByThreshold}+歧义${discardedByAmbiguity}）`);
 
     // 5. 对匹配成功的子图批量提取数量（并发限制 + 总数上限）
     // 限制数量 OCR 总调用数不超过 MAX_QUANTITY_OCR，避免刷屏和配额消耗

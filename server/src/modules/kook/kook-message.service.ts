@@ -395,18 +395,30 @@ export class KookMessageService {
     }
   }
 
-  /** 处理图片消息：OCR提取元数据 + pHash匹配装备 */
+  /**
+   * V2.9.6 重构：处理图片消息
+   * - F-149: 只处理含"击杀详情"/"擊殺詳細資訊"的图片，其他图片直接跳过
+   * - F-150: pHash全失败也创建pending记录（空装备，管理员手动补）
+   * - F-151: 消息自带文字存入reason字段
+   * - F-155: 支持繁体关键词
+   */
   private async processImageMessage(
     guild: Guild, kookUserId: string, kookNickname: string,
     imageUrl: string, textContent: string, kookMessageId?: string,
   ): Promise<void> {
     try {
-      // Step 1: OCR 识别文字+坐标（提取元数据 + 弹窗定位）
+      // Step 1: OCR 识别文字+坐标
       const { texts, detections } = await this.ocrService.recognizeImageWithCoords(imageUrl);
       const allText = texts.join(' ');
       const killDetail = this.parseKillDetail(allText, textContent);
 
       this.logger.log(`[${guild.name}] OCR文字: "${allText.slice(0, 200)}", 是否击杀详情=${killDetail.isKillDetail}`);
+
+      // F-149: 非击杀详情图片直接跳过
+      if (!killDetail.isKillDetail) {
+        this.logger.log(`[${guild.name}] 非击杀详情图片，跳过处理`);
+        return;
+      }
 
       // Step 2: 下载图片为 Buffer
       const imageBuffer = await this.fetchImageBuffer(imageUrl);
@@ -415,32 +427,21 @@ export class KookMessageService {
         return;
       }
 
-      // Step 3: pHash 匹配装备
+      // Step 3: pHash 匹配装备（仅击杀详情流程）
       let matchResults: any[] = [];
-      let usedFallbackOcr = false;
 
-      if (killDetail.isKillDetail) {
-        // 击杀详情：尝试定位左面板区域后裁切匹配
-        const leftRegion = this.detectLeftPanel(detections, imageBuffer);
-        if (leftRegion) {
-          try {
-            matchResults = await this.imageMatchService.matchFromRegion(imageBuffer, leftRegion);
-            this.logger.log(`[${guild.name}] 击杀详情左面板匹配: ${matchResults.length} 件`);
-          } catch (err) {
-            this.logger.warn(`左面板裁切匹配失败，降级为全图匹配: ${err}`);
-          }
+      // 尝试定位左面板区域后裁切匹配
+      const leftRegion = this.detectLeftPanel(detections, imageBuffer);
+      if (leftRegion) {
+        try {
+          matchResults = await this.imageMatchService.matchFromRegion(imageBuffer, leftRegion);
+          this.logger.log(`[${guild.name}] 击杀详情左面板匹配: ${matchResults.length} 件`);
+        } catch (err) {
+          this.logger.warn(`左面板裁切匹配失败，降级为全图匹配: ${err}`);
         }
-        // 左面板匹配无结果时降级为全图匹配
-        if (matchResults.length === 0) {
-          try {
-            matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
-            this.logger.log(`[${guild.name}] 全图pHash匹配: ${matchResults.length} 件`);
-          } catch (err) {
-            this.logger.warn(`全图pHash匹配失败: ${err}`);
-          }
-        }
-      } else {
-        // 非击杀详情：直接全图匹配
+      }
+      // 左面板匹配无结果时降级为全图匹配
+      if (matchResults.length === 0) {
         try {
           matchResults = await this.imageMatchService.matchFromScreenshot(imageBuffer);
           this.logger.log(`[${guild.name}] 全图pHash匹配: ${matchResults.length} 件`);
@@ -449,111 +450,55 @@ export class KookMessageService {
         }
       }
 
-      // BUG-2 FIX: pHash匹配无结果时 fallback 到文字 OCR + 参考库匹配
-      if (matchResults.length === 0 && texts.length > 0) {
-        this.logger.log(`[${guild.name}] pHash无结果，fallback文字OCR识别...`);
-        try {
-          const parsedItems = await this.ocrService.recognizeImage(imageUrl);
-          if (parsedItems.length > 0) {
-            const enriched = await this.ocrService.enrichWithCatalog(parsedItems);
-            const matched = enriched.filter(e => e.catalogId && (e.matchScore || 0) >= 0.8);
-            matchResults = matched.map(e => ({
-              catalogId: e.catalogId,
-              catalogName: e.catalogName || e.name,
-              level: e.level,
-              quality: e.quality,
-              category: e.category,
-              gearScore: e.gearScore,
-              confidence: e.matchScore || 0,
-            }));
-            usedFallbackOcr = true;
-            this.logger.log(`[${guild.name}] 文字OCR fallback匹配: ${matchResults.length} 件（共解析 ${parsedItems.length} 条OCR文本）`);
-          }
-        } catch (ocrErr) {
-          this.logger.warn(`文字OCR fallback也失败: ${ocrErr}`);
-        }
-      }
-
-      // Step 4: 分为高/低置信度（pHash匹配≥0.70即可信，<0.70进待识别）
+      // Step 4: 取高置信度结果（≥0.70），最多10件
       const highConf = matchResults.filter(m => m.confidence >= 0.70);
-      const lowConf = matchResults.filter(m => m.confidence < 0.70);
-
-      // 每张图最多识别10件装备（按置信度降序取前10）
       const MAX_ITEMS = 10;
       const limitedHighConf = highConf.sort((a, b) => b.confidence - a.confidence).slice(0, MAX_ITEMS);
-      if (highConf.length > MAX_ITEMS) {
-        this.logger.log(`[${guild.name}] 匹配${highConf.length}件超出上限${MAX_ITEMS}，截取置信度最高的${MAX_ITEMS}件`);
-      }
 
-      // 低置信度存入待识别工作区
-      if (lowConf.length > 0) {
-        try {
-          const lowItems = lowConf.map(m => ({
-            name: m.catalogName, catalogId: m.catalogId, catalogName: m.catalogName,
-            level: m.level, quality: m.quality, category: m.category,
-            gearScore: m.gearScore, quantity: 1, matchScore: m.confidence,
-          }));
-          await this.ocrService.createKookBatch(guild.id, imageUrl, kookUserId, kookNickname, lowItems);
-          this.logger.log(`[${guild.name}] ${lowConf.length} 件低置信度装备存入待识别工作区`);
-        } catch (err) {
-          this.logger.error(`存入待识别工作区失败: ${err}`);
-        }
-      }
-
-      if (limitedHighConf.length === 0) {
-        const msg = lowConf.length > 0
-          ? `未能高置信度匹配到装备。${lowConf.length} 件已存入待识别工作区，请管理员手动确认。`
-          : '未能从截图中识别到装备。请确认装备参考库已初始化图片指纹。';
-        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
-        return;
-      }
-
-      // Step 5: 创建补装申请（内容级去重：时间+地点+人+装备IDs）
+      // Step 5: 构建补装记录参数
       const catalogIds = limitedHighConf.map(m => m.catalogId);
+      const dateStr = killDetail.date || new Date().toISOString().slice(0, 10);
+
+      // 去重哈希（即使0件装备也用截图+日期+人生成hash）
       const contentDedupHash = crypto.createHash('md5')
-        .update(`${killDetail.date || ''}|${killDetail.mapName || ''}|${kookUserId}|${[...catalogIds].sort().join(',')}`)
+        .update(`${imageUrl}|${dateStr}|${kookUserId}`)
         .digest('hex');
       const existingContent = await this.resupplyService.findByDedupHash(guild.id, contentDedupHash);
       if (existingContent) {
-        this.logger.log(`[${guild.name}] 内容级去重命中(时间+地点+人+装备相同)，跳过`);
+        this.logger.log(`[${guild.name}] 内容级去重命中，跳过`);
         return;
       }
 
-      if (killDetail.isKillDetail) {
-        const killDto: any = {
-          kookUserId, kookNickname,
-          screenshotUrl: imageUrl,
-          killDate: killDetail.date || new Date().toISOString().slice(0, 10),
-          mapName: killDetail.mapName || 'unknown',
-          gameId: killDetail.gameId || kookNickname,
-          guild: killDetail.guildName || guild.name,
-          equipmentCatalogIds: catalogIds,
-          kookMessageId,
-          _dedupHash: contentDedupHash,
-        };
-        const result = await this.resupplyService.createFromKillDetail(guild.id, killDto);
-        const msg = result.skipped
-          ? '补装申请已存在（去重跳过）。'
-          : `收到击杀详情补装申请：${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
-        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
-      } else {
-        const createDto: any = {
-          kookUserId, kookNickname,
-          equipmentIds: catalogIds.join(','),
-          quantity: catalogIds.length,
-          applyType: '死亡补装',
-          screenshotUrl: imageUrl,
-          kookMessageId,
-          _dedupHash: contentDedupHash,
-        };
-        const result = await this.resupplyService.create(guild.id, createDto);
-        if (!result['deduplicated']) {
-          const msg = `收到补装申请，${catalogIds.length} 件装备已提交。${lowConf.length > 0 ? `另有 ${lowConf.length} 件待人工确认。` : ''}`;
-          try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
-        }
-      }
+      // F-151: 消息自带文字存入reason（击杀详情元数据 + 原始文字）
+      const metaReason = `击杀详情 | 日期:${killDetail.date || '未知'} | 地图:${killDetail.mapName || '未知'} | 游戏ID:${killDetail.gameId || '未知'}`;
+      const reason = textContent && textContent !== imageUrl
+        ? `${metaReason} | 备注:${textContent.slice(0, 200)}`
+        : metaReason;
 
-      this.logger.log(`[${guild.name}] ${kookNickname} 提交补装申请 (${catalogIds.length}件)`);
+      // F-150: 不管匹配到几件装备（哪怕0件），都创建一条pending记录
+      const killDto: any = {
+        kookUserId, kookNickname,
+        screenshotUrl: imageUrl,
+        killDate: killDetail.date || dateStr,
+        mapName: killDetail.mapName || 'unknown',
+        gameId: killDetail.gameId || kookNickname,
+        guild: killDetail.guildName || guild.name,
+        equipmentCatalogIds: catalogIds, // 可能为空数组
+        kookMessageId,
+        _dedupHash: contentDedupHash,
+        _reason: reason,
+      };
+      const result = await this.resupplyService.createFromKillDetail(guild.id, killDto);
+
+      if (result.skipped) {
+        this.logger.log(`[${guild.name}] 补装去重命中，跳过`);
+      } else {
+        const msg = catalogIds.length > 0
+          ? `收到击杀详情补装申请：${catalogIds.length} 件装备已识别，待管理员确认。`
+          : `收到击杀详情截图，已创建待确认补装记录。装备未能自动识别，请管理员在后台手动补充。`;
+        try { await this.kookService.sendDirectMessage(kookUserId, msg); } catch {}
+        this.logger.log(`[${guild.name}] ${kookNickname} 击杀详情补装记录已创建 (${catalogIds.length}件装备)`);
+      }
     } catch (err) {
       this.logger.error(`处理图片消息失败: ${err}`);
       try { await this.kookService.sendDirectMessage(kookUserId, '补装申请处理失败，请稍后重试或联系管理员。'); } catch {}
@@ -562,9 +507,9 @@ export class KookMessageService {
 
   // ===== OC碎文字消息处理 =====
 
-  /** 检测是否为OC碎消息 */
+  /** V2.9.6 F-153: 检测是否为含"碎"字的补装消息 */
   private isOcBrokenMessage(text: string): boolean {
-    return /oc\s*碎|OC\s*碎/i.test(text);
+    return /碎/.test(text);
   }
 
   /**
@@ -692,11 +637,21 @@ export class KookMessageService {
   }
 
   /**
-   * OC碎文字拆词：移除关键词 → 拆分 → 纯数字段与下一段合并（如"80 牧师风帽"→"80牧师风帽"）
+   * V2.9.6 F-154: OC碎文字拆词
+   * 以第一个"碎"字为分界，"碎"后文字作为装备描述区
+   * 纯数字段与下一段合并（如"80 牧师风帽"→"80牧师风帽"）
    */
   private parseOcBrokenSegments(text: string): string[] {
-    let cleaned = text.replace(/oc\s*碎/gi, '').trim();
-    const rawSegments = cleaned.split(/[,，、\s]+/).filter(s => s.trim().length > 0);
+    // F-154: 找到第一个"碎"字的位置，取"碎"之后的文字作为装备区
+    const suiIndex = text.indexOf('碎');
+    let equipArea = suiIndex >= 0 ? text.slice(suiIndex + 1).trim() : text.trim();
+    
+    // 如果"碎"后面紧跟"了"，跳过"了"
+    if (equipArea.startsWith('了')) {
+      equipArea = equipArea.slice(1).trim();
+    }
+
+    const rawSegments = equipArea.split(/[,，、\s]+/).filter(s => s.trim().length > 0);
 
     // 合并：纯数字段（如"80"）与下一个非数字段合并为"80牧师风帽"
     // 同理 "P8" / "平8" 等装等前缀也与下一段合并
@@ -855,7 +810,7 @@ export class KookMessageService {
   /** 解析击杀详情文本 — 提取日期/地图/游戏ID/公会 */
   private parseKillDetail(ocrText: string, msgText: string): KillDetailParsed {
     const combined = `${ocrText} ${msgText}`;
-    const isKillDetail = /击杀详情/i.test(combined);
+    const isKillDetail = /击杀详情|擊殺詳細資訊|擊殺詳情/i.test(combined);
 
     if (!isKillDetail) {
       return { date: null, mapName: null, gameId: null, guildName: null, isKillDetail: false };

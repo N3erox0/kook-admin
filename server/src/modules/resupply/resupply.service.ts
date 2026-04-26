@@ -190,7 +190,7 @@ export class ResupplyService {
     return saved;
   }
 
-  /** 从击杀详情创建一条补装申请（一次死亡=一条记录=多件装备ID） */
+  /** 从击杀详情创建一条补装申请（一次死亡=一条记录=多件装备ID，V2.9.6: 支持空装备数组） */
   async createFromKillDetail(guildId: number, data: {
     kookUserId: string;
     kookNickname: string;
@@ -199,11 +199,14 @@ export class ResupplyService {
     mapName: string;
     gameId: string;
     guild: string;
-    equipmentCatalogIds: number[]; // catalog ID 数组
+    equipmentCatalogIds: number[]; // catalog ID 数组（V2.9.6: 可为空数组）
     kookMessageId?: string;
+    _dedupHash?: string;
+    _reason?: string;
   }): Promise<{ created: boolean; skipped: boolean; resupplyId?: number }> {
     const dateStr = data.killDate || new Date().toISOString().slice(0, 10);
-    const hash = this.generateDedupHash(data.screenshotUrl, dateStr, data.kookUserId);
+    // V2.9.6: 优先使用传入的dedupHash
+    const hash = data._dedupHash || this.generateDedupHash(data.screenshotUrl, dateStr, data.kookUserId);
 
     // 去重检查
     const existing = await this.resupplyRepo.findOne({ where: { guildId, dedupHash: hash } });
@@ -213,14 +216,16 @@ export class ResupplyService {
     }
 
     const equipmentIds = data.equipmentCatalogIds.join(',');
+    // V2.9.6 F-151: 支持自定义reason（含消息原文备注）
+    const reason = data._reason || `击杀详情 | 日期:${data.killDate} | 地图:${data.mapName} | 游戏ID:${data.gameId}`;
     const r = this.resupplyRepo.create({
       guildId,
       kookUserId: data.kookUserId,
       kookNickname: data.kookNickname,
-      equipmentIds,
+      equipmentIds: equipmentIds || null,
       quantity: data.equipmentCatalogIds.length,
       applyType: '死亡补装',
-      reason: `击杀详情 | 日期:${data.killDate} | 地图:${data.mapName} | 游戏ID:${data.gameId}`,
+      reason,
       screenshotUrl: data.screenshotUrl,
       kookMessageId: data.kookMessageId || null,
       dedupHash: hash,
