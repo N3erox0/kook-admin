@@ -14,7 +14,7 @@ import { User } from '../user/entities/user.entity';
 @Module({
   imports: [
     TypeOrmModule.forFeature([OcrRecognitionBatch, OcrRecognitionItem, EquipmentCatalog, GuildMember, User]),
-    EquipmentCatalogModule,
+    forwardRef(() => EquipmentCatalogModule),
     forwardRef(() => EquipmentModule),
   ],
   controllers: [OcrController],
