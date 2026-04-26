@@ -768,7 +768,7 @@ export default function EquipmentPage() {
                         value={row.level}
                         style={{ width: 70 }}
                         onChange={(v) => handleGridCellChange(idx, 'level', v)}
-                        options={[1, 2, 3, 4, 5, 6, 7, 8].map(l => ({ value: l, label: `T${l}` }))}
+                        options={[1, 2, 3, 4, 5, 6, 7, 8].map(l => ({ value: l, label: `${l}` }))}
                       />
                     );
                   },
@@ -777,14 +777,14 @@ export default function EquipmentPage() {
                   title: '品质', width: 90,
                   render: (_: any, row: any) => {
                     const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
-                    const detectedLabel = row.detectedQuality !== null ? `(识别:Q${row.detectedQuality})` : '';
+                    const detectedLabel = row.detectedQuality !== null ? `(识别:${row.detectedQuality})` : '';
                     return (
                       <Select
                         size="small"
                         value={row.quality}
                         style={{ width: 80 }}
                         onChange={(v) => handleGridCellChange(idx, 'quality', v)}
-                        options={[0, 1, 2, 3, 4].map(q => ({ value: q, label: `Q${q}` }))}
+                        options={[0, 1, 2, 3, 4].map(q => ({ value: q, label: `${q}` }))}
                         title={detectedLabel}
                       />
                     );
