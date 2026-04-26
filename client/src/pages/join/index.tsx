@@ -48,7 +48,13 @@ export default function JoinPage() {
       handleOAuthCallback(oauthCode);
       return;
     }
-    // 已登录用户（非OAuth回调）直接跳转到 /guild/create
+    // V2.9.4: 无OAuth code 且无邀请码 → 不应出现在此页面，跳登录页
+    const hasInviteCode = searchParams.get('code') || searchParams.get('state') || inviteCode;
+    if (!hasInviteCode && !token) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    // 已登录用户（非OAuth回调）且有邀请码 → 直接跳转到 /guild/create
     if (token && user && !isOAuthCallback) {
       navigate('/guild/create', { replace: true });
     }
@@ -100,7 +106,7 @@ export default function JoinPage() {
     setLoading(true);
     try {
       const res: any = await request.get('/auth/kook/oauth-url', {
-        params: { invite_code: inviteCode.trim() || undefined },
+        params: { invite_code: inviteCode.trim() || undefined, purpose: 'invite' },
       });
       if (res?.url) {
         // 新标签页打开 KOOK OAuth

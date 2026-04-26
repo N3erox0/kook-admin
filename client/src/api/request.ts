@@ -19,7 +19,7 @@ const processQueue = (error: any, token: string | null = null) => {
 };
 
 request.interceptors.request.use((config) => {
-  const noAuthPaths = ['/auth/login', '/auth/refresh', '/guilds/invite-codes/validate', '/guilds/activate/info', '/guilds/activate', '/auth/kook/oauth-url', '/auth/kook/callback'];
+  const noAuthPaths = ['/auth/login', '/auth/refresh', '/guilds/invite-codes/validate', '/guilds/activate/info', '/guilds/activate', '/auth/kook/oauth-url', '/auth/kook/callback', '/auth/kook/bot-invite-url'];
   const isNoAuth = noAuthPaths.some(p => config.url?.includes(p));
 
   if (!isNoAuth) {

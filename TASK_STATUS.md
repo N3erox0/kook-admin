@@ -206,6 +206,14 @@
 | F-133 | MatchPreview.tsx 通用组件 | completed | 2026-04-19 08:30 | 原图预览(红框标注已勾选)+方框列表(小图+勾选)+匹配结果表(相似度排序/Top5展开/自动勾选)+确认按钮 |
 | F-134 | 补装详情Modal嵌入"图像识别预览"按钮 | completed | 2026-04-19 08:30 | 点击截图旁按钮→1100宽子Modal→勾选确认→调quickCompleteResupply扣库存+完成 |
 | F-135 | PendingRecognitionTab嵌入MatchPreview | completed | 2026-04-19 08:30 | 修正Modal改1100宽+Collapse折叠面板，勾选结果自动合并到editEquipList |
+| **V2.9.4** | **KOOK登录流程重构+BOT邀请引导** | | | |
+| F-136 | getKookOAuthUrl区分登录/邀请场景 | completed | 2026-04-26 17:00 | 新增purpose参数：login→回调/auth/kook-callback，invite→回调/join |
+| F-137 | handleKookCallback动态redirectUri | completed | 2026-04-26 17:00 | callbackPath参数替代写死/join，与OAuth授权阶段的redirect_uri一致 |
+| F-138 | getBotInviteUrl新接口 | completed | 2026-04-26 17:00 | GET /auth/kook/bot-invite-url，返回KOOK BOT邀请链接（scope=bot） |
+| F-139 | KookCallback.tsx纯登录回调页 | completed | 2026-04-26 17:00 | 新建/auth/kook-callback路由，popup→postMessage/直跳dashboard双模式 |
+| F-140 | 登录页引导区 | completed | 2026-04-26 17:00 | 底部"邀请BOT进入KOOK服务器"+"有邀请码？前往创建公会"引导 |
+| F-141 | join页无邀请码防护 | completed | 2026-04-26 17:00 | 无OAuth code且无邀请码且未登录→跳/login |
+| F-142 | join页handleKookLogin传purpose=invite | completed | 2026-04-26 17:00 | 确保邀请场景始终回调到/join |
 
 
 

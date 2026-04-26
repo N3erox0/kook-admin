@@ -41,7 +41,7 @@ export default function LoginPage() {
   const handleKookLogin = async () => {
     setKookLoading(true);
     try {
-      const res: any = await request.get('/auth/kook/oauth-url');
+      const res: any = await request.get('/auth/kook/oauth-url', { params: { purpose: 'login' } });
       if (res?.url) {
         const popup = window.open(res.url, '_blank', 'width=600,height=700');
         if (!popup) {
@@ -146,7 +146,31 @@ export default function LoginPage() {
 
         <div style={{ textAlign: 'center', marginTop: 16 }}>
           <Button type="link" style={{ color: '#999' }} onClick={() => navigate('/')}>返回首页</Button>
-          <Button type="link" style={{ color: '#999' }} onClick={() => navigate('/join')}>没有账号？去注册</Button>
+        </div>
+
+        <Divider plain style={{ margin: '12px 0 8px' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>还没有账号？</Text>
+        </Divider>
+
+        <div style={{ textAlign: 'center' }}>
+          <Button
+            type="link"
+            onClick={async () => {
+              try {
+                const res: any = await request.get('/auth/kook/bot-invite-url');
+                if (res?.url) window.open(res.url, '_blank');
+                else message.info('请联系管理员获取 BOT 邀请链接');
+              } catch {
+                message.info('请联系管理员获取 BOT 邀请链接');
+              }
+            }}
+          >
+            邀请 BOT 进入你的 KOOK 服务器
+          </Button>
+          <br />
+          <Button type="link" onClick={() => navigate('/join')}>
+            有邀请码？前往创建公会
+          </Button>
         </div>
       </Card>
     </div>

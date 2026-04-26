@@ -32,13 +32,22 @@ export class AuthController {
 
   @Get('kook/oauth-url')
   @ApiOperation({ summary: '获取 KOOK OAuth2 授权链接' })
-  getKookOAuthUrl(@Query('invite_code') inviteCode?: string) {
-    return { url: this.authService.getKookOAuthUrl(inviteCode) };
+  getKookOAuthUrl(
+    @Query('invite_code') inviteCode?: string,
+    @Query('purpose') purpose?: 'login' | 'invite',
+  ) {
+    return { url: this.authService.getKookOAuthUrl(inviteCode, purpose || 'login') };
   }
 
   @Post('kook/callback')
   @ApiOperation({ summary: 'KOOK OAuth2 回调（用 code 换 token + 用户信息）' })
-  async handleKookCallback(@Body() body: { code: string }) {
-    return this.authService.handleKookCallback(body.code);
+  async handleKookCallback(@Body() body: { code: string; callbackPath?: string }) {
+    return this.authService.handleKookCallback(body.code, body.callbackPath || '/join');
+  }
+
+  @Get('kook/bot-invite-url')
+  @ApiOperation({ summary: '获取 KOOK BOT 邀请链接' })
+  getBotInviteUrl() {
+    return { url: this.authService.getBotInviteUrl() };
   }
 }

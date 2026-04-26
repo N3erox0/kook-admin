@@ -115,18 +115,33 @@ export class AuthService {
     };
   }
 
-  /** 获取 KOOK OAuth2 授权链接 */
-  getKookOAuthUrl(inviteCode?: string): string {
+  /**
+   * 获取 KOOK OAuth2 授权链接
+   * @param inviteCode 邀请码（创建公会场景）
+   * @param purpose 用途：'login'(纯登录, 回调/auth/kook-callback) | 'invite'(创建公会, 回调/join)
+   */
+  getKookOAuthUrl(inviteCode?: string, purpose: 'login' | 'invite' = 'login'): string {
     const clientId = this.configService.get<string>('kook.clientId');
     const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
-    const redirectUri = encodeURIComponent(`${baseUrl}/join`);
+    // V2.9.3: 根据用途选择不同回调路径
+    const callbackPath = (purpose === 'invite' || inviteCode) ? '/join' : '/auth/kook-callback';
+    const redirectUri = encodeURIComponent(`${baseUrl}${callbackPath}`);
     let url = `https://www.kookapp.cn/app/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=get_user_info`;
     if (inviteCode) url += `&state=${inviteCode}`;
     return url;
   }
 
+  /**
+   * V2.9.3: 获取 KOOK BOT 邀请链接（邀请 BOT 加入用户的 KOOK 服务器）
+   */
+  getBotInviteUrl(): string {
+    const clientId = this.configService.get<string>('kook.clientId');
+    // KOOK BOT 邀请链接格式
+    return `https://www.kookapp.cn/app/oauth2/authorize?id=${clientId}&permissions=1&bot_id=0&scope=bot`;
+  }
+
   /** KOOK OAuth2 回调：用 code 换 access_token + 获取用户信息 → 创建/关联用户 → 签发JWT */
-  async handleKookCallback(code: string): Promise<{
+  async handleKookCallback(code: string, callbackPath: string = '/join'): Promise<{
     accessToken: string;
     refreshToken: string;
     user: any;
@@ -136,7 +151,7 @@ export class AuthService {
     const clientId = this.configService.get<string>('kook.clientId');
     const clientSecret = this.configService.get<string>('kook.clientSecret');
     const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:5173';
-    const redirectUri = `${baseUrl}/join`;
+    const redirectUri = `${baseUrl}${callbackPath}`;
 
     // 1. 用 code 换 access_token（KOOK 文档要求 application/json）
     const tokenRes = await fetch('https://www.kookapp.cn/api/oauth2/token', {
