@@ -570,7 +570,7 @@ export class ResupplyService {
    * V2.9.3：获取补装申请的图像识别预览（原图 + 方框 + Top5 候选）
    * 用于详情 Modal 中点击"图像识别预览"后展示
    */
-  async previewMatchForResupply(guildId: number, id: number, options?: { topN?: number; autoThreshold?: number }) {
+  async previewMatchForResupply(guildId: number, id: number, options?: { topN?: number; autoThreshold?: number; hammingThreshold?: number }) {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
     if (!r.screenshotUrl) throw new BadRequestException('该申请无截图，无法预览');
@@ -583,7 +583,7 @@ export class ResupplyService {
   /**
    * V2.9.3：按 URL 直接预览（供待识别 Tab 无 resupplyId 时使用）
    */
-  async previewMatchFromUrl(imageUrl: string, options?: { topN?: number; autoThreshold?: number }) {
+  async previewMatchFromUrl(imageUrl: string, options?: { topN?: number; autoThreshold?: number; hammingThreshold?: number }) {
     if (!imageUrl) throw new BadRequestException('imageUrl 必填');
     const buffer = await this.fetchImageBuffer(imageUrl);
     if (!buffer) throw new BadRequestException('截图下载失败，请检查 URL');

@@ -41,14 +41,14 @@ export const batchRejectResupply = (guildId: number, data: { ids: number[]; rema
 /** V2.9.3: 补装申请图像识别预览（按 resupplyId） */
 export const previewMatchResupply = (
   guildId: number, id: number,
-  data?: { topN?: number; autoThreshold?: number },
+  data?: { topN?: number; autoThreshold?: number; hammingThreshold?: number },
 ) =>
   request.post(`/guild/${guildId}/resupply/${id}/preview-match`, data || {});
 
 /** V2.9.3: 补装申请图像识别预览（按图片 URL，供待识别Tab使用） */
 export const previewMatchFromUrl = (
   guildId: number,
-  data: { imageUrl: string; topN?: number; autoThreshold?: number },
+  data: { imageUrl: string; topN?: number; autoThreshold?: number; hammingThreshold?: number },
 ) =>
   request.post(`/guild/${guildId}/resupply/preview-from-url`, data);
 

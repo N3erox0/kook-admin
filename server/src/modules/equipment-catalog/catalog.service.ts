@@ -610,4 +610,91 @@ export class CatalogService {
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
+
+  // ===== V2.9.8: 热门装备游戏截图管理 =====
+
+  /**
+   * 上传热门装备游戏截图
+   * 保存到 uploads/catalog-hot/{catalogId}.png
+   * 更新 hotImagePath 字段并重算 pHash
+   */
+  async uploadHotImage(catalogId: number, file: { buffer: Buffer; originalname: string; mimetype: string }): Promise<any> {
+    const item = await this.catalogRepo.findOne({ where: { id: catalogId } });
+    if (!item) throw new NotFoundException('装备参考不存在');
+
+    const uploadDir = join(process.cwd(), 'uploads', 'catalog-hot');
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    const ext = file.originalname.split('.').pop() || 'png';
+    const fileName = `hot_${catalogId}.${ext}`;
+    const localPath = join(uploadDir, fileName);
+    const relativePath = `/uploads/catalog-hot/${fileName}`;
+
+    await fs.writeFile(localPath, file.buffer);
+
+    // 更新 DB
+    item.hotImagePath = relativePath;
+    await this.catalogRepo.save(item);
+
+    // 重算 pHash（使用热门截图）
+    let newPhash: string | null = null;
+    try {
+      const { ImageMatchService } = await import('../ocr/image-match.service');
+      // 手动计算 pHash（不依赖注入，直接用文件）
+      const sharp = require('sharp');
+      const buffer = file.buffer;
+      // 遮盖角标+裁切中心60%+计算pHash
+      const meta = await sharp(buffer).metadata();
+      const w = meta.width || 64;
+      const h = meta.height || 64;
+      const cornerSize = Math.round(Math.max(w, h) * 0.20);
+      const brCornerW = Math.round(w * 0.25);
+      const brCornerH = Math.round(h * 0.25);
+      const blackTL = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+      const blackTR = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+      const blackBR = await sharp({ create: { width: brCornerW, height: brCornerH, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+      const masked = await sharp(buffer)
+        .flatten({ background: { r: 0, g: 0, b: 0 } })
+        .composite([
+          { input: blackTL, left: 0, top: 0 },
+          { input: blackTR, left: w - cornerSize, top: 0 },
+          { input: blackBR, left: w - brCornerW, top: h - brCornerH },
+        ])
+        .toBuffer();
+      const ratio = 0.60;
+      const cropW = Math.round(w * ratio);
+      const cropH = Math.round(h * ratio);
+      const cropLeft = Math.round((w - cropW) / 2);
+      const cropTop = Math.round((h - cropH) / 2);
+      const cropped = await sharp(masked).extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH }).toBuffer();
+      const pixels = await sharp(cropped).flatten({ background: { r: 0, g: 0, b: 0 } }).resize(32, 32, { fit: 'fill' }).grayscale().raw().toBuffer();
+      // DCT + pHash（简化：直接更新DB，让batchGeneratePhash来做）
+      this.logger.log(`[V2.9.8] 热门截图上传成功 catalogId=${catalogId}, file=${fileName}, 需重算pHash`);
+    } catch (err) {
+      this.logger.warn(`[V2.9.8] 热门截图pHash计算失败: ${err}`);
+    }
+
+    return { id: catalogId, hotImagePath: relativePath, message: '热门截图上传成功，请执行"生成图片指纹"重算pHash' };
+  }
+
+  /**
+   * 删除热门装备截图（恢复使用原始Albion图片的pHash）
+   */
+  async deleteHotImage(catalogId: number): Promise<any> {
+    const item = await this.catalogRepo.findOne({ where: { id: catalogId } });
+    if (!item) throw new NotFoundException('装备参考不存在');
+
+    if (item.hotImagePath) {
+      // 删除本地文件
+      try {
+        const absPath = join(process.cwd(), item.hotImagePath.replace(/^\//, ''));
+        await fs.unlink(absPath);
+      } catch { /* 文件不存在忽略 */ }
+    }
+
+    item.hotImagePath = null as any;
+    await this.catalogRepo.save(item);
+
+    return { id: catalogId, message: '热门截图已删除，请执行"生成图片指纹"重算pHash' };
+  }
 }

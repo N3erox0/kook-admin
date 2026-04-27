@@ -734,24 +734,22 @@ export class KookMessageService {
   // ===== 击杀详情定位 =====
 
   /**
-   * 基于OCR"击杀详情"文字坐标精确定位左面板装备区域
-   * 策略：以"击杀详情"四字为锚点推算弹窗范围
-   * - "击杀详情"文字宽度 ≈ 弹窗宽度的 1/4~1/3
-   * - "击杀"二字（中间剑图标）的x = 左右面板分界线
-   * - 左面板宽度 ≈ 弹窗宽度的 40%
-   * - 上边界 = 玩家信息区下方（击杀详情y + 击杀详情高度 * 3）
-   * - 下边界 = "另存为新模板"/"击杀声望" 或 弹窗底部
+   * V2.9.8: 基于OCR文字坐标精确定位左面板装备区域
+   * 策略：
+   * - "击杀详情"文字作为锚点
+   * - "击杀"文字的x坐标 = 中轴线 = 左面板右边界
+   * - 上边界 = 找到玩家信息区（昵称/公会/IP行）下方
+   * - 下边界 = "另存为新模板"或"击杀声望"文字上方
    */
   private detectLeftPanel(detections: { text: string; x: number; y: number; width: number; height: number }[],
     imageBuffer: Buffer): { left: number; top: number; width: number; height: number } | null {
     if (!detections || detections.length === 0) return null;
 
-    // 找"击杀详情"的位置（弹窗标题，作为锚点）
+    // 找"击杀详情"的位置（弹窗标题锚点）
     const killDetailIdx = detections.findIndex(d => /击杀详情/.test(d.text));
     if (killDetailIdx < 0) return null;
 
     const anchor = detections[killDetailIdx];
-    // 击杀详情文字宽度约为弹窗宽度的25-30%，推算弹窗宽度
     const estimatedPopupWidth = anchor.width * 3.5;
 
     // 找"击杀"文字（中间剑图标位置）作为左右分界
@@ -759,10 +757,10 @@ export class KookMessageService {
     // 找底部标记
     const bottomIdx = detections.findIndex(d => /击杀声望|另存为新模板/.test(d.text));
 
-    // 弹窗左边界 = 击杀详情文字的x - 小偏移
+    // 弹窗左边界
     const popupLeft = Math.max(0, anchor.x - 10);
 
-    // 左面板右边界：优先用"击杀"文字的x（中轴线），否则用弹窗宽度的45%
+    // 左面板右边界：优先用"击杀"文字的x（中轴线）
     let leftPanelRight: number;
     if (killTextIdx >= 0) {
       leftPanelRight = detections[killTextIdx].x - 5;
@@ -770,29 +768,39 @@ export class KookMessageService {
       leftPanelRight = popupLeft + Math.round(estimatedPopupWidth * 0.45);
     }
 
-    // 上边界：击杀详情标题下方 + 玩家信息区（头像+昵称+公会+IP约占3行高度）
-    const topY = anchor.y + anchor.height * 4;
+    // V2.9.8: 上边界优化 — 尝试找IP/数字行（如"1432"/"1569"）的y坐标作为装备区起点
+    // IP行通常在玩家信息区最后一行，格式为纯数字4位
+    let topY: number;
+    const ipLineIdx = detections.findIndex(d =>
+      /^\d{3,4}$/.test(d.text.trim()) && d.x < leftPanelRight && d.y > anchor.y + anchor.height
+    );
+    if (ipLineIdx >= 0) {
+      // IP行下方就是装备区
+      topY = detections[ipLineIdx].y + detections[ipLineIdx].height + 5;
+    } else {
+      // 降级：击杀详情标题下方约4行
+      topY = anchor.y + anchor.height * 4;
+    }
 
     // 下边界
     let bottomY: number;
     if (bottomIdx >= 0) {
       bottomY = detections[bottomIdx].y - 5;
     } else {
-      // 估算：弹窗高度约为弹窗宽度的0.8倍
-      bottomY = anchor.y + Math.round(estimatedPopupWidth * 0.8);
+      bottomY = anchor.y + Math.round(estimatedPopupWidth * 0.85);
     }
 
     const regionLeft = popupLeft;
     const regionWidth = Math.max(50, Math.round(leftPanelRight - popupLeft));
     const regionHeight = Math.max(50, Math.round(bottomY - topY));
 
-    // 安全检查：左面板宽度不应超过估算弹窗宽度的50%
+    // 安全检查
     const maxWidth = Math.round(estimatedPopupWidth * 0.5);
     const safeWidth = Math.min(regionWidth, maxWidth);
 
     if (safeWidth < 50 || regionHeight < 50) return null;
 
-    this.logger.log(`[detectLeftPanel] 锚点"击杀详情": x=${anchor.x},y=${anchor.y},w=${anchor.width} → 弹窗宽≈${Math.round(estimatedPopupWidth)}, 左面板: left=${regionLeft},top=${Math.round(topY)},${safeWidth}x${regionHeight}`);
+    this.logger.log(`[V2.9.8 detectLeftPanel] 锚点"击杀详情": x=${anchor.x},y=${anchor.y},w=${anchor.width} → 左面板: left=${regionLeft},top=${Math.round(topY)},${safeWidth}x${regionHeight}`);
 
     return { left: regionLeft, top: Math.round(topY), width: safeWidth, height: regionHeight };
   }

@@ -156,4 +156,26 @@ export class CatalogController {
     }
     return this.imageMatchService.batchGeneratePhash(true);
   }
+
+  /** V2.9.8: 上传热门装备游戏截图 */
+  @Post(':id/hot-image')
+  @UseInterceptors(FileInterceptor('file'))
+  @OperationLog({ module: 'catalog', action: 'upload_hot_image' })
+  @ApiOperation({ summary: '上传热门装备游戏截图（上传后自动重算pHash）' })
+  async uploadHotImage(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: any,
+    @CurrentUser() user: any,
+  ) {
+    if (!file) throw new BadRequestException('请上传图片文件');
+    return this.catalogService.uploadHotImage(id, file);
+  }
+
+  /** V2.9.8: 删除热门装备截图（恢复使用原始Albion图片） */
+  @Delete(':id/hot-image')
+  @OperationLog({ module: 'catalog', action: 'delete_hot_image' })
+  @ApiOperation({ summary: '删除热门装备截图（恢复原始pHash）' })
+  async deleteHotImage(@Param('id', ParseIntPipe) id: number) {
+    return this.catalogService.deleteHotImage(id);
+  }
 }

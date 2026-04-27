@@ -40,7 +40,7 @@ export class ImageMatchService {
    * @param options.strict 严格模式（装备库存=true/宽松模式=false，默认宽松）
    * @returns 匹配到的装备列表
    */
-  async matchFromScreenshot(imageBuffer: Buffer, options?: { skipQuantity?: boolean; strict?: boolean }): Promise<{
+  async matchFromScreenshot(imageBuffer: Buffer, options?: { skipQuantity?: boolean; strict?: boolean; hammingThreshold?: number }): Promise<{
     catalogId: number;
     catalogName: string;
     level: number;
@@ -59,11 +59,11 @@ export class ImageMatchService {
       throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖');
     }
 
-    // V2.9.1 分档阈值
-    const threshold = options?.strict
+    // V2.9.8: 支持外部传入阈值
+    const threshold = options?.hammingThreshold ?? (options?.strict
       ? ImageMatchService.STRICT_HAMMING_THRESHOLD
-      : ImageMatchService.LOOSE_HAMMING_THRESHOLD;
-    this.logger.log(`[V2.9.1] 匹配模式: ${options?.strict ? '严格(≥70%)' : '宽松(≥60%)'}, 阈值=${threshold}`);
+      : ImageMatchService.LOOSE_HAMMING_THRESHOLD);
+    this.logger.log(`[V2.9.8] 匹配模式: ${options?.strict ? '严格(≥70%)' : '宽松(≥60%)'}, 阈值=${threshold}`);
 
     // 1. 获取图片尺寸
     const metadata = await sharp(imageBuffer).metadata();
@@ -190,25 +190,37 @@ export class ImageMatchService {
 
   /**
    * 为单个装备图标计算 pHash
-   * 优先读取本地文件（localImagePath），fallback 到远程 URL（imageUrl）
+   * V2.9.8: 优先级 hotImagePath（热门装备游戏截图）> localImagePath > imageUrl（远程）
    * @param catalogId 参考库ID
    * @param imageUrl 远程图片URL（Albion 渲染图）
    * @param localImagePath 本地图片路径（如 /uploads/catalog/T4_2H_CLAYMORE.png）
+   * @param hotImagePath 热门装备游戏截图路径
    */
-  async generatePhashForCatalog(catalogId: number, imageUrl: string, localImagePath?: string | null): Promise<string | null> {
+  async generatePhashForCatalog(catalogId: number, imageUrl: string, localImagePath?: string | null, hotImagePath?: string | null): Promise<string | null> {
     let sharp: any;
     try { sharp = require('sharp'); } catch { return null; }
 
     let buffer: Buffer | null = null;
 
-    // 优先读取本地文件
-    if (localImagePath) {
+    // V2.9.8: 优先读热门装备截图
+    if (hotImagePath) {
+      try {
+        const absPath = join(process.cwd(), hotImagePath.replace(/^\//, ''));
+        buffer = await fs.readFile(absPath);
+        if (buffer.length === 0) buffer = null;
+        else this.logger.debug(`[V2.9.8] pHash使用hotImagePath: ${hotImagePath}`);
+      } catch {
+        buffer = null;
+      }
+    }
+
+    // 其次读本地文件
+    if (!buffer && localImagePath) {
       try {
         const absPath = join(process.cwd(), localImagePath.replace(/^\//, ''));
         buffer = await fs.readFile(absPath);
         if (buffer.length === 0) buffer = null;
       } catch {
-        // 本地文件不存在或读取失败，继续尝试远程
         buffer = null;
       }
     }
@@ -246,7 +258,7 @@ export class ImageMatchService {
   async batchGeneratePhash(force = true): Promise<{ total: number; success: number; failed: number }> {
     const catalogs = await this.catalogRepo.find({
       where: {},
-      select: ['id', 'imageUrl', 'imagePhash', 'localImagePath'],
+      select: ['id', 'imageUrl', 'imagePhash', 'localImagePath', 'hotImagePath'],
     });
 
     let success = 0, failed = 0;
@@ -256,9 +268,9 @@ export class ImageMatchService {
       const batch = catalogs.slice(i, i + batchSize);
       const promises = batch.map(async (cat) => {
         if (!force && cat.imagePhash) { success++; return; } // 非强制模式：已有则跳过
-        if (!cat.imageUrl && !cat.localImagePath) { failed++; return; }
+        if (!cat.imageUrl && !cat.localImagePath && !cat.hotImagePath) { failed++; return; }
 
-        const hash = await this.generatePhashForCatalog(cat.id, cat.imageUrl, cat.localImagePath);
+        const hash = await this.generatePhashForCatalog(cat.id, cat.imageUrl, cat.localImagePath, cat.hotImagePath);
         if (hash) {
           await this.catalogRepo.update(cat.id, { imagePhash: hash });
           success++;
@@ -310,12 +322,13 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.9.7 F-156: 击杀详情左面板固定格子分类匹配
+   * V2.9.8: 击杀详情左面板固定格子分类匹配
    * 左面板装备格子布局（固定 3列×4行，共10个有效格子）：
    *   行0: [其他(包)] [头]     [披风]
    *   行1: [武器]    [甲]     [副手]
    *   行2: [药水]    [鞋]     [食物]
-   *   行3: [坐骑]    [空]     [空]
+   *   行3: [空]      [坐骑]   [空]
+   * 第4行只有中间1格（col=1）为坐骑
    * 每个格子只在对应category范围内匹配参考库
    */
   private static readonly KILL_DETAIL_SLOT_MAP: Array<{ row: number; col: number; category: string }> = [
@@ -328,10 +341,10 @@ export class ImageMatchService {
     { row: 2, col: 0, category: '药水' },
     { row: 2, col: 1, category: '鞋' },
     { row: 2, col: 2, category: '食物' },
-    { row: 3, col: 0, category: '坐骑' },
+    { row: 3, col: 1, category: '坐骑' },   // V2.9.8: 修正为col=1（中间位置）
   ];
 
-  async matchKillDetailSlots(leftPanelBuffer: Buffer): Promise<{
+  async matchKillDetailSlots(leftPanelBuffer: Buffer, hammingThreshold?: number): Promise<{
     catalogId: number;
     catalogName: string;
     level: number;
@@ -353,14 +366,14 @@ export class ImageMatchService {
     const panelH = metadata.height || 0;
     if (!panelW || !panelH) throw new Error('无法读取左面板尺寸');
 
-    // 左面板是 3列×4行 的网格，计算每格尺寸
+    // V2.9.8: 左面板是 3列×4行 的网格（第4行只有中间1格）
+    // 格子接近正方形，用面板宽度/3作为格子宽度基准
     const cellW = Math.floor(panelW / 3);
-    const cellH = Math.floor(panelH / 4);
-    // 如果格子太小可能裁切不对，用面板高度/3.5估算（3行半，第4行只有1格）
-    const effectiveCellH = Math.min(cellH, Math.floor(panelH / 3.5));
-    const effectiveCellW = Math.min(cellW, effectiveCellH * 1.1); // 格子接近正方形
+    // 面板高度约3.3~3.5个格子高（3行完整+第4行中间1格），用宽度推算
+    const effectiveCellW = cellW;
+    const effectiveCellH = cellW; // 正方形格子
 
-    this.logger.log(`[V2.9.7] 左面板 ${panelW}x${panelH}, 格子 ${effectiveCellW}x${effectiveCellH}`);
+    this.logger.log(`[V2.9.8] 左面板 ${panelW}x${panelH}, 格子 ${effectiveCellW}x${effectiveCellH}`);
 
     // 加载参考库（带pHash的），按category分组
     const allCatalogs = await this.catalogRepo
@@ -383,7 +396,8 @@ export class ImageMatchService {
       catalogsByCategory.set(cat.category, arr);
     }
 
-    const threshold = ImageMatchService.LOOSE_HAMMING_THRESHOLD; // 宽松模式
+    const threshold = hammingThreshold ?? ImageMatchService.LOOSE_HAMMING_THRESHOLD;
+    this.logger.log(`[V2.9.8] 击杀详情匹配阈值: ${threshold}`);
     const results: any[] = [];
 
     for (const slot of ImageMatchService.KILL_DETAIL_SLOT_MAP) {
@@ -400,11 +414,15 @@ export class ImageMatchService {
           .extract({ left, top, width: effectiveCellW, height: effectiveCellH })
           .toBuffer();
 
-        // 过滤空白格子
+        // V2.9.8: 增强空白格子检测（亮度+方差双重检测）
         const stats = await sharp(cellBuf).stats();
         const avg = stats.channels[0]?.mean || 0;
-        if (avg < 15 || avg > 240) {
-          this.logger.debug(`[V2.9.7] 格子(${slot.row},${slot.col}) ${slot.category} 空白，跳过`);
+        const stdDev = stats.channels[0]?.stdev || 0;
+        // 空格子特征：亮度在150-210之间（米色背景）且方差很低（<25，颜色均匀）
+        const isEmptyByBrightness = avg < 15 || avg > 240;
+        const isEmptyByVariance = (avg > 140 && avg < 220 && stdDev < 25);
+        if (isEmptyByBrightness || isEmptyByVariance) {
+          this.logger.debug(`[V2.9.8] 格子(${slot.row},${slot.col}) ${slot.category} 空白(avg=${avg.toFixed(0)},std=${stdDev.toFixed(1)})，跳过`);
           continue;
         }
 
@@ -943,10 +961,11 @@ export class ImageMatchService {
    * @param imageBuffer 原图 Buffer
    * @param options.topN 每个方框返回的候选数（默认 5）
    * @param options.autoThreshold 自动勾选的相似度阈值（默认 0.80）
+   * @param options.hammingThreshold 汉明距离阈值（可调，默认25）
    */
   async previewMatchWithCandidates(
     imageBuffer: Buffer,
-    options?: { topN?: number; autoThreshold?: number },
+    options?: { topN?: number; autoThreshold?: number; hammingThreshold?: number },
   ): Promise<{
     imgWidth: number;
     imgHeight: number;

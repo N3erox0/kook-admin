@@ -37,6 +37,9 @@ export class EquipmentCatalog {
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'local_image_path', comment: '本地图片路径' })
   localImagePath: string;
 
+  @Column({ type: 'varchar', length: 500, nullable: true, name: 'hot_image_path', comment: '热门装备游戏截图路径' })
+  hotImagePath: string;
+
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '装备别称（逗号分隔）' })
   aliases: string;
 

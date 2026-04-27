@@ -132,7 +132,7 @@ export class ResupplyController {
   previewMatch(
     @Param('guildId', ParseIntPipe) guildId: number,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { topN?: number; autoThreshold?: number },
+    @Body() body: { topN?: number; autoThreshold?: number; hammingThreshold?: number },
   ) {
     return this.resupplyService.previewMatchForResupply(guildId, id, body || {});
   }
@@ -144,11 +144,12 @@ export class ResupplyController {
   @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.RESUPPLY_STAFF)
   previewFromUrl(
     @Param('guildId', ParseIntPipe) guildId: number,
-    @Body() body: { imageUrl: string; topN?: number; autoThreshold?: number },
+    @Body() body: { imageUrl: string; topN?: number; autoThreshold?: number; hammingThreshold?: number },
   ) {
     return this.resupplyService.previewMatchFromUrl(body.imageUrl, {
       topN: body.topN,
       autoThreshold: body.autoThreshold,
+      hammingThreshold: body.hammingThreshold,
     });
   }
 }

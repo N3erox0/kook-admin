@@ -1,9 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Card, Row, Col, Checkbox, Button, Table, Tag, Image, Space, Typography, message, Spin, Empty } from 'antd';
+import { Card, Row, Col, Checkbox, Button, Table, Tag, Image, Space, Typography, message, Spin, Empty, Radio } from 'antd';
 import { ReloadOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { previewMatchResupply, previewMatchFromUrl } from '@/api/resupply';
 
 const { Text } = Typography;
+
+/** V2.9.8: 可选的汉明距离阈值 */
+const HAMMING_THRESHOLDS = [
+  { label: '严格(10)', value: 10 },
+  { label: '较严(15)', value: 15 },
+  { label: '适中(20)', value: 20 },
+  { label: '宽松(25)', value: 25 },
+  { label: '极宽(30)', value: 30 },
+];
 
 export interface MatchBox {
   boxId: string;
@@ -69,16 +78,18 @@ export default function MatchPreview({
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<MatchPreviewData | null>(null);
+  const [hammingThreshold, setHammingThreshold] = useState<number>(25);
 
-  const fetchPreview = async () => {
+  const fetchPreview = async (threshold?: number) => {
     if (!resupplyId && !imageUrl) { message.warning('缺少截图，无法预览'); return; }
     setLoading(true);
     try {
       let res: any;
+      const params = { topN, autoThreshold, hammingThreshold: threshold ?? hammingThreshold };
       if (resupplyId) {
-        res = await previewMatchResupply(guildId, resupplyId, { topN, autoThreshold });
+        res = await previewMatchResupply(guildId, resupplyId, params);
       } else {
-        res = await previewMatchFromUrl(guildId, { imageUrl: imageUrl!, topN, autoThreshold });
+        res = await previewMatchFromUrl(guildId, { imageUrl: imageUrl!, ...params });
       }
       setData(res);
       if (!res?.boxes?.length) {
@@ -136,7 +147,7 @@ export default function MatchPreview({
   if (data.boxes.length === 0) {
     return (
       <Empty description="未检测到装备方框">
-        <Button icon={<ReloadOutlined />} onClick={fetchPreview}>重新识别</Button>
+        <Button icon={<ReloadOutlined />} onClick={() => fetchPreview()}>重新识别</Button>
       </Empty>
     );
   }
@@ -145,6 +156,29 @@ export default function MatchPreview({
 
   return (
     <div>
+      {/* V2.9.8: 阈值调节按钮组 */}
+      <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f6ffed', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <Text strong style={{ whiteSpace: 'nowrap' }}>匹配阈值:</Text>
+        <Radio.Group
+          value={hammingThreshold}
+          onChange={(e) => {
+            const val = e.target.value;
+            setHammingThreshold(val);
+            fetchPreview(val);
+          }}
+          optionType="button"
+          buttonStyle="solid"
+          size="small"
+        >
+          {HAMMING_THRESHOLDS.map(t => (
+            <Radio.Button key={t.value} value={t.value}>{t.label}</Radio.Button>
+          ))}
+        </Radio.Group>
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          值越小越严格（精确匹配），值越大越宽松（模糊匹配）
+        </Text>
+      </div>
+
       {/* 顶部：原图 + 方框列表 */}
       <Row gutter={12}>
         <Col span={10}>
@@ -173,7 +207,7 @@ export default function MatchPreview({
         <Col span={14}>
           <Card size="small" title={`检测到的方框 (${data.boxes.length})`}
             bodyStyle={{ padding: 8, maxHeight: 260, overflow: 'auto' }}
-            extra={<Button size="small" icon={<ReloadOutlined />} onClick={fetchPreview}>重新识别</Button>}
+            extra={<Button size="small" icon={<ReloadOutlined />} onClick={() => fetchPreview()}>重新识别</Button>}
           >
             <Row gutter={[8, 8]}>
               {data.boxes.map(b => {
