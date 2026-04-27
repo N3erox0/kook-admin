@@ -155,8 +155,8 @@ export class SchedulerService {
     }
 
     await this.recordTask('resupply_reaction', Date.now() - startTime, `已回应 ${totalReacted} 条`);
+    原逻辑暂停结束 */
   }
-  原逻辑暂停结束 */
 
   /**
    * V2.9.7 F-157: 每天 03:00 — 装备热度统计
