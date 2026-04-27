@@ -3,6 +3,7 @@ import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Ta
 import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog } from '@/api/catalog';
 import { uploadFile } from '@/api/upload';
+import request from '@/api/request';
 import { CATEGORIES, QUALITY_LABELS } from '@/types';
 import type { EquipmentCatalog } from '@/types';
 
@@ -27,6 +28,10 @@ export default function CatalogPage() {
   const [images, setImages] = useState<any[]>([]);
   const [albionImporting, setAlbionImporting] = useState(false);
   const [form] = Form.useForm();
+
+  // V2.9.8: 热门截图上传
+  const [hotUploadTarget, setHotUploadTarget] = useState<{ id: number; name: string } | null>(null);
+  const [hotUploadModal, setHotUploadModal] = useState(false);
 
   const fetchList = async (p = page, f = filters, ps = pageSize) => {
     setLoading(true);
@@ -60,8 +65,13 @@ export default function CatalogPage() {
         await updateCatalog(editItem.id, values);
         message.success('更新成功');
       } else {
-        await createCatalog(values);
+        const created: any = await createCatalog(values);
         message.success('创建成功');
+        // V2.9.8: 创建后自动弹出热门截图上传
+        if (created?.id) {
+          setHotUploadTarget({ id: created.id, name: values.name || '' });
+          setHotUploadModal(true);
+        }
       }
       setEditModal(false);
       fetchList();
@@ -230,7 +240,7 @@ export default function CatalogPage() {
               {albionImporting ? '导入中...' : '导入Albion装备'}
             </Button>
           </Popconfirm>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => handleEdit(null)}>新增装备</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => handleEdit(null)}>新增热门装备</Button>
         </Space>
       </div>
 
@@ -264,7 +274,7 @@ export default function CatalogPage() {
       </Card>
 
       {/* 新增/编辑弹窗 */}
-      <Modal title={editItem ? '编辑装备' : '新增装备'} open={editModal} onCancel={() => setEditModal(false)} footer={null} destroyOnClose>
+      <Modal title={editItem ? '编辑装备' : '新增热门装备'} open={editModal} onCancel={() => setEditModal(false)} footer={null} destroyOnClose>
         <Form form={form} onFinish={handleSave} layout="vertical" initialValues={{ level: 5, quality: 0, category: '武器' }}>
           <Form.Item name="name" label="装备名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Space style={{ width: '100%' }}>
@@ -322,6 +332,43 @@ export default function CatalogPage() {
           ))}
           {images.length === 0 && <Text type="secondary">暂无图片</Text>}
         </div>
+      </Modal>
+
+      {/* V2.9.8: 热门截图上传弹窗（创建装备后自动弹出） */}
+      <Modal
+        title={`上传热门截图 - ${hotUploadTarget?.name || ''}`}
+        open={hotUploadModal}
+        onCancel={() => setHotUploadModal(false)}
+        footer={<Button onClick={() => setHotUploadModal(false)}>稍后上传</Button>}
+        destroyOnClose
+      >
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          上传该装备的游戏内截图，系统将优先使用热门截图生成图片指纹（pHash），提高匹配精度。
+        </Text>
+        <Upload.Dragger
+          accept="image/*"
+          showUploadList={false}
+          beforeUpload={async (file: File) => {
+            if (!hotUploadTarget) return false;
+            try {
+              const formData = new FormData();
+              formData.append('file', file);
+              await request.post(`/catalog/${hotUploadTarget.id}/hot-image`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+              });
+              message.success('热门截图上传成功！请执行"生成图片指纹"以更新 pHash');
+              setHotUploadModal(false);
+              fetchList();
+            } catch (err: any) {
+              message.error(err?.message || '上传失败');
+            }
+            return false;
+          }}
+        >
+          <p><PlusOutlined style={{ fontSize: 32, color: '#1677ff' }} /></p>
+          <p>点击或拖拽上传游戏内装备截图</p>
+          <p style={{ fontSize: 12, color: '#999' }}>推荐使用游戏内截取的装备图标（非Albion渲染图）</p>
+        </Upload.Dragger>
       </Modal>
     </div>
   );

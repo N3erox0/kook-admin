@@ -233,6 +233,16 @@
 | F-157 | 装备热度字段+定时任务 | completed | 2026-04-27 00:14 | equipment_catalog新增popularity 1~5，每天03:00统计inventory_logs扣减次数更新热度 |
 | F-158 | 分类匹配按热度排序 | completed | 2026-04-27 00:14 | matchKillDetailSlots查询参考库时按popularity DESC排序，热门装备优先匹配 |
 | F-159 | V2.9.6.1修复整合 | completed | 2026-04-27 00:14 | 移除歧义检验+flatten修复alpha通道+batchGeneratePhash默认强制重算 |
+| **V2.9.8** | **HTTPS+aliases+热门装备+Bug修复** | | | |
+| F-160 | Nginx+HTTPS配置+部署脚本 | completed | 2026-04-27 13:10 | nginx/kook-admin.conf模板+deploy.sh加Nginx/Certbot步骤+.env.example改https |
+| F-161 | aliases批量更新API+导入脚本 | completed | 2026-04-27 13:10 | POST /api/catalog/batch-update-aliases+scripts/import-aliases.ts+027清理乱码SQL |
+| F-162 | 新增热门装备按钮+截图上传 | completed | 2026-04-27 13:10 | "新增装备"→"新增热门装备"，创建后自动弹出热门截图上传弹窗 |
+| F-163 | SSVIP操作日志修复 | completed | 2026-04-27 13:10 | 前端SSVIP走/admin/logs+LogAdminController补modules端点+LogLegacyController注册 |
+| F-164 | 离开成员排除非KOOK账号 | completed | 2026-04-27 13:10 | kook-sync/member同步时跳过joinSource=manual或非纯数字kookUserId |
+| F-165 | 手动创建补装搜索优化 | completed | 2026-04-27 13:10 | 最少2字符触发搜索+限制20条+显示别称 |
+| F-166 | 补装详情页左图右字段 | completed | 2026-04-27 13:10 | Modal改960px双栏：左380px截图预览+右字段信息+操作按钮 |
+| F-167 | 阈值按钮+热门截图归档 | completed | 2026-04-27 13:10 | V2.9.7已写入代码统一推送部署（MatchPreview阈值+hotImagePath+026迁移） |
+| F-168 | 新增/离开成员统计窗口修复 | completed | 2026-04-27 15:00 | getDailyStatistics改为最近24小时窗口(MoreThanOrEqual)，不再用固定日期Between |
 
 
 

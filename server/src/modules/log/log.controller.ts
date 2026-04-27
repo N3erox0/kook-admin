@@ -61,6 +61,13 @@ export class LogAdminController {
     if (!user?.globalRole || user.globalRole !== 'ssvip') return [];
     return this.logService.getScheduledTasks();
   }
+
+  @Get('modules')
+  @ApiOperation({ summary: '获取模块列表（SSVIP）' })
+  getModules(@CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') return [];
+    return this.logService.getModules();
+  }
 }
 
 /** 兼容旧路由 /api/logs（重定向到公会隔离版本） */

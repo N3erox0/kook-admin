@@ -611,6 +611,26 @@ export class CatalogService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /** V2.9.8: 批量更新装备别称（按ID） */
+  async batchUpdateAliases(items: { id: number; aliases: string }[]): Promise<{
+    updated: number; skipped: number; notFound: number;
+  }> {
+    let updated = 0, skipped = 0, notFound = 0;
+    for (const item of items) {
+      const existing = await this.catalogRepo.findOne({ where: { id: item.id } });
+      if (!existing) { notFound++; continue; }
+      const newAliases = (item.aliases || '').trim() || null;
+      if (existing.aliases === newAliases) { skipped++; continue; }
+      // 只在 CSV 提供了非空别称时才更新（空值不覆盖已有别称）
+      if (!newAliases && existing.aliases) { skipped++; continue; }
+      existing.aliases = newAliases;
+      await this.catalogRepo.save(existing);
+      updated++;
+    }
+    this.logger.log(`批量别称更新: 更新${updated}, 跳过${skipped}, 未找到${notFound}`);
+    return { updated, skipped, notFound };
+  }
+
   // ===== V2.9.8: 热门装备游戏截图管理 =====
 
   /**

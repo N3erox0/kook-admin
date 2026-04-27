@@ -78,12 +78,13 @@ export default function ResupplyPage() {
   const [catalogOptions, setCatalogOptions] = useState<any[]>([]);
   const [createEquipList, setCreateEquipList] = useState<{ id: number; name: string; gearScore?: number; category?: string; quantity: number }[]>([]);
   const handleCatalogSearch = async (kw: string) => {
-    if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
+    if (!kw || kw.trim().length < 2) { setCatalogOptions([]); return; }
     try {
       const res: any = await searchCatalog(kw.trim());
-      setCatalogOptions((res || []).map((item: any) => ({
+      const list = Array.isArray(res) ? res : (res?.list || []);
+      setCatalogOptions(list.slice(0, 20).map((item: any) => ({
         value: formatEquipName(item),
-        label: formatEquipName(item),
+        label: `${formatEquipName(item)}${item.aliases ? ' (' + item.aliases + ')' : ''}`,
         item,
       })));
     } catch { setCatalogOptions([]); }
@@ -396,18 +397,37 @@ export default function ResupplyPage() {
         ]}
       />
 
-      {/* 详情 Modal（居中弹窗） */}
-      <Modal title="补装申请详情" open={detailDrawer} onCancel={() => setDetailDrawer(false)} width={600} footer={null} centered destroyOnClose>
+      {/* 详情 Modal（V2.9.8: 左图右字段双栏布局） */}
+      <Modal title="补装申请详情" open={detailDrawer} onCancel={() => setDetailDrawer(false)} width={960} footer={null} centered destroyOnClose>
         {detailLoading ? <Text>加载中...</Text> : detail && (
-          <div>
-            <div style={{ marginBottom: 16 }}>
-              <Space direction="vertical" style={{ width: '100%' }}>
+          <div style={{ display: 'flex', gap: 20 }}>
+            {/* 左侧：截图预览 */}
+            <div style={{ flex: '0 0 380px', minWidth: 0 }}>
+              {detail.screenshotUrl ? (
+                <div>
+                  <Image src={detail.screenshotUrl} width="100%" style={{ borderRadius: 8, maxHeight: 500, objectFit: 'contain' }} />
+                  {canProcess && (
+                    <Button size="small" type="link" icon={<ScanOutlined />} block
+                      onClick={() => setMatchPreviewModal(true)} style={{ marginTop: 8 }}>
+                      图像识别预览
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ width: '100%', height: 200, background: '#f5f5f5', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text type="secondary">无截图</Text>
+                </div>
+              )}
+            </div>
+            {/* 右侧：字段信息 */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 <div><Text strong>状态：</Text><Tag color={STATUS_COLORS[detail.status]}>{RESUPPLY_STATUS[detail.status]}</Tag></div>
                 <div><Text strong>申请人：</Text>{detail.kookNickname || '-'}</div>
+                {detail.resupplyBox && <div><Text strong>箱子编号：</Text><Tag color="geekblue">{detail.resupplyBox}</Tag></div>}
                 <div>
                   <Text strong>待补装备：</Text>
                   {detail.equipmentNames || detail.equipmentName || <Text type="secondary">（暂无装备）</Text>}
-                  {/* F-109: 放大按钮 */}
                   {(detail.equipmentNames || detail.equipmentDetails?.length > 0) && (
                     <Button size="small" type="link" icon={<ExpandAltOutlined />}
                       onClick={() => setEquipExpandModal(true)} style={{ marginLeft: 8 }}>
@@ -416,45 +436,32 @@ export default function ResupplyPage() {
                   )}
                 </div>
                 <div><Text strong>数量：</Text>{detail.quantity} | <Text strong>类型：</Text>{detail.applyType}</div>
-                {detail.resupplyBox && <div><Text strong>箱子编号：</Text><Tag color="geekblue">{detail.resupplyBox}</Tag></div>}
                 {detail.resupplyRoom && <div><Text strong>补装房间：</Text><Tag color="volcano">{detail.resupplyRoom}</Tag></div>}
                 {detail.killDate && <div><Text strong>击杀日期：</Text>{detail.killDate}</div>}
                 {detail.mapName && <div><Text strong>地图：</Text>{detail.mapName}</div>}
                 {detail.gameId && <div><Text strong>游戏ID：</Text>{detail.gameId}</div>}
                 {detail.ocrGuildName && <div><Text strong>公会名(OCR)：</Text>{detail.ocrGuildName}</div>}
-                {detail.reason && <div><Text strong>原因/来源：</Text>{detail.reason}</div>}
+                {detail.reason && <div><Text strong>原因/来源：</Text><Text style={{ fontSize: 13 }}>{detail.reason}</Text></div>}
                 {detail.processRemark && <div><Text strong>处理备注：</Text>{detail.processRemark}</div>}
                 <div><Text strong>申请时间：</Text>{dayjs(detail.createdAt).format('YYYY-MM-DD HH:mm:ss')}</div>
                 {detail.processedAt && <div><Text strong>处理时间：</Text>{dayjs(detail.processedAt).format('YYYY-MM-DD HH:mm:ss')}</div>}
               </Space>
-            </div>
-            {detail.screenshotUrl && (
-              <div style={{ marginBottom: 16 }}>
-                <Text strong>截图：</Text>
-                {canProcess && (
-                  <Button size="small" type="link" icon={<ScanOutlined />}
-                    onClick={() => setMatchPreviewModal(true)} style={{ marginLeft: 8 }}>
-                    图像识别预览
-                  </Button>
-                )}
-                <br />
-                <Image src={detail.screenshotUrl} width={200} style={{ borderRadius: 8, marginTop: 8 }} />
-              </div>
-            )}
-            {canProcess && detail.status === 0 && (
-              <Space style={{ marginBottom: 16 }}>
-                <Popconfirm title="确认通过？" onConfirm={() => handleProcess(detail.id, 'approve')}>
-                  <Button type="primary" icon={<CheckOutlined />}>通过</Button>
+              {/* 操作按钮 */}
+              {canProcess && detail.status === 0 && (
+                <Space style={{ marginTop: 16 }}>
+                  <Popconfirm title="确认通过？" onConfirm={() => handleProcess(detail.id, 'approve')}>
+                    <Button type="primary" icon={<CheckOutlined />}>通过</Button>
+                  </Popconfirm>
+                  <Button danger icon={<CloseOutlined />}
+                    onClick={() => { setRejectTarget(detail.id); setRejectModal(true); }}>驳回</Button>
+                </Space>
+              )}
+              {canProcess && detail.status === 1 && (
+                <Popconfirm title="标记已发放？" onConfirm={() => handleProcess(detail.id, 'dispatch')}>
+                  <Button icon={<SendOutlined />} style={{ marginTop: 16 }}>标记发放</Button>
                 </Popconfirm>
-                <Button danger icon={<CloseOutlined />}
-                  onClick={() => { setRejectTarget(detail.id); setRejectModal(true); }}>驳回</Button>
-              </Space>
-            )}
-            {canProcess && detail.status === 1 && (
-              <Popconfirm title="标记已发放？" onConfirm={() => handleProcess(detail.id, 'dispatch')}>
-                <Button icon={<SendOutlined />}>标记发放</Button>
-              </Popconfirm>
-            )}
+              )}
+            </div>
           </div>
         )}
       </Modal>

@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, Between, MoreThanOrEqual, LessThan } from 'typeorm';
+import { Repository, Like, Between, MoreThanOrEqual } from 'typeorm';
 import { GuildMember } from './entities/guild-member.entity';
 import { QueryMemberDto } from './dto/member.dto';
 import { MemberStatus, GuildRole } from '../../common/constants/enums';
@@ -46,12 +46,11 @@ export class MemberService {
   }
 
   async getDailyStatistics(guildId: number) {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // V2.9.8: 今天0点~明天0点（之前是昨天0点~今天0点，漏掉今天同步的新成员）
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const tomorrowStart = new Date(todayStart);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
 
     const totalActive = await this.memberRepo.count({
       where: { guildId, status: MemberStatus.ACTIVE },
@@ -61,24 +60,28 @@ export class MemberService {
       where: { guildId, status: MemberStatus.LEFT },
     });
 
-    // 当日新增：joined_at 在昨日 00:00 ~ 今日 00:00
     const newMembers = await this.memberRepo.find({
       where: {
         guildId,
         status: MemberStatus.ACTIVE,
-        joinedAt: Between(yesterday, today),
+        joinedAt: Between(todayStart, tomorrowStart),
       },
       order: { joinedAt: 'DESC' },
     });
 
-    // 当日离开：left_at 在昨日 00:00 ~ 今日 00:00
     const leftMembers = await this.memberRepo.find({
       where: {
         guildId,
         status: MemberStatus.LEFT,
-        leftAt: Between(yesterday, today),
+        leftAt: Between(todayStart, tomorrowStart),
       },
       order: { leftAt: 'DESC' },
+    });
+
+    const lastSynced = await this.memberRepo.findOne({
+      where: { guildId },
+      order: { lastSyncedAt: 'DESC' },
+      select: ['lastSyncedAt'],
     });
 
     return {
@@ -89,6 +92,7 @@ export class MemberService {
       dailyLeft: leftMembers.length,
       newMembers: newMembers.map((m) => ({ id: m.id, nickname: m.nickname, kookUserId: m.kookUserId, joinedAt: m.joinedAt })),
       leftMembers: leftMembers.map((m) => ({ id: m.id, nickname: m.nickname, kookUserId: m.kookUserId, leftAt: m.leftAt })),
+      lastSyncedAt: lastSynced?.lastSyncedAt || null,
     };
   }
 
@@ -135,6 +139,10 @@ export class MemberService {
     // 标记离开的成员
     for (const [kookId, member] of existingMap) {
       if (!kookIdSet.has(kookId) && member.status === MemberStatus.ACTIVE) {
+        // V2.9.8: 保护非KOOK来源账号（手动创建的虚拟账号）
+        if (member.joinSource === 'manual' || !/^\d+$/.test(kookId)) {
+          continue;
+        }
         member.status = MemberStatus.LEFT;
         member.leftAt = new Date();
         member.lastSyncedAt = new Date();

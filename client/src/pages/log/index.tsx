@@ -3,6 +3,7 @@ import { Card, Table, Button, Space, Tag, Typography, Select, Tabs } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons';
 import request from '@/api/request';
 import { useGuildStore } from '@/stores/guild.store';
+import { useAuthStore } from '@/stores/auth.store';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -20,6 +21,8 @@ const ACTION_LABELS: Record<string, string> = {
 
 export default function LogPage() {
   const { currentGuildId } = useGuildStore();
+  const { user } = useAuthStore();
+  const isSSVIP = user?.globalRole === 'ssvip';
   const guildId = currentGuildId;
   const [logs, setLogs] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
@@ -34,7 +37,7 @@ export default function LogPage() {
   const [pushLoading, setPushLoading] = useState(false);
   const [pushPage, setPushPage] = useState(1);
 
-  const basePath = guildId ? `/guild/${guildId}/logs` : '/logs';
+  const basePath = isSSVIP ? '/admin/logs' : (guildId ? `/guild/${guildId}/logs` : '/admin/logs');
 
   const fetchLogs = async (p = page) => {
     setLoading(true);

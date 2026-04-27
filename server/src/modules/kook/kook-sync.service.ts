@@ -120,6 +120,11 @@ export class KookSyncService {
           this.logger.warn(`[${guild.name}] 超管 ${member.nickname}(${kookId}) 不在KOOK成员列表中，跳过离开标记`);
           continue;
         }
+        // V2.9.8: 保护非KOOK来源账号（手动创建的虚拟账号，kookUserId 不是纯数字）
+        if (member.joinSource === 'manual' || !/^\d+$/.test(kookId)) {
+          this.logger.log(`[${guild.name}] 非KOOK账号 ${member.nickname}(${kookId}) joinSource=${member.joinSource}，跳过离开标记`);
+          continue;
+        }
         member.status = MemberStatus.LEFT;
         member.leftAt = new Date();
         member.lastSyncedAt = new Date();

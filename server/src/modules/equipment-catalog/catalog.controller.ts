@@ -101,6 +101,16 @@ export class CatalogController {
     return this.catalogService.batchMatch(dto.items);
   }
 
+  @Post('batch-update-aliases')
+  @OperationLog({ module: 'catalog', action: 'batch_update_aliases' })
+  @ApiOperation({ summary: '批量更新装备别称（按ID）' })
+  async batchUpdateAliases(@Body() body: { items: { id: number; aliases: string }[] }, @CurrentUser() user: any) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new BadRequestException('仅 SSVIP 可执行此操作');
+    }
+    return this.catalogService.batchUpdateAliases(body.items);
+  }
+
   @Put(':id')
   @OperationLog({ module: 'catalog', action: 'update' })
   @ApiOperation({ summary: '更新装备' })
