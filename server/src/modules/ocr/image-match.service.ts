@@ -1171,21 +1171,55 @@ export class ImageMatchService {
         }
       }
 
-      // 找到装备区的行范围：连续高活跃行的起止
-      const rowThreshold = width * 0.15; // 一行中至少15%像素是彩色
+      // 找到装备区的行范围：用阶跃检测（活跃度从低跳到持续高 = 装备区起点）
+      // 装备网格区每行有5个完整色框，活跃像素占比 > 40%
+      // 标题栏/底部栏活跃像素占比 < 25%
+      const highThreshold = width * 0.35; // 装备区行阈值
+      const lowThreshold = width * 0.20;  // 非装备区行阈值
       let gridTop = -1, gridBottom = -1;
+
+      // 从上往下找第一个连续3行以上超过高阈值的位置 = 装备区起点
+      let consecutiveHigh = 0;
       for (let y = 0; y < height; y++) {
-        if (rowActivity[y] > rowThreshold) {
-          if (gridTop < 0) gridTop = y;
+        if (rowActivity[y] > highThreshold) {
+          consecutiveHigh++;
+          if (consecutiveHigh >= 3 && gridTop < 0) {
+            gridTop = y - consecutiveHigh + 1;
+          }
           gridBottom = y;
+        } else {
+          // 如果已经进入装备区后遇到低活跃行（间隙），允许少量间隙
+          if (gridTop >= 0 && rowActivity[y] < lowThreshold) {
+            // 检查后续是否还有高活跃行（装备区内部间隙 vs 真正的底部结束）
+            let hasMoreHigh = false;
+            for (let yy = y + 1; yy < Math.min(y + 20, height); yy++) {
+              if (rowActivity[yy] > highThreshold) { hasMoreHigh = true; break; }
+            }
+            if (!hasMoreHigh) break; // 真正的底部
+          }
+          if (gridTop < 0) consecutiveHigh = 0;
         }
       }
 
-      // 找到装备区的列范围
-      const colThreshold = height * 0.10;
+      // 找到装备区的列范围（只在装备区行范围内统计）
+      const colActivityInGrid = new Array(width).fill(0);
+      if (gridTop >= 0 && gridBottom > gridTop) {
+        for (let y = gridTop; y <= gridBottom; y++) {
+          for (let x = 0; x < width; x++) {
+            const idx = (y * width + x) * 4;
+            const r = rawBuf[idx], g = rawBuf[idx + 1], b = rawBuf[idx + 2];
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            if ((max - min) > 50 && max > 80 && max < 240) {
+              colActivityInGrid[x]++;
+            }
+          }
+        }
+      }
+      const gridH_est = gridBottom - gridTop + 1;
+      const colThreshold = gridH_est * 0.10;
       let gridLeft = -1, gridRight = -1;
       for (let x = 0; x < width; x++) {
-        if (colActivity[x] > colThreshold) {
+        if (colActivityInGrid[x] > colThreshold) {
           if (gridLeft < 0) gridLeft = x;
           gridRight = x;
         }
