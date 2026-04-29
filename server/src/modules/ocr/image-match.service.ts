@@ -1171,90 +1171,72 @@ export class ImageMatchService {
         rowAvg[y] = sum / width;
       }
 
-      // 找列分割线：连续暗色列（亮度 < 全图列平均 * 0.6）
-      const colMean = colAvg.reduce((a, b) => a + b, 0) / width;
-      const colDarkThreshold = Math.min(colMean * 0.55, 60);
+      // 找列分割线：不用绝对阈值，改为找局部极小值（周期性谷值）
+      // 期望列间距 ≈ width / cols，在每个期望间隙位置附近找最暗的列
+      const expectedColStep = width / cols;
       const colSplits: Array<{ start: number; end: number }> = [];
-      let inDark = false, darkStart = 0;
-      for (let x = 0; x < width; x++) {
-        if (colAvg[x] < colDarkThreshold) {
-          if (!inDark) { inDark = true; darkStart = x; }
-        } else {
-          if (inDark) {
-            // 暗色带宽度 1-8px 才算间隙（太宽可能是图片边缘）
-            const w = x - darkStart;
-            if (w >= 1 && w <= 8) {
-              colSplits.push({ start: darkStart, end: x - 1 });
-            }
-            inDark = false;
-          }
+      for (let i = 1; i < cols; i++) {
+        const expectedX = Math.round(i * expectedColStep);
+        const searchRange = Math.round(expectedColStep * 0.15); // ±15% 范围搜索
+        let minVal = 999, minX = expectedX;
+        for (let x = Math.max(0, expectedX - searchRange); x <= Math.min(width - 1, expectedX + searchRange); x++) {
+          if (colAvg[x] < minVal) { minVal = colAvg[x]; minX = x; }
         }
+        colSplits.push({ start: minX, end: minX });
       }
 
-      // 找行分割线：同理
+      // 找行分割线：同理，在期望行间隙位置附近找最暗的行
+      // 先找装备区起点（跳过标题栏）：找第一个"亮度突然升高"的行
+      let gridStartY = 0;
       const rowMean = rowAvg.reduce((a, b) => a + b, 0) / height;
-      const rowDarkThreshold = Math.min(rowMean * 0.55, 60);
-      const rowSplits: Array<{ start: number; end: number }> = [];
-      inDark = false; darkStart = 0;
-      for (let y = 0; y < height; y++) {
-        if (rowAvg[y] < rowDarkThreshold) {
-          if (!inDark) { inDark = true; darkStart = y; }
-        } else {
-          if (inDark) {
-            const h = y - darkStart;
-            if (h >= 1 && h <= 8) {
-              rowSplits.push({ start: darkStart, end: y - 1 });
-            }
-            inDark = false;
-          }
+      const brightThreshold = rowMean * 1.2;
+      for (let y = Math.round(height * 0.05); y < height; y++) {
+        // 连续 3 行亮度 > 均值 = 装备区开始
+        if (rowAvg[y] > brightThreshold && y + 2 < height && rowAvg[y + 1] > brightThreshold && rowAvg[y + 2] > brightThreshold) {
+          gridStartY = y;
+          break;
+        }
+      }
+      // 找装备区终点：从底部往上找第一个亮度高的行
+      let gridEndY = height - 1;
+      for (let y = height - 1; y > gridStartY; y--) {
+        if (rowAvg[y] > brightThreshold && y - 1 > 0 && rowAvg[y - 1] > brightThreshold) {
+          gridEndY = y;
+          break;
         }
       }
 
-      this.logger.log(`[V2.10.2] 间隙检测: 列分割线=${colSplits.length}个, 行分割线=${rowSplits.length}个, colThreshold=${colDarkThreshold.toFixed(0)}, rowThreshold=${rowDarkThreshold.toFixed(0)}`);
+      const gridHeight = gridEndY - gridStartY;
+      const expectedRowStep = gridHeight / rows;
+      const rowSplits: Array<{ start: number; end: number }> = [];
+      for (let i = 1; i < rows; i++) {
+        const expectedY = gridStartY + Math.round(i * expectedRowStep);
+        const searchRange = Math.round(expectedRowStep * 0.15);
+        let minVal = 999, minY = expectedY;
+        for (let y = Math.max(0, expectedY - searchRange); y <= Math.min(height - 1, expectedY + searchRange); y++) {
+          if (rowAvg[y] < minVal) { minVal = rowAvg[y]; minY = y; }
+        }
+        rowSplits.push({ start: minY, end: minY });
+      }
 
-      // 从分割线推算格子坐标
-      // 列分割线之间的区域 = 每列格子的 x 范围
-      // 需要至少 cols-1=4 条列分割线 和 rows-1=6 条行分割线
+      this.logger.log(`[V2.10.2] 极小值检测: 列分割=${colSplits.length}个(step=${expectedColStep.toFixed(0)}), 行分割=${rowSplits.length}个(gridY=${gridStartY}~${gridEndY}, step=${expectedRowStep.toFixed(0)})`);
+
+      // 分割线一定有 cols-1 和 rows-1 条（极小值法保证）
       if (colSplits.length >= cols - 1 && rowSplits.length >= rows - 1) {
-        // 取等间距的分割线（过滤掉异常的）
-        // 列边界：[0, split1.mid, split2.mid, ..., width]
-        const colBounds = [0, ...colSplits.map(s => Math.round((s.start + s.end) / 2)), width];
-        const rowBounds = [0, ...rowSplits.map(s => Math.round((s.start + s.end) / 2)), height];
+        // 列边界：[0, split1, split2, ..., width]
+        const colBounds = [0, ...colSplits.map(s => s.start), width];
+        const rowBounds = [gridStartY, ...rowSplits.map(s => s.start), gridEndY];
 
-        // 如果分割线过多（>需要数），按等间距筛选最接近期望位置的
-        const pickBest = (bounds: number[], expected: number): number[] => {
-          if (bounds.length - 2 <= expected) return bounds;
-          // 期望间距
-          const totalLen = bounds[bounds.length - 1] - bounds[0];
-          const step = totalLen / (expected + 1);
-          const picked = [bounds[0]];
-          for (let i = 1; i <= expected; i++) {
-            const target = bounds[0] + step * i;
-            // 找最接近 target 的 bound
-            let best = bounds[1], bestDist = Math.abs(bounds[1] - target);
-            for (let j = 1; j < bounds.length - 1; j++) {
-              const dist = Math.abs(bounds[j] - target);
-              if (dist < bestDist) { bestDist = dist; best = bounds[j]; }
-            }
-            picked.push(best);
-          }
-          picked.push(bounds[bounds.length - 1]);
-          return picked;
-        };
+        this.logger.log(`[V2.10.2] 边界: cols=[${colBounds.join(',')}], rows=[${rowBounds.join(',')}]`);
 
-        const finalColBounds = pickBest(colBounds, cols - 1);
-        const finalRowBounds = pickBest(rowBounds, rows - 1);
-
-        this.logger.log(`[V2.10.2] 最终边界: cols=[${finalColBounds.join(',')}], rows=[${finalRowBounds.join(',')}]`);
-
-        // 从边界生成格子坐标（每格内缩 2px 去掉边框）
-        const pad = 2;
-        for (let r = 0; r < finalRowBounds.length - 1 && r < rows; r++) {
-          for (let c = 0; c < finalColBounds.length - 1 && c < cols; c++) {
-            const left = finalColBounds[c] + pad;
-            const top = finalRowBounds[r] + pad;
-            const cellW = finalColBounds[c + 1] - finalColBounds[c] - pad * 2;
-            const cellH = finalRowBounds[r + 1] - finalRowBounds[r] - pad * 2;
+        // 从边界生成格子坐标（每格内缩 3px 去掉边框/间隙）
+        const pad = 3;
+        for (let r = 0; r < rowBounds.length - 1 && r < rows; r++) {
+          for (let c = 0; c < colBounds.length - 1 && c < cols; c++) {
+            const left = colBounds[c] + pad;
+            const top = rowBounds[r] + pad;
+            const cellW = colBounds[c + 1] - colBounds[c] - pad * 2;
+            const cellH = rowBounds[r + 1] - rowBounds[r] - pad * 2;
             if (cellW > 15 && cellH > 15) {
               detectedCells.push({ left, top, width: cellW, height: cellH });
             }
@@ -1286,13 +1268,15 @@ export class ImageMatchService {
 
         this.logger.log(`[V2.10.2] 周期检测: colPeriod=${colPeriod}, rowPeriod=${rowPeriod}`);
 
-        // 找到第一个格子的起始位置（第一个暗谷之后）
+        // 找到第一个格子的起始位置（第一个亮度较高的位置）
         let firstCol = 0, firstRow = 0;
+        const avgColVal = colAvg.reduce((a, b) => a + b, 0) / width;
+        const avgRowVal = rowAvg.reduce((a, b) => a + b, 0) / height;
         for (let x = 0; x < width; x++) {
-          if (colAvg[x] > colDarkThreshold + 20) { firstCol = x; break; }
+          if (colAvg[x] > avgColVal) { firstCol = x; break; }
         }
         for (let y = 0; y < height; y++) {
-          if (rowAvg[y] > rowDarkThreshold + 20) { firstRow = y; break; }
+          if (rowAvg[y] > avgRowVal * 1.2) { firstRow = y; break; }
         }
 
         const side = Math.min(colPeriod, rowPeriod) - 4;
