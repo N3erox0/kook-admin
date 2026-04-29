@@ -1141,123 +1141,167 @@ export class ImageMatchService {
       }
     }
 
-    // V2.10.1: 品质边框检测定位每个装备格子（替代固定比例裁剪）
-    // 算法：扫描每行像素，找到高饱和度色带（品质边框）确定行列分割线
+    // V2.10.2: 间隙颜色检测法 — 扫描列/行平均亮度，深色窄带=分割线
     let detectedCells: Array<{ left: number; top: number; width: number; height: number }> = [];
 
     try {
-      // 获取完整图片的 raw RGBA 像素数据
-      const rawBuf = await sharp(imageBuffer)
-        .ensureAlpha()
+      // 获取灰度像素
+      const grayBuf = await sharp(imageBuffer)
+        .grayscale()
         .raw()
         .toBuffer();
 
-      // 扫描每行：统计高饱和度像素（品质边框特征）
-      // 品质边框 HSV: S>0.3, V>0.3（排除灰色/黑色背景）
-      const rowActivity = new Array(height).fill(0);
-      const colActivity = new Array(width).fill(0);
-
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const idx = (y * width + x) * 4;
-          const r = rawBuf[idx], g = rawBuf[idx + 1], b = rawBuf[idx + 2];
-          const max = Math.max(r, g, b), min = Math.min(r, g, b);
-          const diff = max - min;
-          // 高饱和度 + 不是太暗 + 不是白色 = 品质边框
-          if (diff > 50 && max > 80 && max < 240) {
-            rowActivity[y]++;
-            colActivity[x]++;
-          }
-        }
-      }
-
-      // 找到装备区的行范围：用阶跃检测（活跃度从低跳到持续高 = 装备区起点）
-      // 装备网格区每行有5个完整色框，活跃像素占比 > 40%
-      // 标题栏/底部栏活跃像素占比 < 25%
-      const highThreshold = width * 0.35; // 装备区行阈值
-      const lowThreshold = width * 0.20;  // 非装备区行阈值
-      let gridTop = -1, gridBottom = -1;
-
-      // 从上往下找第一个连续3行以上超过高阈值的位置 = 装备区起点
-      let consecutiveHigh = 0;
-      for (let y = 0; y < height; y++) {
-        if (rowActivity[y] > highThreshold) {
-          consecutiveHigh++;
-          if (consecutiveHigh >= 3 && gridTop < 0) {
-            gridTop = y - consecutiveHigh + 1;
-          }
-          gridBottom = y;
-        } else {
-          // 如果已经进入装备区后遇到低活跃行（间隙），允许少量间隙
-          if (gridTop >= 0 && rowActivity[y] < lowThreshold) {
-            // 检查后续是否还有高活跃行（装备区内部间隙 vs 真正的底部结束）
-            let hasMoreHigh = false;
-            for (let yy = y + 1; yy < Math.min(y + 20, height); yy++) {
-              if (rowActivity[yy] > highThreshold) { hasMoreHigh = true; break; }
-            }
-            if (!hasMoreHigh) break; // 真正的底部
-          }
-          if (gridTop < 0) consecutiveHigh = 0;
-        }
-      }
-
-      // 找到装备区的列范围（只在装备区行范围内统计）
-      const colActivityInGrid = new Array(width).fill(0);
-      if (gridTop >= 0 && gridBottom > gridTop) {
-        for (let y = gridTop; y <= gridBottom; y++) {
-          for (let x = 0; x < width; x++) {
-            const idx = (y * width + x) * 4;
-            const r = rawBuf[idx], g = rawBuf[idx + 1], b = rawBuf[idx + 2];
-            const max = Math.max(r, g, b), min = Math.min(r, g, b);
-            if ((max - min) > 50 && max > 80 && max < 240) {
-              colActivityInGrid[x]++;
-            }
-          }
-        }
-      }
-      const gridH_est = gridBottom - gridTop + 1;
-      const colThreshold = gridH_est * 0.10;
-      let gridLeft = -1, gridRight = -1;
+      // 计算每列平均亮度
+      const colAvg = new Array(width).fill(0);
       for (let x = 0; x < width; x++) {
-        if (colActivityInGrid[x] > colThreshold) {
-          if (gridLeft < 0) gridLeft = x;
-          gridRight = x;
+        let sum = 0;
+        for (let y = 0; y < height; y++) {
+          sum += grayBuf[y * width + x];
+        }
+        colAvg[x] = sum / height;
+      }
+
+      // 计算每行平均亮度
+      const rowAvg = new Array(height).fill(0);
+      for (let y = 0; y < height; y++) {
+        let sum = 0;
+        for (let x = 0; x < width; x++) {
+          sum += grayBuf[y * width + x];
+        }
+        rowAvg[y] = sum / width;
+      }
+
+      // 找列分割线：连续暗色列（亮度 < 全图列平均 * 0.6）
+      const colMean = colAvg.reduce((a, b) => a + b, 0) / width;
+      const colDarkThreshold = Math.min(colMean * 0.55, 60);
+      const colSplits: Array<{ start: number; end: number }> = [];
+      let inDark = false, darkStart = 0;
+      for (let x = 0; x < width; x++) {
+        if (colAvg[x] < colDarkThreshold) {
+          if (!inDark) { inDark = true; darkStart = x; }
+        } else {
+          if (inDark) {
+            // 暗色带宽度 1-8px 才算间隙（太宽可能是图片边缘）
+            const w = x - darkStart;
+            if (w >= 1 && w <= 8) {
+              colSplits.push({ start: darkStart, end: x - 1 });
+            }
+            inDark = false;
+          }
         }
       }
 
-      if (gridTop >= 0 && gridBottom > gridTop && gridLeft >= 0 && gridRight > gridLeft) {
-        const gridW = gridRight - gridLeft + 1;
-        const gridH = gridBottom - gridTop + 1;
+      // 找行分割线：同理
+      const rowMean = rowAvg.reduce((a, b) => a + b, 0) / height;
+      const rowDarkThreshold = Math.min(rowMean * 0.55, 60);
+      const rowSplits: Array<{ start: number; end: number }> = [];
+      inDark = false; darkStart = 0;
+      for (let y = 0; y < height; y++) {
+        if (rowAvg[y] < rowDarkThreshold) {
+          if (!inDark) { inDark = true; darkStart = y; }
+        } else {
+          if (inDark) {
+            const h = y - darkStart;
+            if (h >= 1 && h <= 8) {
+              rowSplits.push({ start: darkStart, end: y - 1 });
+            }
+            inDark = false;
+          }
+        }
+      }
 
-        // 在装备区内，按列寻找分割间隙（活跃度低谷 = 格子间间距）
-        // 列分割
-        const colSlice = new Array(gridW).fill(0);
-        for (let x = gridLeft; x <= gridRight; x++) {
-          for (let y = gridTop; y <= gridBottom; y++) {
-            const idx = (y * width + x) * 4;
-            const r = rawBuf[idx], g = rawBuf[idx + 1], b = rawBuf[idx + 2];
-            const max = Math.max(r, g, b), min = Math.min(r, g, b);
-            if ((max - min) > 50 && max > 80 && max < 240) {
-              colSlice[x - gridLeft]++;
+      this.logger.log(`[V2.10.2] 间隙检测: 列分割线=${colSplits.length}个, 行分割线=${rowSplits.length}个, colThreshold=${colDarkThreshold.toFixed(0)}, rowThreshold=${rowDarkThreshold.toFixed(0)}`);
+
+      // 从分割线推算格子坐标
+      // 列分割线之间的区域 = 每列格子的 x 范围
+      // 需要至少 cols-1=4 条列分割线 和 rows-1=6 条行分割线
+      if (colSplits.length >= cols - 1 && rowSplits.length >= rows - 1) {
+        // 取等间距的分割线（过滤掉异常的）
+        // 列边界：[0, split1.mid, split2.mid, ..., width]
+        const colBounds = [0, ...colSplits.map(s => Math.round((s.start + s.end) / 2)), width];
+        const rowBounds = [0, ...rowSplits.map(s => Math.round((s.start + s.end) / 2)), height];
+
+        // 如果分割线过多（>需要数），按等间距筛选最接近期望位置的
+        const pickBest = (bounds: number[], expected: number): number[] => {
+          if (bounds.length - 2 <= expected) return bounds;
+          // 期望间距
+          const totalLen = bounds[bounds.length - 1] - bounds[0];
+          const step = totalLen / (expected + 1);
+          const picked = [bounds[0]];
+          for (let i = 1; i <= expected; i++) {
+            const target = bounds[0] + step * i;
+            // 找最接近 target 的 bound
+            let best = bounds[1], bestDist = Math.abs(bounds[1] - target);
+            for (let j = 1; j < bounds.length - 1; j++) {
+              const dist = Math.abs(bounds[j] - target);
+              if (dist < bestDist) { bestDist = dist; best = bounds[j]; }
+            }
+            picked.push(best);
+          }
+          picked.push(bounds[bounds.length - 1]);
+          return picked;
+        };
+
+        const finalColBounds = pickBest(colBounds, cols - 1);
+        const finalRowBounds = pickBest(rowBounds, rows - 1);
+
+        this.logger.log(`[V2.10.2] 最终边界: cols=[${finalColBounds.join(',')}], rows=[${finalRowBounds.join(',')}]`);
+
+        // 从边界生成格子坐标（每格内缩 2px 去掉边框）
+        const pad = 2;
+        for (let r = 0; r < finalRowBounds.length - 1 && r < rows; r++) {
+          for (let c = 0; c < finalColBounds.length - 1 && c < cols; c++) {
+            const left = finalColBounds[c] + pad;
+            const top = finalRowBounds[r] + pad;
+            const cellW = finalColBounds[c + 1] - finalColBounds[c] - pad * 2;
+            const cellH = finalRowBounds[r + 1] - finalRowBounds[r] - pad * 2;
+            if (cellW > 15 && cellH > 15) {
+              detectedCells.push({ left, top, width: cellW, height: cellH });
             }
           }
         }
+      } else {
+        this.logger.warn(`[V2.10.2] 分割线不足(col=${colSplits.length}, row=${rowSplits.length})，尝试周期检测`);
 
-        // 找列边界：活跃度的周期性峰谷
-        const cellWidth = Math.round(gridW / cols);
-        const cellHeight = Math.round(gridH / rows);
+        // fallback: 用投影直方图的周期性（自相关）估算格子大小
+        // 在列平均亮度中找最小值的周期
+        const estimatePeriod = (arr: number[], minPeriod: number, maxPeriod: number): number => {
+          let bestPeriod = minPeriod, bestScore = 0;
+          for (let p = minPeriod; p <= maxPeriod; p++) {
+            let score = 0;
+            for (let i = 0; i + p < arr.length; i++) {
+              score += arr[i] * arr[i + p]; // 自相关
+            }
+            score /= (arr.length - p);
+            if (score > bestScore) { bestScore = score; bestPeriod = p; }
+          }
+          return bestPeriod;
+        };
 
-        this.logger.log(`[V2.10.1] 边框检测: gridArea=(${gridLeft},${gridTop})~(${gridRight},${gridBottom}), size=${gridW}x${gridH}, cellEst=${cellWidth}x${cellHeight}`);
+        // 反转亮度（暗=高值）用于自相关找周期
+        const invCol = colAvg.map(v => 255 - v);
+        const invRow = rowAvg.map(v => 255 - v);
+        const colPeriod = estimatePeriod(invCol, Math.floor(width / (cols + 2)), Math.floor(width / (cols - 2)));
+        const rowPeriod = estimatePeriod(invRow, Math.floor(height / (rows + 4)), Math.floor(height / (rows - 2)));
 
-        // 基于检测到的网格区域 + 已知列行数精确切图
+        this.logger.log(`[V2.10.2] 周期检测: colPeriod=${colPeriod}, rowPeriod=${rowPeriod}`);
+
+        // 找到第一个格子的起始位置（第一个暗谷之后）
+        let firstCol = 0, firstRow = 0;
+        for (let x = 0; x < width; x++) {
+          if (colAvg[x] > colDarkThreshold + 20) { firstCol = x; break; }
+        }
+        for (let y = 0; y < height; y++) {
+          if (rowAvg[y] > rowDarkThreshold + 20) { firstRow = y; break; }
+        }
+
+        const side = Math.min(colPeriod, rowPeriod) - 4;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
-            const cx = gridLeft + Math.round((c + 0.5) * (gridW / cols));
-            const cy = gridTop + Math.round((r + 0.5) * (gridH / rows));
-            // 以中心点为基准，取正方形格子（边长 = min(cellW, cellH) * 0.90 去掉间距）
-            const side = Math.round(Math.min(cellWidth, cellHeight) * 0.88);
-            const left = Math.max(0, cx - Math.floor(side / 2));
-            const top = Math.max(0, cy - Math.floor(side / 2));
+            const cx = firstCol + c * colPeriod + colPeriod / 2;
+            const cy = firstRow + r * rowPeriod + rowPeriod / 2;
+            const left = Math.max(0, Math.round(cx - side / 2));
+            const top = Math.max(0, Math.round(cy - side / 2));
             if (left + side <= width && top + side <= height) {
               detectedCells.push({ left, top, width: side, height: side });
             }
@@ -1265,10 +1309,10 @@ export class ImageMatchService {
         }
       }
     } catch (err) {
-      this.logger.warn(`[V2.10.1] 边框检测失败: ${err}`);
+      this.logger.warn(`[V2.10.2] 间隙检测失败: ${err}`);
     }
 
-    // fallback: 如果边框检测失败，使用固定裁剪
+    // fallback: 固定比例裁剪
     if (detectedCells.length === 0) {
       const topPct = cropRegion?.topPercent ?? 0.14;
       const bottomPct = cropRegion?.bottomPercent ?? 0.13;
@@ -1279,7 +1323,7 @@ export class ImageMatchService {
       const cellH = Math.floor(regionH / rows);
       const side = Math.round(Math.min(cellW, cellH) * 0.88);
 
-      this.logger.log(`[V2.10.1] fallback固定裁剪: top=${topCrop}, regionH=${regionH}, cell=${cellW}x${cellH}, side=${side}`);
+      this.logger.log(`[V2.10.2] fallback: top=${topCrop}, regionH=${regionH}, side=${side}`);
 
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
@@ -1294,7 +1338,7 @@ export class ImageMatchService {
       }
     }
 
-    this.logger.log(`[V2.10.1 gridParse] 检测到 ${detectedCells.length} 个格子位置`);
+    this.logger.log(`[V2.10.2 gridParse] 检测到 ${detectedCells.length} 个格子位置`);
 
     const cells: any[] = [];
     const MAX_CELLS = 60;
