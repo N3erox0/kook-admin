@@ -66,6 +66,7 @@ export default function MemberPage() {
   useEffect(() => { fetchData(); }, [currentGuildId, page, queryParams]);
 
   // F-101: 从当前成员列表汇总出现过的 KOOK 角色作为下拉选项（避免额外调 KOOK API）
+  // V2.9.9: 新增"无服务器角色"反选选项
   const kookRoleOptions = useMemo(() => {
     const map = new Map<string, string>();
     for (const m of data) {
@@ -76,7 +77,10 @@ export default function MemberPage() {
         }
       }
     }
-    return Array.from(map.entries()).map(([id, name]) => ({ value: id, label: name }));
+    const opts = Array.from(map.entries()).map(([id, name]) => ({ value: id, label: name }));
+    // 特殊选项：无角色（反选）
+    opts.unshift({ value: '__no_role__', label: '⚠ 无服务器角色' });
+    return opts;
   }, [data]);
 
   const handleSearch = () => {

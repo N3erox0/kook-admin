@@ -832,11 +832,15 @@ export class KookMessageService {
       date = dateMatch[1].replace(/\//g, '-');
     }
 
-    // 地图名提取: 连续英文字母串（至少3字符）
+    // 地图名提取: 连续英文字母串（至少3字符），排除常见非地图词
     let mapName: string | null = null;
-    const mapMatch = combined.match(/\b([A-Za-z]{3,30})\b/);
-    if (mapMatch) {
-      mapName = mapMatch[1];
+    const NON_MAP_WORDS = new Set(['UTC', 'OCR', 'NPC', 'HTTP', 'HTTPS', 'API', 'IMG', 'PNG', 'JPG', 'JPEG', 'GIF', 'URL', 'CDN', 'BOT', 'PSC', 'DPS', 'AoE', 'PvP', 'PvE', 'GvG']);
+    const mapMatches = combined.matchAll(/\b([A-Za-z]{3,30})\b/g);
+    for (const mm of mapMatches) {
+      if (!NON_MAP_WORDS.has(mm[1].toUpperCase())) {
+        mapName = mm[1];
+        break;
+      }
     }
 
     // 游戏ID提取: 通常在左侧区域，格式多样

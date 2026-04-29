@@ -322,26 +322,27 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.9.8: 击杀详情左面板固定格子分类匹配
-   * 左面板装备格子布局（固定 3列×4行，共10个有效格子）：
+   * V2.9.9: 击杀详情左面板固定格子分类匹配
+   * 使用精确的百分比坐标定位每个装备格子中心（基于游戏UI固定比例测量）
+   * 左面板装备格子布局（10个有效格子）：
    *   行0: [其他(包)] [头]     [披风]
    *   行1: [武器]    [甲]     [副手]
    *   行2: [药水]    [鞋]     [食物]
    *   行3: [空]      [坐骑]   [空]
-   * 第4行只有中间1格（col=1）为坐骑
-   * 每个格子只在对应category范围内匹配参考库
    */
-  private static readonly KILL_DETAIL_SLOT_MAP: Array<{ row: number; col: number; category: string }> = [
-    { row: 0, col: 0, category: '其他' },   // 包
-    { row: 0, col: 1, category: '头' },
-    { row: 0, col: 2, category: '披风' },
-    { row: 1, col: 0, category: '武器' },
-    { row: 1, col: 1, category: '甲' },
-    { row: 1, col: 2, category: '副手' },
-    { row: 2, col: 0, category: '药水' },
-    { row: 2, col: 1, category: '鞋' },
-    { row: 2, col: 2, category: '食物' },
-    { row: 3, col: 1, category: '坐骑' },   // V2.9.8: 修正为col=1（中间位置）
+  private static readonly KILL_DETAIL_SLOT_MAP: Array<{ cx: number; cy: number; category: string; label: string }> = [
+    // cx, cy 为格子中心相对于装备区的百分比坐标
+    // 每格尺寸约 28%W x 22%H
+    { cx: 0.16, cy: 0.11, category: '其他', label: '包' },
+    { cx: 0.50, cy: 0.11, category: '头', label: '头盔' },
+    { cx: 0.84, cy: 0.11, category: '披风', label: '披风' },
+    { cx: 0.16, cy: 0.37, category: '武器', label: '武器' },
+    { cx: 0.50, cy: 0.37, category: '甲', label: '胸甲' },
+    { cx: 0.84, cy: 0.37, category: '副手', label: '副手' },
+    { cx: 0.16, cy: 0.63, category: '药水', label: '药水' },
+    { cx: 0.50, cy: 0.63, category: '鞋', label: '鞋子' },
+    { cx: 0.84, cy: 0.63, category: '食物', label: '食物' },
+    { cx: 0.50, cy: 0.88, category: '坐骑', label: '坐骑' },
   ];
 
   async matchKillDetailSlots(leftPanelBuffer: Buffer, hammingThreshold?: number): Promise<{
@@ -366,14 +367,13 @@ export class ImageMatchService {
     const panelH = metadata.height || 0;
     if (!panelW || !panelH) throw new Error('无法读取左面板尺寸');
 
-    // V2.9.8: 左面板是 3列×4行 的网格（第4行只有中间1格）
-    // 格子接近正方形，用面板宽度/3作为格子宽度基准
-    const cellW = Math.floor(panelW / 3);
-    // 面板高度约3.3~3.5个格子高（3行完整+第4行中间1格），用宽度推算
-    const effectiveCellW = cellW;
-    const effectiveCellH = cellW; // 正方形格子
+    // V2.9.9: 基于百分比坐标切图（每格约 28%W x 22%H）
+    const cellWRatio = 0.28;
+    const cellHRatio = 0.22;
+    const cellW = Math.floor(panelW * cellWRatio);
+    const cellH = Math.floor(panelH * cellHRatio);
 
-    this.logger.log(`[V2.9.8] 左面板 ${panelW}x${panelH}, 格子 ${effectiveCellW}x${effectiveCellH}`);
+    this.logger.log(`[V2.9.9] 左面板 ${panelW}x${panelH}, 格子 ${cellW}x${cellH} (百分比切图)`);
 
     // 加载参考库（带pHash的），按category分组
     const allCatalogs = await this.catalogRepo
@@ -402,16 +402,20 @@ export class ImageMatchService {
 
     for (const slot of ImageMatchService.KILL_DETAIL_SLOT_MAP) {
       try {
-        // 裁切该格子
-        const left = slot.col * effectiveCellW;
-        const top = slot.row * effectiveCellH;
-        if (left + effectiveCellW > panelW || top + effectiveCellH > panelH) {
-          this.logger.debug(`[V2.9.7] 格子(${slot.row},${slot.col}) 越界，跳过`);
+        // V2.9.9: 基于百分比中心坐标裁切格子
+        const centerX = Math.round(panelW * slot.cx);
+        const centerY = Math.round(panelH * slot.cy);
+        const left = Math.max(0, centerX - Math.floor(cellW / 2));
+        const top = Math.max(0, centerY - Math.floor(cellH / 2));
+        const actualW = Math.min(cellW, panelW - left);
+        const actualH = Math.min(cellH, panelH - top);
+        if (actualW < 20 || actualH < 20) {
+          this.logger.debug(`[V2.9.9] 格子 ${slot.label} 尺寸过小，跳过`);
           continue;
         }
 
         const cellBuf = await sharp(leftPanelBuffer)
-          .extract({ left, top, width: effectiveCellW, height: effectiveCellH })
+          .extract({ left, top, width: actualW, height: actualH })
           .toBuffer();
 
         // V2.9.8: 增强空白格子检测（亮度+方差双重检测）
@@ -422,7 +426,7 @@ export class ImageMatchService {
         const isEmptyByBrightness = avg < 15 || avg > 240;
         const isEmptyByVariance = (avg > 140 && avg < 220 && stdDev < 25);
         if (isEmptyByBrightness || isEmptyByVariance) {
-          this.logger.debug(`[V2.9.8] 格子(${slot.row},${slot.col}) ${slot.category} 空白(avg=${avg.toFixed(0)},std=${stdDev.toFixed(1)})，跳过`);
+          this.logger.debug(`[V2.9.9] 格子 ${slot.label} 空白(avg=${avg.toFixed(0)},std=${stdDev.toFixed(1)})，跳过`);
           continue;
         }
 
@@ -439,7 +443,7 @@ export class ImageMatchService {
         }
 
         if (candidateCatalogs.length === 0) {
-          this.logger.debug(`[V2.9.7] ${slot.category} 分类无参考库装备，跳过`);
+          this.logger.debug(`[V2.9.9] ${slot.label}(${slot.category}) 分类无参考库装备，跳过`);
           continue;
         }
 
@@ -460,7 +464,7 @@ export class ImageMatchService {
 
         const best = sorted[0];
         if (best.distance > threshold) {
-          this.logger.debug(`[V2.9.7] 格子(${slot.row},${slot.col}) ${slot.category} best=${best.distance}(${best.cat.name}) 超阈值${threshold}`);
+          this.logger.debug(`[V2.9.9] 格子 ${slot.label} best=${best.distance}(${best.cat.name}) 超阈值${threshold}`);
           continue;
         }
 
@@ -477,13 +481,13 @@ export class ImageMatchService {
           quantity: 1,
           slotCategory: slot.category,
         });
-        this.logger.log(`[V2.9.7] 格子(${slot.row},${slot.col}) ${slot.category} → ${best.cat.name} dist=${best.distance} conf=${confidence}`);
+        this.logger.log(`[V2.9.9] 格子 ${slot.label} → ${best.cat.name} dist=${best.distance} conf=${confidence}`);
       } catch (err) {
-        this.logger.warn(`[V2.9.7] 格子(${slot.row},${slot.col}) 处理失败: ${err}`);
+        this.logger.warn(`[V2.9.9] 格子 ${slot.label} 处理失败: ${err}`);
       }
     }
 
-    this.logger.log(`[V2.9.7] 击杀详情分类匹配完成: ${results.length}/10 格子匹配成功`);
+    this.logger.log(`[V2.9.9] 击杀详情百分比切图匹配完成: ${results.length}/10 格子匹配成功`);
     return results;
   }
 

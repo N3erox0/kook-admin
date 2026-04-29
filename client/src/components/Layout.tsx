@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Layout as AntLayout, Menu, Dropdown, Avatar, Typography, Space, Tag, message } from 'antd';
 import {
@@ -45,6 +45,13 @@ export default function AppLayout() {
   // SSVIP 用户始终使用 globalRole，不被公会角色覆盖
   const isSSVIP = user?.globalRole === 'ssvip';
   const effectiveRole = isSSVIP ? 'ssvip' : (currentGuildRole || user?.globalRole || '');
+
+  // V2.9.9: 自动刷新公会图标（如果为空且非SSVIP）
+  useEffect(() => {
+    if (currentGuildId && !isSSVIP && currentGuild && !currentGuild.guildIcon) {
+      handleRefreshIcon();
+    }
+  }, [currentGuildId]);
   const currentPath = location.pathname;
   const selectedKey = allMenuItems.find(m => currentPath === m.key)?.key
     || '/admin/' + location.pathname.split('/').slice(2).join('/');

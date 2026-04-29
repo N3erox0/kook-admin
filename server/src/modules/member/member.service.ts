@@ -29,12 +29,19 @@ export class MemberService {
 
     // F-101: KOOK 角色过滤（kook_roles JSON 中匹配 role_id）
     // kookRoles 存储格式: [{ "role_id": 123, "name": "XXX" }, ...]
+    // V2.9.9: __no_role__ 特殊值过滤无服务器角色的成员（排除非KOOK绑定账号）
     if (query.kookRoleId) {
-      const roleIdNum = Number(query.kookRoleId);
-      if (!isNaN(roleIdNum)) {
-        qb.andWhere(`JSON_CONTAINS(m.kookRoles, :roleJson, '$')`, {
-          roleJson: JSON.stringify({ role_id: roleIdNum }),
-        });
+      if (query.kookRoleId === '__no_role__') {
+        qb.andWhere(`(m.kookRoles IS NULL OR JSON_LENGTH(m.kookRoles) = 0 OR m.kookRoles = '[]')`)
+          .andWhere(`m.kookUserId != ''`)
+          .andWhere(`m.joinSource != 'manual'`);
+      } else {
+        const roleIdNum = Number(query.kookRoleId);
+        if (!isNaN(roleIdNum)) {
+          qb.andWhere(`JSON_CONTAINS(m.kookRoles, :roleJson, '$')`, {
+            roleJson: JSON.stringify({ role_id: roleIdNum }),
+          });
+        }
       }
     }
 

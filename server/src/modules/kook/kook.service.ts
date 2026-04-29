@@ -115,16 +115,27 @@ export class KookService {
     return allRoles;
   }
 
-  /** 获取频道列表 */
+  /** 获取频道列表（V2.9.9: 自动分页，获取全部频道） */
   async getChannelList(guildId?: string, token?: string): Promise<KookChannel[]> {
     const targetGuild = guildId || this.guildId;
-    const result = await this.request<KookApiResponse<{ items: KookChannel[] }>>(
-      'GET', `/channel/list?guild_id=${targetGuild}`, undefined, token,
-    );
-    if (result.code !== 0) {
-      throw new Error(`获取频道列表失败: ${result.message}`);
+    const allChannels: KookChannel[] = [];
+    let page = 1;
+
+    while (true) {
+      const result = await this.request<KookApiResponse<{ items: KookChannel[]; meta?: { page: number; page_total: number } }>>(
+        'GET', `/channel/list?guild_id=${targetGuild}&page=${page}&page_size=50`, undefined, token,
+      );
+      if (result.code !== 0) {
+        throw new Error(`获取频道列表失败: ${result.message}`);
+      }
+      allChannels.push(...(result.data.items || []));
+      const meta = result.data.meta;
+      if (!meta || page >= meta.page_total) break;
+      page++;
     }
-    return result.data.items;
+
+    this.logger.log(`获取频道列表: ${allChannels.length} 个频道 (${page} 页)`);
+    return allChannels;
   }
 
   // ==================== 成员管理 ====================

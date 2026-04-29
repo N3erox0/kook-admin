@@ -243,6 +243,16 @@
 | F-166 | 补装详情页左图右字段 | completed | 2026-04-27 13:10 | Modal改960px双栏：左380px截图预览+右字段信息+操作按钮 |
 | F-167 | 阈值按钮+热门截图归档 | completed | 2026-04-27 13:10 | V2.9.7已写入代码统一推送部署（MatchPreview阈值+hotImagePath+026迁移） |
 | F-168 | 新增/离开成员统计窗口修复 | completed | 2026-04-27 15:00 | getDailyStatistics改为最近24小时窗口(MoreThanOrEqual)，不再用固定日期Between |
+| **V2.9.9** | **频道分页+Bug修复+切图重写** | | | |
+| F-169 | KOOK频道列表分页获取 | completed | 2026-04-29 16:50 | getChannelList加分页循环，解决超50频道漏掉的Bug |
+| F-170 | 公会LOGO自动刷新 | completed | 2026-04-29 16:50 | Layout加载时如guildIcon为空自动调refreshGuildInfo |
+| F-171 | 成员角色无角色反选过滤 | completed | 2026-04-29 16:50 | 前端加__no_role__选项+后端QueryBuilder支持无角色过滤 |
+| F-172 | 历史消息拉取超时修复 | completed | 2026-04-29 16:50 | axios timeout从30s改为120s |
+| F-173 | 预警规则创建enabled字段 | completed | 2026-04-29 16:50 | CreateAlertRuleDto加@IsOptional @IsInt enabled |
+| F-174 | 操作日志隐藏IP列 | completed | 2026-04-29 16:50 | 删除IP列，action已有ACTION_LABELS中文映射 |
+| F-175 | 手动创建补装搜索输入修复 | completed | 2026-04-29 16:50 | AutoComplete改受控state(catalogSearchValue)，选中后清空 |
+| F-176 | 补装详情地图名+reason修复 | completed | 2026-04-29 16:50 | parseKillDetail排除UTC等非地图词+前端reason截断JSON |
+| F-177 | 击杀详情切图算法重写 | completed | 2026-04-29 16:50 | 10格百分比坐标定位(cx/cy)替代等分网格，精确对齐装备图标 |
 
 
 

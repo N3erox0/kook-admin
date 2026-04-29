@@ -76,6 +76,7 @@ export default function ResupplyPage() {
 
   // F-055/F-103: 手动创建装备列表（含数量）
   const [catalogOptions, setCatalogOptions] = useState<any[]>([]);
+  const [catalogSearchValue, setCatalogSearchValue] = useState('');
   const [createEquipList, setCreateEquipList] = useState<{ id: number; name: string; gearScore?: number; category?: string; quantity: number }[]>([]);
   const handleCatalogSearch = async (kw: string) => {
     if (!kw || kw.trim().length < 2) { setCatalogOptions([]); return; }
@@ -441,7 +442,11 @@ export default function ResupplyPage() {
                 {detail.mapName && <div><Text strong>地图：</Text>{detail.mapName}</div>}
                 {detail.gameId && <div><Text strong>游戏ID：</Text>{detail.gameId}</div>}
                 {detail.ocrGuildName && <div><Text strong>公会名(OCR)：</Text>{detail.ocrGuildName}</div>}
-                {detail.reason && <div><Text strong>原因/来源：</Text><Text style={{ fontSize: 13 }}>{detail.reason}</Text></div>}
+                {detail.reason && <div><Text strong>原因/来源：</Text><Text style={{ fontSize: 13 }}>{
+                  detail.reason.startsWith('{') || detail.reason.startsWith('[')
+                    ? '（系统自动识别）'
+                    : detail.reason.length > 150 ? detail.reason.slice(0, 150) + '...' : detail.reason
+                }</Text></div>}
                 {detail.processRemark && <div><Text strong>处理备注：</Text>{detail.processRemark}</div>}
                 <div><Text strong>申请时间：</Text>{dayjs(detail.createdAt).format('YYYY-MM-DD HH:mm:ss')}</div>
                 {detail.processedAt && <div><Text strong>处理时间：</Text>{dayjs(detail.processedAt).format('YYYY-MM-DD HH:mm:ss')}</div>}
@@ -526,7 +531,7 @@ export default function ResupplyPage() {
             <Space.Compact style={{ width: '100%' }}>
               <AutoComplete
                 options={catalogOptions}
-                onSearch={handleCatalogSearch}
+                onSearch={(v) => { setCatalogSearchValue(v); handleCatalogSearch(v); }}
                 onSelect={(_: string, option: any) => {
                   const item = option.item;
                   if (createEquipList.find(e => e.id === item.id)) { message.warning('该装备已添加，请直接修改数量'); return; }
@@ -535,10 +540,11 @@ export default function ResupplyPage() {
                     category: item.category, quantity: 1,
                   }]);
                   setCatalogOptions([]);
+                  setCatalogSearchValue('');
                 }}
                 placeholder="输入装备名称搜索..."
                 style={{ width: '100%' }}
-                value=""
+                value={catalogSearchValue}
               />
             </Space.Compact>
           </Form.Item>

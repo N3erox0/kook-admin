@@ -22,6 +22,9 @@ export class CreateAlertRuleDto {
 
   @ApiProperty({ description: '阈值' })
   @IsInt() threshold: number;
+
+  @ApiPropertyOptional({ description: '是否启用 (0=禁用, 1=启用)' })
+  @IsOptional() @IsInt() enabled?: number;
 }
 
 export class UpdateAlertRuleDto {

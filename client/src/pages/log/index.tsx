@@ -78,7 +78,7 @@ export default function LogPage() {
       title: '操作', dataIndex: 'action', key: 'action', width: 100,
       render: (v: string) => ACTION_LABELS[v] || v,
     },
-    { title: 'IP', dataIndex: 'ipAddress', key: 'ip', width: 130 },
+
     {
       title: '状态', dataIndex: 'responseStatus', key: 'status', width: 80,
       render: (v: number) => v >= 200 && v < 400 ? <Tag color="green">成功</Tag> : <Tag color="red">失败</Tag>,
