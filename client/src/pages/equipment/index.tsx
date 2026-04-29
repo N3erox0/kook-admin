@@ -82,10 +82,11 @@ export default function EquipmentPage() {
   const [ocrItems, setOcrItems] = useState<any[]>([]);
   const [ocrImageUrl, setOcrImageUrl] = useState('');
 
-  // V2.9.2 网格识别入库（方案D）
+  // V2.9.2 网格识别入库（方案D）— V2.9.9.1: 新增 layout 选择
   const [gridModal, setGridModal] = useState(false);
   const [gridLoading, setGridLoading] = useState(false);
   const [gridImageUrl, setGridImageUrl] = useState('');
+  const [gridLayout, setGridLayout] = useState<string>('5x7');
   const [gridCells, setGridCells] = useState<Array<{
     row: number; col: number; thumbnail: string; quantity: number;
     detectedLevel: number | null; detectedQuality: number | null;
@@ -324,14 +325,14 @@ export default function EquipmentPage() {
     } catch {} finally { setOcrLoading(false); }
   };
 
-  // V2.9.2 网格识别入库（方案D）
+  // V2.9.2 网格识别入库（方案D）— V2.9.9.1: 传递 layout
   const handleGridUpload = async (file: File) => {
     setGridLoading(true);
     try {
       const uploadRes: any = await uploadFile(file);
       const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
       setGridImageUrl(imageUrl);
-      const parseRes: any = await gridParseInventory(guildId, imageUrl);
+      const parseRes: any = await gridParseInventory(guildId, imageUrl, gridLayout);
       const cells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         aliasName: '',
@@ -517,6 +518,7 @@ export default function EquipmentPage() {
             setGridModal(true);
             setGridCells([]);
             setGridImageUrl('');
+            setGridLayout('5x7');
           }}>网格识别入库</Button>
           <Button icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
           <Dropdown
@@ -690,7 +692,22 @@ export default function EquipmentPage() {
         }
       >
         {gridCells.length === 0 ? (
-          <Upload.Dragger
+          <div>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>选择截图类型（决定切图规格）：</Text>
+              <Select
+                value={gridLayout}
+                onChange={setGridLayout}
+                style={{ width: 280, marginLeft: 12 }}
+                options={[
+                  { value: '5x7', label: '公会岛箱子 / 军队木箱 / 背包中（5×7）' },
+                  { value: '4x5', label: '背包大（4×5）' },
+                  { value: '6x8', label: '背包小（6×8）' },
+                  { value: '5x2', label: '蛋箱（5×2）' },
+                ]}
+              />
+            </div>
+            <Upload.Dragger
             accept="image/*"
             showUploadList={false}
             beforeUpload={handleGridUpload}
@@ -708,6 +725,7 @@ export default function EquipmentPage() {
               </>
             )}
           </Upload.Dragger>
+          </div>
         ) : (
           <>
             <Space style={{ marginBottom: 12 }}>

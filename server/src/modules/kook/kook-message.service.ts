@@ -454,8 +454,8 @@ export class KookMessageService {
         }
       }
 
-      // Step 4: 取高置信度结果（≥0.70），最多10件
-      const highConf = matchResults.filter(m => m.confidence >= 0.70);
+      // Step 4: V2.9.9.1 取高置信度结果（≥0.55，对应hamming≤29），最多10件
+      const highConf = matchResults.filter(m => m.confidence >= 0.55);
       const MAX_ITEMS = 10;
       const limitedHighConf = highConf.sort((a, b) => b.confidence - a.confidence).slice(0, MAX_ITEMS);
 
@@ -474,8 +474,10 @@ export class KookMessageService {
       }
 
       // F-151: 消息自带文字存入reason（击杀详情元数据 + 原始文字）
+      // V2.9.9.1: 过滤 KOOK 卡片消息 JSON（以[或{开头的不拼入备注）
       const metaReason = `击杀详情 | 日期:${killDetail.date || '未知'} | 地图:${killDetail.mapName || '未知'} | 游戏ID:${killDetail.gameId || '未知'}`;
-      const reason = textContent && textContent !== imageUrl
+      const isJsonContent = textContent && (textContent.trimStart().startsWith('[') || textContent.trimStart().startsWith('{'));
+      const reason = textContent && textContent !== imageUrl && !isJsonContent
         ? `${metaReason} | 备注:${textContent.slice(0, 200)}`
         : metaReason;
 

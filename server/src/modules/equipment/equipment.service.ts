@@ -235,7 +235,7 @@ export class EquipmentService {
    * 解析截图网格：按图标切片 → 返回每格的缩略图+自动识别的数量/品质
    * 装备名由用户后续手动填写
    */
-  async gridParse(imageUrl: string): Promise<any> {
+  async gridParse(imageUrl: string, layout?: string): Promise<any> {
     // 获取图片 Buffer
     let buffer: Buffer;
     if (imageUrl.startsWith('http')) {
@@ -250,7 +250,7 @@ export class EquipmentService {
       buffer = await fs.readFile(absPath);
     }
 
-    return this.imageMatchService.gridParseForManualInput(buffer);
+    return this.imageMatchService.gridParseForManualInput(buffer, layout);
   }
 
   /**

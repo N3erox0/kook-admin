@@ -253,6 +253,10 @@
 | F-175 | 手动创建补装搜索输入修复 | completed | 2026-04-29 16:50 | AutoComplete改受控state(catalogSearchValue)，选中后清空 |
 | F-176 | 补装详情地图名+reason修复 | completed | 2026-04-29 16:50 | parseKillDetail排除UTC等非地图词+前端reason截断JSON |
 | F-177 | 击杀详情切图算法重写 | completed | 2026-04-29 16:50 | 10格百分比坐标定位(cx/cy)替代等分网格，精确对齐装备图标 |
+| **V2.9.9.1** | **阈值+reason+网格重写** | | | |
+| F-178 | 击杀详情入库阈值降至0.55 | completed | 2026-04-29 22:25 | highConf过滤从0.70降到0.55，conf=0.63~0.69的匹配结果不再被丢弃 |
+| F-179 | reason过滤KOOK卡片JSON | completed | 2026-04-29 22:25 | textContent以[或{开头时不拼入reason备注 |
+| F-180 | 库存网格识别固定layout切图 | completed | 2026-04-29 22:25 | gridParseForManualInput支持layout参数(5x7/4x5/6x8/5x2)，前端选择截图类型 |
 
 
 
