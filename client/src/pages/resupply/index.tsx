@@ -432,12 +432,19 @@ export default function ResupplyPage() {
                 {detail.resupplyBox && <div><Text strong>箱子编号：</Text><Tag color="geekblue">{detail.resupplyBox}</Tag></div>}
                 <div>
                   <Text strong>待补装备：</Text>
-                  {detail.equipmentNames || detail.equipmentName || <Text type="secondary">（暂无装备）</Text>}
-                  {(detail.equipmentNames || detail.equipmentDetails?.length > 0) && (
-                    <Button size="small" type="link" icon={<ExpandAltOutlined />}
-                      onClick={() => setEquipExpandModal(true)} style={{ marginLeft: 8 }}>
-                      放大查看
-                    </Button>
+                  {detail.equipmentDetails?.length > 0 ? (
+                    <div style={{ marginTop: 4, padding: '8px 12px', background: '#fafafa', borderRadius: 6, maxHeight: 200, overflow: 'auto' }}>
+                      {detail.equipmentDetails.map((eq: any, i: number) => (
+                        <div key={i} style={{ padding: '2px 0', borderBottom: i < detail.equipmentDetails.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                          <Text>{i + 1}. P{eq.gearScore} {eq.name}</Text>
+                          <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{eq.category}</Text>
+                        </div>
+                      ))}
+                    </div>
+                  ) : detail.equipmentNames ? (
+                    <Text>{detail.equipmentNames}</Text>
+                  ) : (
+                    <Text type="secondary">（暂无装备）</Text>
                   )}
                 </div>
                 <div><Text strong>数量：</Text>{detail.quantity} | <Text strong>类型：</Text>{detail.applyType}</div>
