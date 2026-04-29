@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin, Dropdown, MenuProps } from 'antd';
+import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin, Dropdown, MenuProps, Radio } from 'antd';
 import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined, DownloadOutlined, AppstoreOutlined, MoreOutlined } from '@ant-design/icons';
 import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs, gridParseInventory, gridSaveInventory } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
@@ -325,7 +325,7 @@ export default function EquipmentPage() {
     } catch {} finally { setOcrLoading(false); }
   };
 
-  // V2.9.2 网格识别入库（方案D）— V2.9.9.1: 传递 layout
+  // V2.10: 多图批量上传，逐张识别后合并 cells
   const handleGridUpload = async (file: File) => {
     setGridLoading(true);
     try {
@@ -333,19 +333,33 @@ export default function EquipmentPage() {
       const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
       setGridImageUrl(imageUrl);
       const parseRes: any = await gridParseInventory(guildId, imageUrl, gridLayout);
-      const cells = (parseRes?.cells || []).map((c: any) => ({
+      const newCells = (parseRes?.cells || []).map((c: any, i: number) => ({
         ...c,
+        // 多图时 row 偏移避免 key 冲突
+        row: c.row + gridCells.length,
+        col: c.col,
         aliasName: '',
         level: c.detectedLevel || 6,
         quality: c.detectedQuality ?? 0,
         location: '公会仓库',
         aliasOptions: [],
+        // pHash 匹配结果预填（#3）
+        matchedName: c.matchedName || '',
+        matchedCatalogId: c.matchedCatalogId || null,
+        matchedConfidence: c.matchedConfidence || 0,
       }));
-      setGridCells(cells);
-      if (cells.length === 0) {
+      // 自动预填：如果 pHash 匹配到了装备名，填入 aliasName
+      for (const cell of newCells) {
+        if (cell.matchedName && cell.matchedConfidence >= 0.55) {
+          cell.aliasName = cell.matchedName;
+        }
+      }
+      const merged = [...gridCells, ...newCells];
+      setGridCells(merged);
+      if (newCells.length === 0) {
         message.warning('未检测到装备图标，请确认截图内容');
       } else {
-        message.success(`识别完成，共 ${cells.length} 格（数量已自动填充，请填写装备别名）`);
+        message.success(`识别完成，本张 ${newCells.length} 格，累计 ${merged.length} 格`);
       }
     } catch (err: any) {
       message.error(err?.message || '网格识别失败');
@@ -694,21 +708,21 @@ export default function EquipmentPage() {
         {gridCells.length === 0 ? (
           <div>
             <div style={{ marginBottom: 16 }}>
-              <Text strong>选择截图类型（决定切图规格）：</Text>
-              <Select
+              <Text strong>选择截图类型：</Text>
+              <Radio.Group
                 value={gridLayout}
-                onChange={setGridLayout}
-                style={{ width: 280, marginLeft: 12 }}
-                options={[
-                  { value: '5x7', label: '公会岛箱子 / 军队木箱 / 背包中（5×7）' },
-                  { value: '4x5', label: '背包大（4×5）' },
-                  { value: '6x8', label: '背包小（6×8）' },
-                  { value: '5x2', label: '蛋箱（5×2）' },
-                ]}
-              />
+                onChange={(e) => setGridLayout(e.target.value)}
+                style={{ display: 'block', marginTop: 8 }}
+              >
+                <Radio value="5x7">公会岛箱子 / 军队木箱 / 背包中（5×7）</Radio>
+                <Radio value="4x5">背包大（4×5）</Radio>
+                <Radio value="6x8">背包小（6×8）</Radio>
+                <Radio value="5x2">蛋箱（5×2）</Radio>
+              </Radio.Group>
             </div>
             <Upload.Dragger
             accept="image/*"
+            multiple
             showUploadList={false}
             beforeUpload={handleGridUpload}
             disabled={gridLoading}

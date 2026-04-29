@@ -257,6 +257,11 @@
 | F-178 | 击杀详情入库阈值降至0.55 | completed | 2026-04-29 22:25 | highConf过滤从0.70降到0.55，conf=0.63~0.69的匹配结果不再被丢弃 |
 | F-179 | reason过滤KOOK卡片JSON | completed | 2026-04-29 22:25 | textContent以[或{开头时不拼入reason备注 |
 | F-180 | 库存网格识别固定layout切图 | completed | 2026-04-29 22:25 | gridParseForManualInput支持layout参数(5x7/4x5/6x8/5x2)，前端选择截图类型 |
+| **V2.10** | **OCR锚点+多图+pHash预填+热门装备重做** | | | |
+| F-181 | OCR锚点定位装备区 | completed | 2026-04-29 23:30 | gridParse中先调OCR找"搜索/等阶/类别"或"720%"锚点y坐标，精确裁剪装备区 |
+| F-182 | 网格识别Radio+多图批量上传 | completed | 2026-04-29 23:30 | Select改Radio.Group，Upload加multiple，多张图累加gridCells |
+| F-183 | pHash自动预填装备名 | completed | 2026-04-29 23:30 | 切图后每格计算pHash匹配参考库，confidence≥0.55自动填入aliasName |
+| F-184 | 新增热门装备弹窗重做 | completed | 2026-04-29 23:30 | 改为搜索已有参考库装备+上传图片+热度，去掉装等/别称/描述 |
 
 
 

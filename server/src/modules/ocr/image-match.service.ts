@@ -1112,7 +1112,7 @@ export class ImageMatchService {
    * V2.9.9.1: 按指定 layout 固定网格切图（替代自动探测）
    * layout: '5x7'(公会岛/军箱/背包中) | '4x5'(背包大) | '6x8'(背包小) | '5x2'(蛋箱)
    */
-  async gridParseForManualInput(imageBuffer: Buffer, layout?: string): Promise<{
+  async gridParseForManualInput(imageBuffer: Buffer, layout?: string, cropRegion?: { topPercent: number; bottomPercent: number }): Promise<{
     gridSize: { cols: number; rows: number };
     cells: Array<{
       row: number;
@@ -1141,13 +1141,15 @@ export class ImageMatchService {
       }
     }
 
-    // V2.9.9.1: 指定 layout 时使用固定比例裁剪（顶部15%标题栏+底部8%按钮栏），跳过方差检测
+    // V2.10: 优先使用 OCR 锚点裁剪区域，fallback 固定比例裁剪
     let region: { left: number; top: number; width: number; height: number };
     if (layout) {
-      const topCrop = Math.round(height * 0.15);
-      const bottomCrop = Math.round(height * 0.08);
+      const topPct = cropRegion?.topPercent ?? 0.15;
+      const bottomPct = cropRegion?.bottomPercent ?? 0.08;
+      const topCrop = Math.round(height * topPct);
+      const bottomCrop = Math.round(height * bottomPct);
       region = { left: 0, top: topCrop, width, height: height - topCrop - bottomCrop };
-      this.logger.log(`[V2.9.9.1 gridParse] 固定裁剪: top=${topCrop}, height=${region.height} (原图 ${width}x${height})`);
+      this.logger.log(`[V2.10 gridParse] 裁剪: top=${topPct.toFixed(2)}(${topCrop}px), bottom=${bottomPct.toFixed(2)}(${bottomCrop}px), region=${region.width}x${region.height} (OCR锚点=${!!cropRegion})`);
     } else {
       region = await this.detectGridRegion(sharp, imageBuffer, width, height);
     }
@@ -1227,7 +1229,47 @@ export class ImageMatchService {
     }
 
     cells.sort((a, b) => a.row - b.row || a.col - b.col);
-    this.logger.log(`[V2.9.9.1 gridParse] 解析完成: ${cells.length}/${cols * rows} 格有效 (layout=${layout || '5x7'})`);
+    this.logger.log(`[V2.10 gridParse] 解析完成: ${cells.length}/${cols * rows} 格有效 (layout=${layout || '5x7'})`);
+
+    // V2.10 #3: 自动 pHash 匹配预填装备名
+    try {
+      const catalogs = await this.catalogRepo.find({
+        where: {},
+        select: ['id', 'name', 'imagePhash', 'category', 'level', 'quality', 'gearScore'],
+      });
+      const withHash = catalogs.filter(c => c.imagePhash);
+      if (withHash.length > 0) {
+        for (const cell of cells) {
+          try {
+            // 从 thumbnail base64 恢复 buffer 计算 pHash
+            const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
+            const thumbBuf = Buffer.from(thumbBase64, 'base64');
+            const cellHash = await this.computePhash(sharp, thumbBuf);
+            if (!cellHash) continue;
+
+            // 匹配参考库
+            let bestDist = 999, bestCat: any = null;
+            for (const cat of withHash) {
+              const dist = this.hammingDistance(cellHash, cat.imagePhash);
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestCat = cat;
+              }
+            }
+            if (bestCat && bestDist <= ImageMatchService.LOOSE_HAMMING_THRESHOLD) {
+              const confidence = 1 - bestDist / 64;
+              cell.matchedName = bestCat.name;
+              cell.matchedCatalogId = bestCat.id;
+              cell.matchedConfidence = parseFloat(confidence.toFixed(2));
+            }
+          } catch { /* 单格 pHash 失败不影响整体 */ }
+        }
+        const matched = cells.filter((c: any) => c.matchedName).length;
+        this.logger.log(`[V2.10 gridParse] pHash预填: ${matched}/${cells.length} 格匹配成功`);
+      }
+    } catch (err) {
+      this.logger.warn(`[V2.10 gridParse] pHash预填失败: ${err}`);
+    }
 
     return { gridSize: { cols, rows }, cells };
   }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image } from 'antd';
+import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image, AutoComplete } from 'antd';
 import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined } from '@ant-design/icons';
-import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog } from '@/api/catalog';
+import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog, searchCatalog } from '@/api/catalog';
 import { uploadFile } from '@/api/upload';
 import request from '@/api/request';
 import { CATEGORIES, QUALITY_LABELS } from '@/types';
@@ -33,6 +33,25 @@ export default function CatalogPage() {
   const [hotUploadTarget, setHotUploadTarget] = useState<{ id: number; name: string } | null>(null);
   const [hotUploadModal, setHotUploadModal] = useState(false);
 
+  // V2.10: 新增热门装备 — 搜索关联装备 + 热度
+  const [hotSearchValue, setHotSearchValue] = useState('');
+  const [hotSearchOptions, setHotSearchOptions] = useState<any[]>([]);
+  const [hotSelectedCatalog, setHotSelectedCatalog] = useState<any>(null);
+  const [hotPopularity, setHotPopularity] = useState(3);
+
+  const handleHotSearch = async (value: string) => {
+    if (!value || value.length < 1) { setHotSearchOptions([]); return; }
+    try {
+      const res: any = await searchCatalog(value);
+      const items = Array.isArray(res) ? res : (res?.list || res?.data || []);
+      setHotSearchOptions(items.slice(0, 30).map((item: any) => ({
+        value: `${item.id}`,
+        label: `${item.name} (Lv${item.level} Q${item.quality} ${item.category})`,
+        item,
+      })));
+    } catch { setHotSearchOptions([]); }
+  };
+
   const fetchList = async (p = page, f = filters, ps = pageSize) => {
     setLoading(true);
     try {
@@ -55,7 +74,13 @@ export default function CatalogPage() {
   const handleEdit = (item: EquipmentCatalog | null) => {
     setEditItem(item);
     if (item) form.setFieldsValue(item);
-    else form.resetFields();
+    else {
+      form.resetFields();
+      setHotSearchValue('');
+      setHotSearchOptions([]);
+      setHotSelectedCatalog(null);
+      setHotPopularity(3);
+    }
     setEditModal(true);
   };
 
@@ -273,30 +298,90 @@ export default function CatalogPage() {
         />
       </Card>
 
-      {/* 新增/编辑弹窗 */}
-      <Modal title={editItem ? '编辑装备' : '新增热门装备'} open={editModal} onCancel={() => setEditModal(false)} footer={null} destroyOnClose>
-        <Form form={form} onFinish={handleSave} layout="vertical" initialValues={{ level: 5, quality: 0, category: '武器' }}>
-          <Form.Item name="name" label="装备名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Space style={{ width: '100%' }}>
-            <Form.Item name="level" label="等级" rules={[{ required: true }]}>
-              <InputNumber min={1} max={8} />
-            </Form.Item>
-            <Form.Item name="quality" label="品质" rules={[{ required: true }]}>
-              <Select style={{ width: 100 }}>
-                {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
-              </Select>
-            </Form.Item>
-            <Form.Item name="category" label="部位" rules={[{ required: true }]}>
-              <Select style={{ width: 100 }}>
-                {CATEGORIES.map(c => <Select.Option key={c} value={c}>{c}</Select.Option>)}
-              </Select>
-            </Form.Item>
-          </Space>
-          <Form.Item name="gearScore" label="装等（留空自动计算=等级+品质）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="aliases" label="装备别称（逗号分隔，如：堕神,堕神杖）"><Input placeholder="多个别称用逗号分隔" /></Form.Item>
-          <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
-          <Form.Item><Button type="primary" htmlType="submit" block>保存</Button></Form.Item>
-        </Form>
+      {/* 新增/编辑弹窗 — V2.10: 新增热门装备改为搜索已有装备+上传图片+热度 */}
+      <Modal title={editItem ? '编辑装备' : '新增热门装备'} open={editModal} onCancel={() => setEditModal(false)} footer={null} destroyOnClose width={editItem ? 520 : 640}>
+        {editItem ? (
+          /* 编辑模式：保持原有表单 */
+          <Form form={form} onFinish={handleSave} layout="vertical" initialValues={{ level: 5, quality: 0, category: '武器' }}>
+            <Form.Item name="name" label="装备名称" rules={[{ required: true }]}><Input /></Form.Item>
+            <Space style={{ width: '100%' }}>
+              <Form.Item name="level" label="等级" rules={[{ required: true }]}>
+                <InputNumber min={1} max={8} />
+              </Form.Item>
+              <Form.Item name="quality" label="品质" rules={[{ required: true }]}>
+                <Select style={{ width: 100 }}>
+                  {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
+                </Select>
+              </Form.Item>
+              <Form.Item name="category" label="部位" rules={[{ required: true }]}>
+                <Select style={{ width: 100 }}>
+                  {CATEGORIES.map(c => <Select.Option key={c} value={c}>{c}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Space>
+            <Form.Item name="aliases" label="装备别称（逗号分隔）"><Input placeholder="多个别称用逗号分隔" /></Form.Item>
+            <Form.Item><Button type="primary" htmlType="submit" block>保存</Button></Form.Item>
+          </Form>
+        ) : (
+          /* 新增热门装备模式：搜索已有装备 + 上传图片 + 热度 */
+          <div>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>搜索关联装备：</Text>
+              <AutoComplete
+                style={{ width: '100%', marginTop: 8 }}
+                placeholder="输入装备名称搜索参考库..."
+                options={hotSearchOptions}
+                onSearch={handleHotSearch}
+                onSelect={(_: string, option: any) => {
+                  setHotSelectedCatalog(option.item);
+                }}
+                value={hotSearchValue}
+                onChange={setHotSearchValue}
+              />
+            </div>
+            {hotSelectedCatalog && (
+              <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
+                <Text strong>已选装备：</Text>
+                <Text style={{ marginLeft: 8 }}>{hotSelectedCatalog.name} (Lv{hotSelectedCatalog.level} Q{hotSelectedCatalog.quality} {hotSelectedCatalog.category})</Text>
+              </div>
+            )}
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>热度（1-5）：</Text>
+              <InputNumber min={1} max={5} value={hotPopularity} onChange={(v) => setHotPopularity(v || 1)} style={{ marginLeft: 8 }} />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>上传游戏截图：</Text>
+              <Upload.Dragger
+                accept="image/*"
+                multiple
+                showUploadList
+                beforeUpload={async (file: File) => {
+                  if (!hotSelectedCatalog) { message.warning('请先选择关联装备'); return false; }
+                  try {
+                    // 先更新热度
+                    await updateCatalog(hotSelectedCatalog.id, { popularity: hotPopularity });
+                    // 上传热门截图
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    await request.post(`/catalog/${hotSelectedCatalog.id}/hot-image`, formData, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                    message.success(`热门截图上传成功（${hotSelectedCatalog.name}）！请执行"生成图片指纹"更新 pHash`);
+                  } catch (err: any) {
+                    message.error(err?.message || '上传失败');
+                  }
+                  return false;
+                }}
+                style={{ marginTop: 8 }}
+              >
+                <p><PlusOutlined style={{ fontSize: 32, color: '#1677ff' }} /></p>
+                <p>点击或拖拽上传游戏内装备截图</p>
+                <p style={{ fontSize: 12, color: '#999' }}>上传后自动关联到所选装备，可上传多张</p>
+              </Upload.Dragger>
+            </div>
+            <Button onClick={() => { setEditModal(false); fetchList(); }} block>完成</Button>
+          </div>
+        )}
       </Modal>
 
       {/* CSV 预览弹窗 */}

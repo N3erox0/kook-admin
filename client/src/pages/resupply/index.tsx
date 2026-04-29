@@ -23,7 +23,7 @@ const RESUPPLY_ROOMS = [
 export default function ResupplyPage() {
   const { currentGuildId, currentGuildRole } = useGuildStore();
   const guildId = currentGuildId!;
-  const canProcess = ['super_admin', 'resupply_staff'].includes(currentGuildRole || '');
+  const canProcess = ['super_admin', 'resupply_staff', 'inventory_admin'].includes(currentGuildRole || '');
 
   const [searchParams, setSearchParams] = useSearchParams();
   // F-107: Tab 通过 URL 参数持久化（?tab=list | pending）

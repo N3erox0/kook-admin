@@ -7,6 +7,7 @@ import { QueryInventoryDto, UpsertInventoryDto, UpdateInventoryFieldDto } from '
 import { InventoryLogService, InventoryAction } from '../inventory-log/inventory-log.service';
 import { ImageMatchService } from '../ocr/image-match.service';
 import { CatalogService } from '../equipment-catalog/catalog.service';
+import { OcrService } from '../ocr/ocr.service';
 
 @Injectable()
 export class EquipmentService {
@@ -19,6 +20,7 @@ export class EquipmentService {
     private inventoryLogService: InventoryLogService,
     @Inject(forwardRef(() => ImageMatchService)) private imageMatchService: ImageMatchService,
     private catalogService: CatalogService,
+    @Inject(forwardRef(() => OcrService)) private ocrService: OcrService,
   ) {}
 
   async findAll(guildId: number, query: QueryInventoryDto) {
@@ -250,7 +252,61 @@ export class EquipmentService {
       buffer = await fs.readFile(absPath);
     }
 
-    return this.imageMatchService.gridParseForManualInput(buffer, layout);
+    // V2.10: OCR 锚点定位装备区
+    let cropRegion: { topPercent: number; bottomPercent: number } | undefined;
+    if (layout) {
+      try {
+        // 上传图片后用 OCR 识别文字坐标找锚点
+        const { detections } = await this.ocrService.recognizeImageWithCoords(imageUrl);
+        if (detections.length > 0) {
+          const sharp = require('sharp');
+          const meta = await sharp(buffer).metadata();
+          const imgH = meta.height || 1;
+
+          // 箱子类锚点：搜索/等阶/类别
+          const boxAnchors = ['搜索', '等阶', '类别'];
+          // 背包类锚点：百分比数字如 720%、100%
+          const bagAnchorRegex = /\d+%/;
+          // 底部锚点：估计市价/全部移动/整理/堆叠
+          const bottomAnchors = ['估计市价', '全部移动', '整理', '堆叠'];
+
+          let topY = -1; // 装备区起点 y（锚点行底部）
+          let bottomY = -1; // 装备区终点 y（底部锚点行顶部）
+
+          for (const d of detections) {
+            const text = d.text;
+            // 箱子类顶部锚点
+            if (boxAnchors.some(a => text.includes(a))) {
+              const anchorBottom = d.y + d.height;
+              if (anchorBottom > topY) topY = anchorBottom;
+            }
+            // 背包类顶部锚点
+            if (bagAnchorRegex.test(text) && text.length <= 6) {
+              const anchorBottom = d.y + d.height;
+              if (anchorBottom > topY) topY = anchorBottom;
+            }
+            // 底部锚点
+            if (bottomAnchors.some(a => text.includes(a))) {
+              if (bottomY < 0 || d.y < bottomY) bottomY = d.y;
+            }
+          }
+
+          if (topY > 0) {
+            const topPercent = (topY + 5) / imgH; // +5px 间距
+            const bottomPercent = bottomY > topY ? (imgH - bottomY + 5) / imgH : 0.05;
+            cropRegion = {
+              topPercent: Math.max(0.05, Math.min(topPercent, 0.50)),
+              bottomPercent: Math.max(0.02, Math.min(bottomPercent, 0.20)),
+            };
+            this.logger.log(`[V2.10 gridParse] OCR锚点定位: topY=${topY}(${(cropRegion.topPercent * 100).toFixed(1)}%), bottomY=${bottomY}(${(cropRegion.bottomPercent * 100).toFixed(1)}%)`);
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[V2.10 gridParse] OCR锚点检测失败，使用默认裁剪: ${err.message}`);
+      }
+    }
+
+    return this.imageMatchService.gridParseForManualInput(buffer, layout, cropRegion);
   }
 
   /**
