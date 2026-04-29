@@ -1145,8 +1145,9 @@ export class ImageMatchService {
     let detectedCells: Array<{ left: number; top: number; width: number; height: number }> = [];
 
     try {
-      const opencvModule = await import('opencv-wasm');
-      const cv = opencvModule.cv;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const opencvModule = require('opencv-wasm');
+      const cv: any = opencvModule.cv;
 
       // 将 sharp buffer 转为 OpenCV Mat
       const rawBuf = await sharp(imageBuffer).raw().ensureAlpha().toBuffer();
