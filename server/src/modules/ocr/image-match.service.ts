@@ -1141,8 +1141,16 @@ export class ImageMatchService {
       }
     }
 
-    // 检测装备网格区域（裁掉顶部标题栏/底部按钮栏）
-    const region = await this.detectGridRegion(sharp, imageBuffer, width, height);
+    // V2.9.9.1: 指定 layout 时使用固定比例裁剪（顶部15%标题栏+底部8%按钮栏），跳过方差检测
+    let region: { left: number; top: number; width: number; height: number };
+    if (layout) {
+      const topCrop = Math.round(height * 0.15);
+      const bottomCrop = Math.round(height * 0.08);
+      region = { left: 0, top: topCrop, width, height: height - topCrop - bottomCrop };
+      this.logger.log(`[V2.9.9.1 gridParse] 固定裁剪: top=${topCrop}, height=${region.height} (原图 ${width}x${height})`);
+    } else {
+      region = await this.detectGridRegion(sharp, imageBuffer, width, height);
+    }
     const regionBuf = (region.top === 0 && region.height === height)
       ? imageBuffer
       : await sharp(imageBuffer).extract(region).toBuffer();
