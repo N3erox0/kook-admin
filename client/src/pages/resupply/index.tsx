@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply, pullKookHistory } from '@/api/resupply';
 import { searchCatalog } from '@/api/catalog';
 import { useGuildStore } from '@/stores/guild.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { RESUPPLY_STATUS, formatEquipName } from '@/types';
 import type { GuildResupply } from '@/types';
 import dayjs from 'dayjs';
@@ -22,6 +23,7 @@ const RESUPPLY_ROOMS = [
 
 export default function ResupplyPage() {
   const { currentGuildId, currentGuildRole } = useGuildStore();
+  const { user } = useAuthStore();
   const guildId = currentGuildId!;
   const canProcess = ['super_admin', 'resupply_staff', 'inventory_admin'].includes(currentGuildRole || '');
 
@@ -177,6 +179,8 @@ export default function ResupplyPage() {
       const totalQty = equipmentEntries.reduce((s, e) => s + (e.quantity || 1), 0);
       await createResupply(guildId, {
         ...values,
+        // V2.10.4: 如果申请人昵称未填，用当前登录用户昵称
+        kookNickname: values.kookNickname || user?.nickname || user?.username || '手动创建',
         equipmentEntries,
         quantity: totalQty,
       });
@@ -345,8 +349,8 @@ export default function ResupplyPage() {
                               title: '拉取完成',
                               content: (
                                 <div>
-                                  <p>频道数：{res.channels}，共拉取 {res.pages} 页 {res.messages} 条消息</p>
-                                  <p>处理：{res.processed} 条 | 跳过：{res.skipped} 条 | 日期过滤：{res.filtered || 0} 条 | 错误：{res.errors} 条</p>
+                                  <p>频道数：{res.channels}，日期范围内处理：<b>{res.processed}</b> 条</p>
+                                  <p>跳过（已处理/Bot消息）：{res.skipped} 条 | 错误：{res.errors} 条</p>
                                   <p style={{ color: '#999', fontSize: 12 }}>已处理过的消息会自动去重跳过</p>
                                 </div>
                               ),

@@ -118,7 +118,9 @@ export class ResupplyService {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
     const logs = await this.logRepo.find({ where: { resupplyId: id }, order: { createdAt: 'ASC' } });
-    return { ...r, logs };
+    // V2.10.4: 解析 equipmentIds 为装备名称
+    const [enriched] = await this.enrichEquipmentNames([r]);
+    return { ...enriched, logs };
   }
 
   /** 生成去重哈希：图片URL + 日期 + 人员 */
