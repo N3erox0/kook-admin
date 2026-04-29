@@ -410,7 +410,7 @@ export default function ResupplyPage() {
             <div style={{ flex: '0 0 380px', minWidth: 0 }}>
               {detail.screenshotUrl ? (
                 <div>
-                  <Image src={detail.screenshotUrl} width="100%" style={{ borderRadius: 8, maxHeight: 500, objectFit: 'contain' }} />
+                  <Image src={detail.screenshotUrl} width="100%" style={{ borderRadius: 8, maxHeight: 500, objectFit: 'contain' }} referrerPolicy="no-referrer" />
                   {canProcess && (
                     <Button size="small" type="link" icon={<ScanOutlined />} block
                       onClick={() => setMatchPreviewModal(true)} style={{ marginTop: 8 }}>
