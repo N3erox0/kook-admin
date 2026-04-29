@@ -1141,67 +1141,153 @@ export class ImageMatchService {
       }
     }
 
-    // V2.10: 优先使用 OCR 锚点裁剪区域，fallback 固定比例裁剪
-    let region: { left: number; top: number; width: number; height: number };
-    if (layout) {
-      const topPct = cropRegion?.topPercent ?? 0.15;
-      const bottomPct = cropRegion?.bottomPercent ?? 0.08;
+    // V2.10.1: 品质边框检测定位每个装备格子（替代固定比例裁剪）
+    // 算法：扫描每行像素，找到高饱和度色带（品质边框）确定行列分割线
+    let detectedCells: Array<{ left: number; top: number; width: number; height: number }> = [];
+
+    try {
+      // 获取完整图片的 raw RGBA 像素数据
+      const rawBuf = await sharp(imageBuffer)
+        .ensureAlpha()
+        .raw()
+        .toBuffer();
+
+      // 扫描每行：统计高饱和度像素（品质边框特征）
+      // 品质边框 HSV: S>0.3, V>0.3（排除灰色/黑色背景）
+      const rowActivity = new Array(height).fill(0);
+      const colActivity = new Array(width).fill(0);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const r = rawBuf[idx], g = rawBuf[idx + 1], b = rawBuf[idx + 2];
+          const max = Math.max(r, g, b), min = Math.min(r, g, b);
+          const diff = max - min;
+          // 高饱和度 + 不是太暗 + 不是白色 = 品质边框
+          if (diff > 50 && max > 80 && max < 240) {
+            rowActivity[y]++;
+            colActivity[x]++;
+          }
+        }
+      }
+
+      // 找到装备区的行范围：连续高活跃行的起止
+      const rowThreshold = width * 0.15; // 一行中至少15%像素是彩色
+      let gridTop = -1, gridBottom = -1;
+      for (let y = 0; y < height; y++) {
+        if (rowActivity[y] > rowThreshold) {
+          if (gridTop < 0) gridTop = y;
+          gridBottom = y;
+        }
+      }
+
+      // 找到装备区的列范围
+      const colThreshold = height * 0.10;
+      let gridLeft = -1, gridRight = -1;
+      for (let x = 0; x < width; x++) {
+        if (colActivity[x] > colThreshold) {
+          if (gridLeft < 0) gridLeft = x;
+          gridRight = x;
+        }
+      }
+
+      if (gridTop >= 0 && gridBottom > gridTop && gridLeft >= 0 && gridRight > gridLeft) {
+        const gridW = gridRight - gridLeft + 1;
+        const gridH = gridBottom - gridTop + 1;
+
+        // 在装备区内，按列寻找分割间隙（活跃度低谷 = 格子间间距）
+        // 列分割
+        const colSlice = new Array(gridW).fill(0);
+        for (let x = gridLeft; x <= gridRight; x++) {
+          for (let y = gridTop; y <= gridBottom; y++) {
+            const idx = (y * width + x) * 4;
+            const r = rawBuf[idx], g = rawBuf[idx + 1], b = rawBuf[idx + 2];
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            if ((max - min) > 50 && max > 80 && max < 240) {
+              colSlice[x - gridLeft]++;
+            }
+          }
+        }
+
+        // 找列边界：活跃度的周期性峰谷
+        const cellWidth = Math.round(gridW / cols);
+        const cellHeight = Math.round(gridH / rows);
+
+        this.logger.log(`[V2.10.1] 边框检测: gridArea=(${gridLeft},${gridTop})~(${gridRight},${gridBottom}), size=${gridW}x${gridH}, cellEst=${cellWidth}x${cellHeight}`);
+
+        // 基于检测到的网格区域 + 已知列行数精确切图
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const cx = gridLeft + Math.round((c + 0.5) * (gridW / cols));
+            const cy = gridTop + Math.round((r + 0.5) * (gridH / rows));
+            // 以中心点为基准，取正方形格子（边长 = min(cellW, cellH) * 0.90 去掉间距）
+            const side = Math.round(Math.min(cellWidth, cellHeight) * 0.88);
+            const left = Math.max(0, cx - Math.floor(side / 2));
+            const top = Math.max(0, cy - Math.floor(side / 2));
+            if (left + side <= width && top + side <= height) {
+              detectedCells.push({ left, top, width: side, height: side });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`[V2.10.1] 边框检测失败: ${err}`);
+    }
+
+    // fallback: 如果边框检测失败，使用固定裁剪
+    if (detectedCells.length === 0) {
+      const topPct = cropRegion?.topPercent ?? 0.14;
+      const bottomPct = cropRegion?.bottomPercent ?? 0.13;
       const topCrop = Math.round(height * topPct);
       const bottomCrop = Math.round(height * bottomPct);
-      region = { left: 0, top: topCrop, width, height: height - topCrop - bottomCrop };
-      this.logger.log(`[V2.10 gridParse] 裁剪: top=${topPct.toFixed(2)}(${topCrop}px), bottom=${bottomPct.toFixed(2)}(${bottomCrop}px), region=${region.width}x${region.height} (OCR锚点=${!!cropRegion})`);
-    } else {
-      region = await this.detectGridRegion(sharp, imageBuffer, width, height);
+      const regionH = height - topCrop - bottomCrop;
+      const cellW = Math.floor(width / cols);
+      const cellH = Math.floor(regionH / rows);
+      const side = Math.round(Math.min(cellW, cellH) * 0.88);
+
+      this.logger.log(`[V2.10.1] fallback固定裁剪: top=${topCrop}, regionH=${regionH}, cell=${cellW}x${cellH}, side=${side}`);
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const cx = Math.round((c + 0.5) * cellW);
+          const cy = topCrop + Math.round((r + 0.5) * cellH);
+          const left = Math.max(0, cx - Math.floor(side / 2));
+          const top = Math.max(0, cy - Math.floor(side / 2));
+          if (left + side <= width && top + side <= height) {
+            detectedCells.push({ left, top, width: side, height: side });
+          }
+        }
+      }
     }
-    const regionBuf = (region.top === 0 && region.height === height)
-      ? imageBuffer
-      : await sharp(imageBuffer).extract(region).toBuffer();
-    const regionW = region.width;
-    const regionH = region.height;
 
-    // 按固定列行数计算每格尺寸
-    const cellW = Math.floor(regionW / cols);
-    const cellH = Math.floor(regionH / rows);
-    const iconSize = Math.min(cellW, cellH);
-
-    this.logger.log(`[V2.9.9.1 gridParse] layout=${layout || '5x7'}, 装备区域: ${regionW}x${regionH}, 格子: ${cellW}x${cellH}, cols=${cols}, rows=${rows}`);
-
-    if (iconSize < 20) {
-      throw new Error(`计算出的格子尺寸过小(${iconSize}px)，请检查截图内容`);
-    }
+    this.logger.log(`[V2.10.1 gridParse] 检测到 ${detectedCells.length} 个格子位置`);
 
     const cells: any[] = [];
     const MAX_CELLS = 60;
     const CONCURRENCY = 3;
     const tasks: Array<() => Promise<void>> = [];
 
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (cells.length + tasks.length >= MAX_CELLS) break;
-        const row = r, col = c;
-        tasks.push(async () => {
-          try {
-            const left = col * cellW;
-            const top = row * cellH;
-            if (left + cellW > regionW || top + cellH > regionH) return;
+    for (let i = 0; i < detectedCells.length && i < MAX_CELLS; i++) {
+      const cellRect = detectedCells[i];
+      const cellIndex = i;
+      tasks.push(async () => {
+        try {
+          const subBuf = await sharp(imageBuffer)
+            .extract({ left: cellRect.left, top: cellRect.top, width: cellRect.width, height: cellRect.height })
+            .toBuffer();
 
-            const subBuf = await sharp(regionBuf)
-              .extract({ left, top, width: cellW, height: cellH })
-              .toBuffer();
+          // 过滤空白格子
+          const stats = await sharp(subBuf).stats();
+          const avgBrightness = stats.channels[0]?.mean || 0;
+          const stdDev = stats.channels[0]?.stdev || 0;
+          if (avgBrightness < 15 || avgBrightness > 240) return;
+          if (avgBrightness > 140 && avgBrightness < 220 && stdDev < 25) return;
 
-            // 过滤空白格子
-            const stats = await sharp(subBuf).stats();
-            const avgBrightness = stats.channels[0]?.mean || 0;
-            const stdDev = stats.channels[0]?.stdev || 0;
-            if (avgBrightness < 15 || avgBrightness > 240) return;
-            // 米色背景空格检测
-            if (avgBrightness > 140 && avgBrightness < 220 && stdDev < 25) return;
-
-            // 缩略图
-            const thumbnail = await sharp(subBuf)
-              .resize(120, 120, { fit: 'cover' })
-              .png()
-              .toBuffer();
+          // 缩略图
+          const thumbnail = await sharp(subBuf)
+            .resize(120, 120, { fit: 'cover' })
+            .png()
+            .toBuffer();
 
             // 数量 OCR
             const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
@@ -1210,17 +1296,16 @@ export class ImageMatchService {
             const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
 
             cells.push({
-              row, col,
+              row: Math.floor(cellIndex / cols), col: cellIndex % cols,
               thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
               quantity,
               detectedLevel: null,
               detectedQuality,
             });
           } catch (err) {
-            this.logger.warn(`[V2.9.9.1] 格子(${row},${col})解析失败: ${err}`);
+            this.logger.warn(`[V2.10.1] 格子${cellIndex}解析失败: ${err}`);
           }
         });
-      }
     }
 
     // 分批并发执行
