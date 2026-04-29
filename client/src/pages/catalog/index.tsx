@@ -45,8 +45,8 @@ export default function CatalogPage() {
       const res: any = await searchCatalog(value);
       const items = Array.isArray(res) ? res : (res?.list || res?.data || []);
       setHotSearchOptions(items.slice(0, 30).map((item: any) => ({
-        value: `${item.id}`,
-        label: `${item.name} (Lv${item.level} Q${item.quality} ${item.category})`,
+        value: `${item.level}${item.quality}${item.name}`,
+        label: `${item.level}${item.quality}${item.name} ${item.category}`,
         item,
       })));
     } catch { setHotSearchOptions([]); }
@@ -334,6 +334,7 @@ export default function CatalogPage() {
                 onSearch={handleHotSearch}
                 onSelect={(_: string, option: any) => {
                   setHotSelectedCatalog(option.item);
+                  setHotSearchValue(`${option.item.level}${option.item.quality}${option.item.name}`);
                 }}
                 value={hotSearchValue}
                 onChange={setHotSearchValue}
@@ -342,7 +343,7 @@ export default function CatalogPage() {
             {hotSelectedCatalog && (
               <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
                 <Text strong>已选装备：</Text>
-                <Text style={{ marginLeft: 8 }}>{hotSelectedCatalog.name} (Lv{hotSelectedCatalog.level} Q{hotSelectedCatalog.quality} {hotSelectedCatalog.category})</Text>
+                <Text style={{ marginLeft: 8 }}>{hotSelectedCatalog.level}{hotSelectedCatalog.quality}{hotSelectedCatalog.name} {hotSelectedCatalog.category}</Text>
               </div>
             )}
             <div style={{ marginBottom: 16 }}>
