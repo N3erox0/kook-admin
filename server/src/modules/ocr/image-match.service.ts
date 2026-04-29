@@ -1141,188 +1141,120 @@ export class ImageMatchService {
       }
     }
 
-    // V2.10.2: 间隙颜色检测法 — 扫描列/行平均亮度，深色窄带=分割线
+    // V2.10.3: 使用 opencv-wasm findContours 精确检测装备格子
     let detectedCells: Array<{ left: number; top: number; width: number; height: number }> = [];
 
     try {
-      // 获取灰度像素
-      const grayBuf = await sharp(imageBuffer)
-        .grayscale()
-        .raw()
-        .toBuffer();
+      const cv = await import('opencv-wasm');
 
-      // 计算每列平均亮度
-      const colAvg = new Array(width).fill(0);
-      for (let x = 0; x < width; x++) {
-        let sum = 0;
-        for (let y = 0; y < height; y++) {
-          sum += grayBuf[y * width + x];
-        }
-        colAvg[x] = sum / height;
-      }
+      // 将 sharp buffer 转为 OpenCV Mat
+      const rawBuf = await sharp(imageBuffer).raw().ensureAlpha().toBuffer();
+      const mat = new cv.Mat(height, width, cv.CV_8UC4);
+      mat.data.set(rawBuf);
 
-      // 计算每行平均亮度
-      const rowAvg = new Array(height).fill(0);
-      for (let y = 0; y < height; y++) {
-        let sum = 0;
-        for (let x = 0; x < width; x++) {
-          sum += grayBuf[y * width + x];
-        }
-        rowAvg[y] = sum / width;
-      }
+      // 转灰度
+      const gray = new cv.Mat();
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-      // 找列分割线：不用绝对阈值，改为找局部极小值（周期性谷值）
-      // 期望列间距 ≈ width / cols，在每个期望间隙位置附近找最暗的列
-      const expectedColStep = width / cols;
-      const colSplits: Array<{ start: number; end: number }> = [];
-      for (let i = 1; i < cols; i++) {
-        const expectedX = Math.round(i * expectedColStep);
-        const searchRange = Math.round(expectedColStep * 0.15); // ±15% 范围搜索
-        let minVal = 999, minX = expectedX;
-        for (let x = Math.max(0, expectedX - searchRange); x <= Math.min(width - 1, expectedX + searchRange); x++) {
-          if (colAvg[x] < minVal) { minVal = colAvg[x]; minX = x; }
-        }
-        colSplits.push({ start: minX, end: minX });
-      }
+      // 自适应阈值二值化（反转：装备格子边框变白，背景变黑）
+      const binary = new cv.Mat();
+      cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, -2);
 
-      // 找行分割线：同理，在期望行间隙位置附近找最暗的行
-      // 先找装备区起点（跳过标题栏）：找第一个"亮度突然升高"的行
-      let gridStartY = 0;
-      const rowMean = rowAvg.reduce((a, b) => a + b, 0) / height;
-      const brightThreshold = rowMean * 1.2;
-      for (let y = Math.round(height * 0.05); y < height; y++) {
-        // 连续 3 行亮度 > 均值 = 装备区开始
-        if (rowAvg[y] > brightThreshold && y + 2 < height && rowAvg[y + 1] > brightThreshold && rowAvg[y + 2] > brightThreshold) {
-          gridStartY = y;
-          break;
-        }
-      }
-      // 找装备区终点：从底部往上找第一个亮度高的行
-      let gridEndY = height - 1;
-      for (let y = height - 1; y > gridStartY; y--) {
-        if (rowAvg[y] > brightThreshold && y - 1 > 0 && rowAvg[y - 1] > brightThreshold) {
-          gridEndY = y;
-          break;
+      // 形态学操作：膨胀连接边框断裂
+      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+      const morphed = new cv.Mat();
+      cv.dilate(binary, morphed, kernel, new cv.Point(-1, -1), 1);
+
+      // 查找轮廓
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(morphed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      // 过滤轮廓：只保留接近正方形且面积合理的（装备格子）
+      const expectedCellArea = (width / cols) * (height / (rows + 2)); // 粗估每格面积
+      const minArea = expectedCellArea * 0.3;
+      const maxArea = expectedCellArea * 2.5;
+      const candidates: Array<{ x: number; y: number; w: number; h: number; area: number }> = [];
+
+      for (let i = 0; i < contours.size(); i++) {
+        const rect = cv.boundingRect(contours.get(i));
+        const area = rect.width * rect.height;
+        const aspectRatio = rect.width / rect.height;
+
+        // 近正方形 (0.6~1.6) + 面积合理
+        if (area >= minArea && area <= maxArea && aspectRatio >= 0.6 && aspectRatio <= 1.6) {
+          candidates.push({ x: rect.x, y: rect.y, w: rect.width, h: rect.height, area });
         }
       }
 
-      const gridHeight = gridEndY - gridStartY;
-      const expectedRowStep = gridHeight / rows;
-      const rowSplits: Array<{ start: number; end: number }> = [];
-      for (let i = 1; i < rows; i++) {
-        const expectedY = gridStartY + Math.round(i * expectedRowStep);
-        const searchRange = Math.round(expectedRowStep * 0.15);
-        let minVal = 999, minY = expectedY;
-        for (let y = Math.max(0, expectedY - searchRange); y <= Math.min(height - 1, expectedY + searchRange); y++) {
-          if (rowAvg[y] < minVal) { minVal = rowAvg[y]; minY = y; }
+      // 按位置排序（先 y 后 x）
+      candidates.sort((a, b) => {
+        const rowDiff = Math.abs(a.y - b.y);
+        if (rowDiff < 15) return a.x - b.x; // 同行按 x 排
+        return a.y - b.y;
+      });
+
+      this.logger.log(`[V2.10.3] OpenCV findContours: ${contours.size()} 轮廓, ${candidates.length} 候选格子 (期望面积${minArea.toFixed(0)}~${maxArea.toFixed(0)})`);
+
+      // 如果候选格子数量接近预期（±20%），直接使用
+      const expected = cols * rows;
+      if (candidates.length >= expected * 0.7 && candidates.length <= expected * 1.5) {
+        // 取前 expected 个（最多）
+        const finalCells = candidates.slice(0, expected);
+        for (const c of finalCells) {
+          // 内缩 2px 去掉边框
+          detectedCells.push({ left: c.x + 2, top: c.y + 2, width: c.w - 4, height: c.h - 4 });
         }
-        rowSplits.push({ start: minY, end: minY });
-      }
+      } else if (candidates.length > 0) {
+        // 候选数量不对，用候选的中位数大小推算网格
+        const medianW = candidates.sort((a, b) => a.w - b.w)[Math.floor(candidates.length / 2)].w;
+        const medianH = candidates.sort((a, b) => a.h - b.h)[Math.floor(candidates.length / 2)].h;
+        // 用第一个候选推算起始位置
+        const firstY = Math.min(...candidates.map(c => c.y));
+        const firstX = Math.min(...candidates.map(c => c.x));
 
-      this.logger.log(`[V2.10.2] 极小值检测: 列分割=${colSplits.length}个(step=${expectedColStep.toFixed(0)}), 行分割=${rowSplits.length}个(gridY=${gridStartY}~${gridEndY}, step=${expectedRowStep.toFixed(0)})`);
+        this.logger.log(`[V2.10.3] 候选数${candidates.length}≠期望${expected}, 用中位数(${medianW}x${medianH})从(${firstX},${firstY})推算网格`);
 
-      // 分割线一定有 cols-1 和 rows-1 条（极小值法保证）
-      if (colSplits.length >= cols - 1 && rowSplits.length >= rows - 1) {
-        // 列边界：[0, split1, split2, ..., width]
-        const colBounds = [0, ...colSplits.map(s => s.start), width];
-        const rowBounds = [gridStartY, ...rowSplits.map(s => s.start), gridEndY];
-
-        this.logger.log(`[V2.10.2] 边界: cols=[${colBounds.join(',')}], rows=[${rowBounds.join(',')}]`);
-
-        // 从边界生成格子坐标（每格内缩 3px 去掉边框/间隙）
-        const pad = 3;
-        for (let r = 0; r < rowBounds.length - 1 && r < rows; r++) {
-          for (let c = 0; c < colBounds.length - 1 && c < cols; c++) {
-            const left = colBounds[c] + pad;
-            const top = rowBounds[r] + pad;
-            const cellW = colBounds[c + 1] - colBounds[c] - pad * 2;
-            const cellH = rowBounds[r + 1] - rowBounds[r] - pad * 2;
-            if (cellW > 15 && cellH > 15) {
-              detectedCells.push({ left, top, width: cellW, height: cellH });
-            }
-          }
-        }
-      } else {
-        this.logger.warn(`[V2.10.2] 分割线不足(col=${colSplits.length}, row=${rowSplits.length})，尝试周期检测`);
-
-        // fallback: 用投影直方图的周期性（自相关）估算格子大小
-        // 在列平均亮度中找最小值的周期
-        const estimatePeriod = (arr: number[], minPeriod: number, maxPeriod: number): number => {
-          let bestPeriod = minPeriod, bestScore = 0;
-          for (let p = minPeriod; p <= maxPeriod; p++) {
-            let score = 0;
-            for (let i = 0; i + p < arr.length; i++) {
-              score += arr[i] * arr[i + p]; // 自相关
-            }
-            score /= (arr.length - p);
-            if (score > bestScore) { bestScore = score; bestPeriod = p; }
-          }
-          return bestPeriod;
-        };
-
-        // 反转亮度（暗=高值）用于自相关找周期
-        const invCol = colAvg.map(v => 255 - v);
-        const invRow = rowAvg.map(v => 255 - v);
-        const colPeriod = estimatePeriod(invCol, Math.floor(width / (cols + 2)), Math.floor(width / (cols - 2)));
-        const rowPeriod = estimatePeriod(invRow, Math.floor(height / (rows + 4)), Math.floor(height / (rows - 2)));
-
-        this.logger.log(`[V2.10.2] 周期检测: colPeriod=${colPeriod}, rowPeriod=${rowPeriod}`);
-
-        // 找到第一个格子的起始位置（第一个亮度较高的位置）
-        let firstCol = 0, firstRow = 0;
-        const avgColVal = colAvg.reduce((a, b) => a + b, 0) / width;
-        const avgRowVal = rowAvg.reduce((a, b) => a + b, 0) / height;
-        for (let x = 0; x < width; x++) {
-          if (colAvg[x] > avgColVal) { firstCol = x; break; }
-        }
-        for (let y = 0; y < height; y++) {
-          if (rowAvg[y] > avgRowVal * 1.2) { firstRow = y; break; }
-        }
-
-        const side = Math.min(colPeriod, rowPeriod) - 4;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
-            const cx = firstCol + c * colPeriod + colPeriod / 2;
-            const cy = firstRow + r * rowPeriod + rowPeriod / 2;
-            const left = Math.max(0, Math.round(cx - side / 2));
-            const top = Math.max(0, Math.round(cy - side / 2));
-            if (left + side <= width && top + side <= height) {
-              detectedCells.push({ left, top, width: side, height: side });
+            const left = firstX + c * medianW + 2;
+            const top = firstY + r * medianH + 2;
+            if (left + medianW - 4 <= width && top + medianH - 4 <= height) {
+              detectedCells.push({ left, top, width: medianW - 4, height: medianH - 4 });
             }
           }
         }
       }
+
+      // 释放内存
+      mat.delete(); gray.delete(); binary.delete(); morphed.delete();
+      kernel.delete(); contours.delete(); hierarchy.delete();
+
     } catch (err) {
-      this.logger.warn(`[V2.10.2] 间隙检测失败: ${err}`);
+      this.logger.warn(`[V2.10.3] OpenCV检测失败: ${err}, 使用fallback`);
     }
 
-    // fallback: 固定比例裁剪
+    // fallback: 简单等分（如果 OpenCV 失败）
     if (detectedCells.length === 0) {
-      const topPct = cropRegion?.topPercent ?? 0.14;
-      const bottomPct = cropRegion?.bottomPercent ?? 0.13;
-      const topCrop = Math.round(height * topPct);
-      const bottomCrop = Math.round(height * bottomPct);
-      const regionH = height - topCrop - bottomCrop;
+      // 用图片宽度/cols作为格子宽，跳过顶部14%和底部13%
+      const topCrop = Math.round(height * 0.14);
+      const bottomCrop = Math.round(height * 0.13);
+      const gridH = height - topCrop - bottomCrop;
       const cellW = Math.floor(width / cols);
-      const cellH = Math.floor(regionH / rows);
-      const side = Math.round(Math.min(cellW, cellH) * 0.88);
+      const cellH = Math.floor(gridH / rows);
 
-      this.logger.log(`[V2.10.2] fallback: top=${topCrop}, regionH=${regionH}, side=${side}`);
+      this.logger.log(`[V2.10.3] fallback等分: top=${topCrop}, gridH=${gridH}, cell=${cellW}x${cellH}`);
 
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          const cx = Math.round((c + 0.5) * cellW);
-          const cy = topCrop + Math.round((r + 0.5) * cellH);
-          const left = Math.max(0, cx - Math.floor(side / 2));
-          const top = Math.max(0, cy - Math.floor(side / 2));
-          if (left + side <= width && top + side <= height) {
-            detectedCells.push({ left, top, width: side, height: side });
-          }
+          const left = c * cellW + 2;
+          const top = topCrop + r * cellH + 2;
+          detectedCells.push({ left, top, width: cellW - 4, height: cellH - 4 });
         }
       }
     }
 
-    this.logger.log(`[V2.10.2 gridParse] 检测到 ${detectedCells.length} 个格子位置`);
+    this.logger.log(`[V2.10.3 gridParse] 检测到 ${detectedCells.length} 个格子位置`);
 
     const cells: any[] = [];
     const MAX_CELLS = 60;
