@@ -1197,31 +1197,74 @@ export class ImageMatchService {
     cells.sort((a, b) => a.row - b.row || a.col - b.col);
     this.logger.log(`[V2.10.6 3boxes] 切图完成: ${cells.length}/${cols * rows} 格有效`);
 
-    // pHash 匹配预填
+    // V2.10.7: 分层识别 pipeline
+    // Layer 2: 主体区裁剪后算 pHash（去掉四周15%角标/边框干扰）
+    // Layer 5: 等级品质从匹配到的参考库带出
     try {
-      const catalogs = await this.catalogRepo.find({ where: {}, select: ['id', 'name', 'imagePhash', 'category', 'gearScore'] });
+      const catalogs = await this.catalogRepo.find({ where: {}, select: ['id', 'name', 'imagePhash', 'category', 'gearScore', 'level', 'quality'] });
       const withHash = catalogs.filter(c => c.imagePhash);
       if (withHash.length > 0) {
         for (const cell of cells) {
           try {
             const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
             const thumbBuf = Buffer.from(thumbBase64, 'base64');
-            const cellHash = await this.computePhash(sharp, thumbBuf);
+
+            // Layer 2: 裁剪主体区（中心70%，去掉四边各15%）
+            const thumbMeta = await sharp(thumbBuf).metadata();
+            const tw = thumbMeta.width || 120;
+            const th = thumbMeta.height || 120;
+            const cropX = Math.round(tw * 0.15);
+            const cropY = Math.round(th * 0.15);
+            const cropW = tw - cropX * 2;
+            const cropH = th - cropY * 2;
+            const coreBuf = await sharp(thumbBuf)
+              .extract({ left: cropX, top: cropY, width: cropW, height: cropH })
+              .toBuffer();
+
+            const cellHash = await this.computePhash(sharp, coreBuf);
             if (!cellHash) continue;
             let bestDist = 999, bestCat: any = null;
             for (const cat of withHash) {
               const dist = this.hammingDistance(cellHash, cat.imagePhash);
               if (dist < bestDist) { bestDist = dist; bestCat = cat; }
             }
-            if (bestCat && bestDist <= ImageMatchService.LOOSE_HAMMING_THRESHOLD) {
+            const confidence = parseFloat((1 - bestDist / 64).toFixed(2));
+            if (bestCat) {
               cell.matchedName = bestCat.name;
               cell.matchedCatalogId = bestCat.id;
-              cell.matchedConfidence = parseFloat((1 - bestDist / 64).toFixed(2));
+              cell.matchedConfidence = confidence;
+              // Layer 5: 从参考库带出等级品质
+              cell.detectedLevel = bestCat.level || null;
+              cell.detectedQuality = bestCat.quality ?? null;
+              cell.matchedCategory = bestCat.category || '';
+              cell.matchedGearScore = bestCat.gearScore || 0;
             }
           } catch { /* skip */ }
         }
       }
     } catch { /* skip */ }
+
+    // Layer 4: 数量识别 — 裁右下角28%区域放大后重新识别
+    for (const cell of cells) {
+      try {
+        const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
+        const thumbBuf = Buffer.from(thumbBase64, 'base64');
+        const thumbMeta = await sharp(thumbBuf).metadata();
+        const tw = thumbMeta.width || 120;
+        const th = thumbMeta.height || 120;
+        const roiW = Math.round(tw * 0.32);
+        const roiH = Math.round(th * 0.28);
+        const roiX = tw - roiW;
+        const roiY = th - roiH;
+        const roiBuf = await sharp(thumbBuf)
+          .extract({ left: roiX, top: roiY, width: roiW, height: roiH })
+          .resize(roiW * 3, roiH * 3, { kernel: 'nearest' })
+          .sharpen()
+          .toBuffer();
+        const qty = await this.extractQuantityFromCorner(sharp, roiBuf);
+        if (qty > 0) cell.quantity = qty;
+      } catch { /* skip */ }
+    }
 
     return { gridSize: { cols, rows }, cells };
   }

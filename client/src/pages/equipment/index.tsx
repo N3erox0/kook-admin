@@ -896,52 +896,35 @@ export default function EquipmentPage() {
                   render: (src: string) => src ? <img src={src} alt="" style={{ width: 64, height: 64, objectFit: 'cover', border: '1px solid #ddd', borderRadius: 4 }} /> : '-',
                 },
                 {
-                  title: '装备别名*', width: 200,
+                  title: '装备名称', width: 200,
                   render: (_: any, row: any) => {
                     const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
+                    // Layer 6: 置信度颜色
+                    const conf = row.matchedConfidence || 0;
+                    const bgColor = conf >= 0.75 ? '#f6ffed' : conf >= 0.55 ? '#fffbe6' : '#fff2f0';
+                    const borderColor = conf >= 0.75 ? '#b7eb8f' : conf >= 0.55 ? '#ffe58f' : '#ffccc7';
                     return (
-                      <AutoComplete
-                        value={row.aliasName}
-                        placeholder="输入装备别名..."
-                        style={{ width: '100%' }}
-                        options={row.aliasOptions || []}
-                        onSearch={(kw) => handleGridAliasSearch(idx, kw)}
-                        onChange={(v) => handleGridCellChange(idx, 'aliasName', v)}
-                        allowClear
-                      />
+                      <div style={{ background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 4, padding: 2 }}>
+                        <AutoComplete
+                          value={row.aliasName}
+                          placeholder="输入装备名..."
+                          style={{ width: '100%' }}
+                          options={row.aliasOptions || []}
+                          onSearch={(kw) => handleGridAliasSearch(idx, kw)}
+                          onChange={(v) => handleGridCellChange(idx, 'aliasName', v)}
+                          allowClear
+                        />
+                        {conf > 0 && <span style={{ fontSize: 11, color: conf >= 0.75 ? '#52c41a' : conf >= 0.55 ? '#faad14' : '#ff4d4f' }}>{(conf * 100).toFixed(0)}%</span>}
+                      </div>
                     );
                   },
                 },
                 {
-                  title: '等级', width: 80,
+                  title: '等级/品质', width: 80,
                   render: (_: any, row: any) => {
-                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
-                    return (
-                      <Select
-                        size="small"
-                        value={row.level}
-                        style={{ width: 70 }}
-                        onChange={(v) => handleGridCellChange(idx, 'level', v)}
-                        options={[1, 2, 3, 4, 5, 6, 7, 8].map(l => ({ value: l, label: `${l}` }))}
-                      />
-                    );
-                  },
-                },
-                {
-                  title: '品质', width: 90,
-                  render: (_: any, row: any) => {
-                    const idx = gridCells.findIndex(c => c.row === row.row && c.col === row.col);
-                    const detectedLabel = row.detectedQuality !== null ? `(识别:${row.detectedQuality})` : '';
-                    return (
-                      <Select
-                        size="small"
-                        value={row.quality}
-                        style={{ width: 80 }}
-                        onChange={(v) => handleGridCellChange(idx, 'quality', v)}
-                        options={[0, 1, 2, 3, 4].map(q => ({ value: q, label: `${q}` }))}
-                        title={detectedLabel}
-                      />
-                    );
+                    const lv = row.detectedLevel ?? row.level ?? '-';
+                    const q = row.detectedQuality ?? row.quality ?? '-';
+                    return <Text style={{ fontSize: 12 }}>{lv}/{q}</Text>;
                   },
                 },
                 {
