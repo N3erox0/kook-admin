@@ -348,12 +348,23 @@ export default function EquipmentPage() {
     return false;
   };
 
-  // V2.10.5: 用户画框完成后执行切图
+  // V2.10.5: 用户画框完成后执行切图（画的是整个装备区）
   const handleGridCutWithAnchor = async () => {
-    if (!gridImageUrl || !gridAnchor) { message.warning('请先画出第一个装备格子'); return; }
+    if (!gridImageUrl || !gridAnchor) { message.warning('请先框选装备区域'); return; }
     setGridLoading(true);
     try {
-      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, gridAnchor);
+      // 计算缩放比例：浏览器显示尺寸 vs 图片实际尺寸
+      const imgEl = document.getElementById('grid-preview-img') as HTMLImageElement;
+      const scaleX = imgEl ? (imgEl.naturalWidth / imgEl.clientWidth) : 1;
+      const scaleY = imgEl ? (imgEl.naturalHeight / imgEl.clientHeight) : 1;
+      // 将显示坐标转为实际图片坐标
+      const realAnchor = {
+        x: Math.round(gridAnchor.x * scaleX),
+        y: Math.round(gridAnchor.y * scaleY),
+        w: Math.round(gridAnchor.w * scaleX),
+        h: Math.round(gridAnchor.h * scaleY),
+      };
+      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, realAnchor);
       const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         row: c.row + gridCells.length,
@@ -742,7 +753,7 @@ export default function EquipmentPage() {
             {gridPreviewSrc ? (
               <div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-                  在下方图片上拖拽画出<b>第一个装备格子</b>的范围（左上角第一格），系统将按等间距自动切图。
+                  在下方图片上拖拽画出<b>整个装备区域</b>的范围（框住所有装备格子），系统按{gridLayout}等分并内缩去掉间隙。
                 </Text>
                 <div
                   style={{ position: 'relative', display: 'inline-block', cursor: 'crosshair', border: '1px solid #d9d9d9', borderRadius: 4 }}
@@ -754,36 +765,43 @@ export default function EquipmentPage() {
                   onMouseMove={(e) => {
                     if (!gridDrawing || !gridDrawStart) return;
                     const rect = e.currentTarget.getBoundingClientRect();
-                    const x = gridDrawStart.x;
-                    const y = gridDrawStart.y;
-                    const w = Math.abs(e.clientX - rect.left - x);
-                    const h = Math.abs(e.clientY - rect.top - y);
+                    const curX = e.clientX - rect.left;
+                    const curY = e.clientY - rect.top;
+                    const x = Math.min(gridDrawStart.x, curX);
+                    const y = Math.min(gridDrawStart.y, curY);
+                    const w = Math.abs(curX - gridDrawStart.x);
+                    const h = Math.abs(curY - gridDrawStart.y);
                     setGridAnchor({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
                   }}
                   onMouseUp={() => { setGridDrawing(false); }}
                 >
-                  <img src={gridPreviewSrc} style={{ maxWidth: '100%', maxHeight: 500, display: 'block' }} alt="preview" />
+                  <img
+                    id="grid-preview-img"
+                    src={gridPreviewSrc}
+                    style={{ maxWidth: '100%', maxHeight: 600, display: 'block' }}
+                    alt="preview"
+                  />
                   {gridAnchor && gridAnchor.w > 5 && gridAnchor.h > 5 && (
                     <div style={{
                       position: 'absolute',
                       left: gridAnchor.x, top: gridAnchor.y,
                       width: gridAnchor.w, height: gridAnchor.h,
-                      border: '2px solid #1677ff', background: 'rgba(22,119,255,0.1)',
+                      border: '2px solid #ff4d4f', background: 'rgba(255,77,79,0.08)',
                       pointerEvents: 'none',
                     }} />
                   )}
                 </div>
                 <div style={{ marginTop: 12 }}>
-                  {gridAnchor && gridAnchor.w > 10 && gridAnchor.h > 10 ? (
+                  {gridAnchor && gridAnchor.w > 30 && gridAnchor.h > 30 ? (
                     <Space>
-                      <Text>已选区域：{gridAnchor.w}×{gridAnchor.h}px（起点 {gridAnchor.x},{gridAnchor.y}）</Text>
+                      <Text>已选装备区：{gridAnchor.w}×{gridAnchor.h}px</Text>
                       <Button type="primary" loading={gridLoading} onClick={handleGridCutWithAnchor}>
                         开始切图识别
                       </Button>
                       <Button onClick={() => setGridAnchor(null)}>重画</Button>
                     </Space>
                   ) : (
-                    <Text type="secondary">请拖拽画出第一个格子的范围</Text>
+                    <Text type="secondary">请拖拽框选整个装备区域（包含所有格子）</Text>
                   )}
                 </div>
               </div>

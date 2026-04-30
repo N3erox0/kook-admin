@@ -1109,7 +1109,7 @@ export class ImageMatchService {
    * @returns 每格的解析结果（按行列顺序）
    */
   /**
-   * V2.10.5: 半自动画框切图 — 用户标定第一个格子坐标，按等间距切出所有格子
+   * V2.10.5: 半自动画框切图 — 用户框选整个装备区域，按 cols×rows 等分 + 内缩10%
    */
   async gridParseWithAnchor(imageBuffer: Buffer, layout: string, anchor: { x: number; y: number; w: number; h: number }): Promise<{
     gridSize: { cols: number; rows: number };
@@ -1128,15 +1128,18 @@ export class ImageMatchService {
     const parts = layout.split('x').map(Number);
     if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) { cols = parts[0]; rows = parts[1]; }
 
-    // anchor 是用户在前端预览图上画的第一格坐标
-    // 需要根据预览图和实际图的比例换算（前端 img maxWidth=100%, maxHeight=500px）
-    // 简化处理：假设前端显示的图片宽度 = 实际宽度（因为弹窗宽度足够）
-    const cellW = anchor.w;
-    const cellH = anchor.h;
-    const startX = anchor.x;
-    const startY = anchor.y;
+    // anchor = 整个装备区域的坐标（已换算为实际图片像素）
+    const regionX = anchor.x;
+    const regionY = anchor.y;
+    const regionW = anchor.w;
+    const regionH = anchor.h;
+    const cellW = regionW / cols;
+    const cellH = regionH / rows;
 
-    this.logger.log(`[V2.10.5 anchor] 第一格: (${startX},${startY}) ${cellW}x${cellH}, layout=${cols}x${rows}`);
+    // 内缩比例（去掉格子间隙+边框）
+    const shrink = 0.12; // 每边缩12% = 总共缩24%，只取中心76%
+
+    this.logger.log(`[V2.10.5 anchor] 装备区: (${regionX},${regionY}) ${regionW}x${regionH}, cell=${cellW.toFixed(0)}x${cellH.toFixed(0)}, layout=${cols}x${rows}, shrink=${shrink}`);
 
     const cells: any[] = [];
     const CONCURRENCY = 3;
@@ -1144,15 +1147,23 @@ export class ImageMatchService {
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const cellIndex = r * cols + c;
-        const left = Math.round(startX + c * cellW);
-        const top = Math.round(startY + r * cellH);
-        if (left + cellW > width || top + cellH > height) continue;
-
         tasks.push(async () => {
           try {
+            // 等分后每格的区域
+            const rawLeft = regionX + c * cellW;
+            const rawTop = regionY + r * cellH;
+            // 内缩：四边各缩 shrink
+            const padX = Math.round(cellW * shrink);
+            const padY = Math.round(cellH * shrink);
+            const left = Math.round(rawLeft) + padX;
+            const top = Math.round(rawTop) + padY;
+            const w = Math.round(cellW) - padX * 2;
+            const h = Math.round(cellH) - padY * 2;
+
+            if (left < 0 || top < 0 || left + w > width || top + h > height || w < 10 || h < 10) return;
+
             const subBuf = await sharp(imageBuffer)
-              .extract({ left, top, width: Math.round(cellW), height: Math.round(cellH) })
+              .extract({ left, top, width: w, height: h })
               .toBuffer();
 
             // 过滤空白格子
