@@ -786,7 +786,7 @@ export default function EquipmentPage() {
                       position: 'absolute',
                       left: gridAnchor.x, top: gridAnchor.y,
                       width: gridAnchor.w, height: gridAnchor.h,
-                      border: '2px solid #ff4d4f', background: 'rgba(255,77,79,0.08)',
+                      border: '3px solid #ff0000', background: 'rgba(255,0,0,0.06)',
                       pointerEvents: 'none',
                     }} />
                   )}

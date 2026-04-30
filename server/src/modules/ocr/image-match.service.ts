@@ -1133,13 +1133,21 @@ export class ImageMatchService {
     const regionY = anchor.y;
     const regionW = anchor.w;
     const regionH = anchor.h;
-    const cellW = regionW / cols;
-    const cellH = regionH / rows;
 
-    // 内缩比例（去掉格子间隙+边框）
-    const shrink = 0.12; // 每边缩12% = 总共缩24%，只取中心76%
+    // 精确比例关系（基于 Albion 截图实测）：
+    // 装备区 = N个格子 + (N-1)个间隙
+    // 格子宽度:间隙宽度 ≈ 18:1（间隙约为格子的5.5%）
+    // 公式：totalW = cols * cellW + (cols-1) * gap
+    //        gap = cellW * 0.055
+    //        totalW = cols * cellW + (cols-1) * cellW * 0.055
+    //        cellW = totalW / (cols + (cols-1) * 0.055)
+    const gapRatio = 0.055; // 间隙 = 格子宽度的 5.5%
+    const cellW = regionW / (cols + (cols - 1) * gapRatio);
+    const cellH = regionH / (rows + (rows - 1) * gapRatio);
+    const gapW = cellW * gapRatio;
+    const gapH = cellH * gapRatio;
 
-    this.logger.log(`[V2.10.5 anchor] 装备区: (${regionX},${regionY}) ${regionW}x${regionH}, cell=${cellW.toFixed(0)}x${cellH.toFixed(0)}, layout=${cols}x${rows}, shrink=${shrink}`);
+    this.logger.log(`[V2.10.5 anchor] 装备区: (${regionX},${regionY}) ${regionW}x${regionH}, cell=${cellW.toFixed(1)}x${cellH.toFixed(1)}, gap=${gapW.toFixed(1)}x${gapH.toFixed(1)}, layout=${cols}x${rows}`);
 
     const cells: any[] = [];
     const CONCURRENCY = 3;
@@ -1149,16 +1157,11 @@ export class ImageMatchService {
       for (let c = 0; c < cols; c++) {
         tasks.push(async () => {
           try {
-            // 等分后每格的区域
-            const rawLeft = regionX + c * cellW;
-            const rawTop = regionY + r * cellH;
-            // 内缩：四边各缩 shrink
-            const padX = Math.round(cellW * shrink);
-            const padY = Math.round(cellH * shrink);
-            const left = Math.round(rawLeft) + padX;
-            const top = Math.round(rawTop) + padY;
-            const w = Math.round(cellW) - padX * 2;
-            const h = Math.round(cellH) - padY * 2;
+            // 精确坐标：每格起点 = 区域起点 + c * (cellW + gapW)
+            const left = Math.round(regionX + c * (cellW + gapW));
+            const top = Math.round(regionY + r * (cellH + gapH));
+            const w = Math.round(cellW);
+            const h = Math.round(cellH);
 
             if (left < 0 || top < 0 || left + w > width || top + h > height || w < 10 || h < 10) return;
 
