@@ -1109,6 +1109,124 @@ export class ImageMatchService {
    * @returns 每格的解析结果（按行列顺序）
    */
   /**
+   * V2.10.6: 3框定位法 — 用户标定3个格子(R1C1, R1C2, R2C1)精确计算步进
+   */
+  async gridParseWith3Boxes(imageBuffer: Buffer, layout: string, boxes: Array<{ x: number; y: number; w: number; h: number }>): Promise<{
+    gridSize: { cols: number; rows: number };
+    cells: Array<{ row: number; col: number; thumbnail: string; quantity: number; detectedLevel: number | null; detectedQuality: number | null; matchedName?: string; matchedCatalogId?: number; matchedConfidence?: number }>;
+  }> {
+    let sharp: any;
+    try { sharp = require('sharp'); }
+    catch { throw new Error('图片处理模块未安装'); }
+
+    const metadata = await sharp(imageBuffer).metadata();
+    const { width, height } = metadata;
+    if (!width || !height) throw new Error('无法读取图片尺寸');
+
+    let cols = 5, rows = 7;
+    const parts = layout.split('x').map(Number);
+    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) { cols = parts[0]; rows = parts[1]; }
+
+    const [box1, box2, box3] = boxes; // R1C1, R1C2, R2C1
+
+    // 格子宽高：3框取平均（修正手抖）
+    const cellW = Math.round((box1.w + box2.w + box3.w) / 3);
+    const cellH = Math.round((box1.h + box2.h + box3.h) / 3);
+
+    // 列步进 = R1C2中心x - R1C1中心x
+    const box1CenterX = box1.x + box1.w / 2;
+    const box1CenterY = box1.y + box1.h / 2;
+    const box2CenterX = box2.x + box2.w / 2;
+    const box3CenterY = box3.y + box3.h / 2;
+
+    const colStep = Math.round(box2CenterX - box1CenterX);
+    const rowStep = Math.round(box3CenterY - box1CenterY);
+
+    // 间隙
+    const colGap = colStep - cellW;
+    const rowGap = rowStep - cellH;
+
+    // 起始点：第一格左上角
+    const startX = box1.x;
+    const startY = box1.y;
+
+    this.logger.log(`[V2.10.6 3boxes] cellW=${cellW}, cellH=${cellH}, colStep=${colStep}(gap=${colGap}), rowStep=${rowStep}(gap=${rowGap}), start=(${startX},${startY}), layout=${cols}x${rows}`);
+
+    const cells: any[] = [];
+    const CONCURRENCY = 3;
+    const tasks: Array<() => Promise<void>> = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        tasks.push(async () => {
+          try {
+            const left = Math.round(startX + c * colStep);
+            const top = Math.round(startY + r * rowStep);
+
+            if (left < 0 || top < 0 || left + cellW > width || top + cellH > height) return;
+
+            const subBuf = await sharp(imageBuffer)
+              .extract({ left, top, width: cellW, height: cellH })
+              .toBuffer();
+
+            // 过滤空白格子
+            const stats = await sharp(subBuf).stats();
+            const avg = stats.channels[0]?.mean || 0;
+            const std = stats.channels[0]?.stdev || 0;
+            if (avg < 15 || avg > 240) return;
+            if (avg > 140 && avg < 220 && std < 25) return;
+
+            const thumbnail = await sharp(subBuf).resize(120, 120, { fit: 'cover' }).png().toBuffer();
+            const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
+            const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
+
+            cells.push({
+              row: r, col: c,
+              thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
+              quantity, detectedLevel: null, detectedQuality,
+            });
+          } catch { /* skip */ }
+        });
+      }
+    }
+
+    for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+      await Promise.all(tasks.slice(i, i + CONCURRENCY).map(t => t()));
+    }
+
+    cells.sort((a, b) => a.row - b.row || a.col - b.col);
+    this.logger.log(`[V2.10.6 3boxes] 切图完成: ${cells.length}/${cols * rows} 格有效`);
+
+    // pHash 匹配预填
+    try {
+      const catalogs = await this.catalogRepo.find({ where: {}, select: ['id', 'name', 'imagePhash', 'category', 'gearScore'] });
+      const withHash = catalogs.filter(c => c.imagePhash);
+      if (withHash.length > 0) {
+        for (const cell of cells) {
+          try {
+            const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
+            const thumbBuf = Buffer.from(thumbBase64, 'base64');
+            const cellHash = await this.computePhash(sharp, thumbBuf);
+            if (!cellHash) continue;
+            let bestDist = 999, bestCat: any = null;
+            for (const cat of withHash) {
+              const dist = this.hammingDistance(cellHash, cat.imagePhash);
+              if (dist < bestDist) { bestDist = dist; bestCat = cat; }
+            }
+            if (bestCat && bestDist <= ImageMatchService.LOOSE_HAMMING_THRESHOLD) {
+              cell.matchedName = bestCat.name;
+              cell.matchedCatalogId = bestCat.id;
+              cell.matchedConfidence = parseFloat((1 - bestDist / 64).toFixed(2));
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch { /* skip */ }
+
+    return { gridSize: { cols, rows }, cells };
+  }
+
+  /**
    * V2.10.5: 半自动画框切图 — 用户框选整个装备区域，按 cols×rows 等分 + 内缩10%
    */
   async gridParseWithAnchor(imageBuffer: Buffer, layout: string, anchor: { x: number; y: number; w: number; h: number }): Promise<{

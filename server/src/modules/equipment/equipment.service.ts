@@ -237,7 +237,7 @@ export class EquipmentService {
    * 解析截图网格：按图标切片 → 返回每格的缩略图+自动识别的数量/品质
    * 装备名由用户后续手动填写
    */
-  async gridParse(imageUrl: string, layout?: string, anchor?: { x: number; y: number; w: number; h: number }): Promise<any> {
+  async gridParse(imageUrl: string, layout?: string, anchor?: { x: number; y: number; w: number; h: number }, boxes?: Array<{ x: number; y: number; w: number; h: number }>): Promise<any> {
     // 获取图片 Buffer
     let buffer: Buffer;
     if (imageUrl.startsWith('http')) {
@@ -250,6 +250,12 @@ export class EquipmentService {
       const fs = require('fs/promises');
       const absPath = path.join(process.cwd(), imageUrl.replace(/^\//, ''));
       buffer = await fs.readFile(absPath);
+    }
+
+    // V2.10.6: 3框定位法（优先）
+    if (boxes && boxes.length >= 3) {
+      this.logger.log(`[V2.10.6 gridParse] 3框定位: boxes=${JSON.stringify(boxes)}, layout=${layout}`);
+      return this.imageMatchService.gridParseWith3Boxes(buffer, layout || '5x7', boxes);
     }
 
     // V2.10.5: 半自动画框模式 — 有 anchor 时直接用锚点等间距切图

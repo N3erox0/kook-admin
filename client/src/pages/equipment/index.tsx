@@ -87,11 +87,13 @@ export default function EquipmentPage() {
   const [gridLoading, setGridLoading] = useState(false);
   const [gridImageUrl, setGridImageUrl] = useState('');
   const [gridLayout, setGridLayout] = useState<string>('5x7');
-  // V2.10.5: 半自动画框
-  const [gridPreviewSrc, setGridPreviewSrc] = useState(''); // 上传后的本地预览 URL
-  const [gridAnchor, setGridAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  // V2.10.6: 3框定位法
+  const [gridPreviewSrc, setGridPreviewSrc] = useState('');
+  const [gridDrawStep, setGridDrawStep] = useState<0 | 1 | 2 | 3>(0); // 0=未开始,1=画小框1(R1C1),2=画小框2(R1C2),3=画小框3(R2C1)
+  const [gridBoxes, setGridBoxes] = useState<Array<{ x: number; y: number; w: number; h: number }>>([]);
   const [gridDrawing, setGridDrawing] = useState(false);
   const [gridDrawStart, setGridDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [gridCurrentBox, setGridCurrentBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [gridCells, setGridCells] = useState<Array<{
     row: number; col: number; thumbnail: string; quantity: number;
     detectedLevel: number | null; detectedQuality: number | null;
@@ -330,13 +332,13 @@ export default function EquipmentPage() {
     } catch {} finally { setOcrLoading(false); }
   };
 
-  // V2.10.5: 上传后进入画框预览模式
+  // V2.10.6: 上传后进入画框模式
   const handleGridUpload = async (file: File) => {
-    // 先生成本地预览
     const localUrl = URL.createObjectURL(file);
     setGridPreviewSrc(localUrl);
-    setGridAnchor(null);
-    // 同时上传到服务器获取 URL
+    setGridDrawStep(1); // 开始画第1个小框
+    setGridBoxes([]);
+    setGridCurrentBox(null);
     try {
       const uploadRes: any = await uploadFile(file);
       const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
@@ -348,23 +350,23 @@ export default function EquipmentPage() {
     return false;
   };
 
-  // V2.10.5: 用户画框完成后执行切图（画的是整个装备区）
+  // V2.10.6: 3框定位完成后切图
   const handleGridCutWithAnchor = async () => {
-    if (!gridImageUrl || !gridAnchor) { message.warning('请先框选装备区域'); return; }
+    if (!gridImageUrl || gridBoxes.length < 3) { message.warning('请完成3个定位框的绘制'); return; }
     setGridLoading(true);
     try {
-      // 计算缩放比例：浏览器显示尺寸 vs 图片实际尺寸
+      // 缩放比例
       const imgEl = document.getElementById('grid-preview-img') as HTMLImageElement;
       const scaleX = imgEl ? (imgEl.naturalWidth / imgEl.clientWidth) : 1;
       const scaleY = imgEl ? (imgEl.naturalHeight / imgEl.clientHeight) : 1;
-      // 将显示坐标转为实际图片坐标
-      const realAnchor = {
-        x: Math.round(gridAnchor.x * scaleX),
-        y: Math.round(gridAnchor.y * scaleY),
-        w: Math.round(gridAnchor.w * scaleX),
-        h: Math.round(gridAnchor.h * scaleY),
-      };
-      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, realAnchor);
+      // 将3个框转为实际图片坐标
+      const boxes = gridBoxes.map(b => ({
+        x: Math.round(b.x * scaleX),
+        y: Math.round(b.y * scaleY),
+        w: Math.round(b.w * scaleX),
+        h: Math.round(b.h * scaleY),
+      }));
+      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, undefined, boxes);
       const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         row: c.row + gridCells.length,
@@ -749,15 +751,19 @@ export default function EquipmentPage() {
                 <Radio value="5x2">蛋箱（5×2）</Radio>
               </Radio.Group>
             </div>
-            {/* 画框预览模式 */}
+            {/* V2.10.6: 3框定位模式 */}
             {gridPreviewSrc ? (
               <div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-                  在下方图片上拖拽画出<b>整个装备区域</b>的范围（框住所有装备格子），系统按{gridLayout}等分并内缩去掉间隙。
+                  {gridDrawStep === 1 && <><b>步骤1/3</b>：画出<b style={{color:'#1677ff'}}>第1行第1格</b>（左上角第一个装备）</>}
+                  {gridDrawStep === 2 && <><b>步骤2/3</b>：画出<b style={{color:'#1677ff'}}>第1行第2格</b>（第一个右边相邻那个）</>}
+                  {gridDrawStep === 3 && <><b>步骤3/3</b>：画出<b style={{color:'#1677ff'}}>第2行第1格</b>（第一格正下方那个）</>}
+                  {gridDrawStep === 0 && gridBoxes.length >= 3 && <><b>定位完成！</b>点击"开始切图识别"</>}
                 </Text>
                 <div
                   style={{ position: 'relative', display: 'inline-block', cursor: 'crosshair', border: '1px solid #d9d9d9', borderRadius: 4 }}
                   onMouseDown={(e) => {
+                    if (gridDrawStep === 0) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     setGridDrawStart({ x: e.clientX - rect.left, y: e.clientY - rect.top });
                     setGridDrawing(true);
@@ -771,9 +777,21 @@ export default function EquipmentPage() {
                     const y = Math.min(gridDrawStart.y, curY);
                     const w = Math.abs(curX - gridDrawStart.x);
                     const h = Math.abs(curY - gridDrawStart.y);
-                    setGridAnchor({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+                    setGridCurrentBox({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
                   }}
-                  onMouseUp={() => { setGridDrawing(false); }}
+                  onMouseUp={() => {
+                    setGridDrawing(false);
+                    if (gridCurrentBox && gridCurrentBox.w > 10 && gridCurrentBox.h > 10) {
+                      const newBoxes = [...gridBoxes, gridCurrentBox];
+                      setGridBoxes(newBoxes);
+                      setGridCurrentBox(null);
+                      if (newBoxes.length >= 3) {
+                        setGridDrawStep(0);
+                      } else {
+                        setGridDrawStep((gridDrawStep + 1) as 1 | 2 | 3);
+                      }
+                    }
+                  }}
                 >
                   <img
                     id="grid-preview-img"
@@ -781,28 +799,45 @@ export default function EquipmentPage() {
                     style={{ maxWidth: '100%', maxHeight: 600, display: 'block' }}
                     alt="preview"
                   />
-                  {gridAnchor && gridAnchor.w > 5 && gridAnchor.h > 5 && (
+                  {/* 已画好的框 */}
+                  {gridBoxes.map((box, i) => (
+                    <div key={i} style={{
+                      position: 'absolute',
+                      left: box.x, top: box.y, width: box.w, height: box.h,
+                      border: '3px solid #1677ff', background: 'rgba(22,119,255,0.08)',
+                      pointerEvents: 'none',
+                    }}>
+                      <span style={{ position: 'absolute', top: -18, left: 0, fontSize: 11, color: '#1677ff', fontWeight: 'bold' }}>
+                        {i === 0 ? 'R1C1' : i === 1 ? 'R1C2' : 'R2C1'}
+                      </span>
+                    </div>
+                  ))}
+                  {/* 正在画的框 */}
+                  {gridCurrentBox && gridCurrentBox.w > 3 && gridCurrentBox.h > 3 && (
                     <div style={{
                       position: 'absolute',
-                      left: gridAnchor.x, top: gridAnchor.y,
-                      width: gridAnchor.w, height: gridAnchor.h,
-                      border: '3px solid #ff0000', background: 'rgba(255,0,0,0.06)',
+                      left: gridCurrentBox.x, top: gridCurrentBox.y,
+                      width: gridCurrentBox.w, height: gridCurrentBox.h,
+                      border: '2px dashed #ff4d4f', background: 'rgba(255,77,79,0.06)',
                       pointerEvents: 'none',
                     }} />
                   )}
                 </div>
                 <div style={{ marginTop: 12 }}>
-                  {gridAnchor && gridAnchor.w > 30 && gridAnchor.h > 30 ? (
-                    <Space>
-                      <Text>已选装备区：{gridAnchor.w}×{gridAnchor.h}px</Text>
+                  <Space>
+                    {gridBoxes.length >= 3 && (
                       <Button type="primary" loading={gridLoading} onClick={handleGridCutWithAnchor}>
                         开始切图识别
                       </Button>
-                      <Button onClick={() => setGridAnchor(null)}>重画</Button>
-                    </Space>
-                  ) : (
-                    <Text type="secondary">请拖拽框选整个装备区域（包含所有格子）</Text>
-                  )}
+                    )}
+                    {gridBoxes.length > 0 && (
+                      <Button onClick={() => { setGridBoxes([]); setGridDrawStep(1); setGridCurrentBox(null); }}>全部重画</Button>
+                    )}
+                    {gridBoxes.length > 0 && gridBoxes.length < 3 && (
+                      <Button onClick={() => { setGridBoxes(gridBoxes.slice(0, -1)); setGridDrawStep(gridBoxes.length as 1 | 2 | 3); }}>撤销上一框</Button>
+                    )}
+                    <Text type="secondary">已画 {gridBoxes.length}/3 个定位框</Text>
+                  </Space>
                 </div>
               </div>
             ) : (
