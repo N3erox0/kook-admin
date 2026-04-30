@@ -28,8 +28,8 @@ export const getAllInventoryLogs = (guildId: number, params?: any) =>
   request.get(`/guild/${guildId}/inventory/logs`, { params });
 
 // V2.9.2 网格识别入库（方案D）
-export const gridParseInventory = (guildId: number, imageUrl: string, layout?: string) =>
-  request.post(`/guild/${guildId}/inventory/grid-parse`, { imageUrl, layout });
+export const gridParseInventory = (guildId: number, imageUrl: string, layout?: string, anchor?: { x: number; y: number; w: number; h: number }) =>
+  request.post(`/guild/${guildId}/inventory/grid-parse`, { imageUrl, layout, anchor });
 
 export const gridSaveInventory = (guildId: number, items: Array<{ aliasName: string; level: number; quality: number; quantity: number; location?: string }>) =>
   request.post(`/guild/${guildId}/inventory/grid-save`, { items });

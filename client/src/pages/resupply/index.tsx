@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Tag, Typography, message, Modal, Form, Input, InputNumber, Select, Popconfirm, Image, DatePicker, AutoComplete, Tabs, Popover } from 'antd';
 import { ReloadOutlined, CheckOutlined, CloseOutlined, SendOutlined, EyeOutlined, PlusOutlined, SearchOutlined, OrderedListOutlined, HomeOutlined, MergeCellsOutlined, ExpandAltOutlined, DeleteOutlined, ScanOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
-import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply, pullKookHistory } from '@/api/resupply';
+import { getResupplyList, getResupplyDetail, createResupply, processResupply, batchProcessResupply, batchAssignRoom, getGroupedResupply, getMergedResupply, quickCompleteResupply, pullKookHistory, updateResupplyFields } from '@/api/resupply';
 import { searchCatalog } from '@/api/catalog';
+import request from '@/api/request';
 import { useGuildStore } from '@/stores/guild.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { RESUPPLY_STATUS, formatEquipName } from '@/types';
@@ -80,6 +81,38 @@ export default function ResupplyPage() {
   const [catalogOptions, setCatalogOptions] = useState<any[]>([]);
   const [catalogSearchValue, setCatalogSearchValue] = useState('');
   const [createEquipList, setCreateEquipList] = useState<{ id: number; name: string; gearScore?: number; category?: string; quantity: number }[]>([]);
+
+  // V2.10.5: 详情页装备编辑搜索
+  const [detailEquipOptions, setDetailEquipOptions] = useState<any[]>([]);
+  const [detailEquipSearchValue, setDetailEquipSearchValue] = useState('');
+  const handleDetailEquipSearch = async (value: string) => {
+    if (!value || value.length < 1) { setDetailEquipOptions([]); return; }
+    try {
+      const res: any = await searchCatalog(value);
+      const items = Array.isArray(res) ? res : (res?.list || res?.data || []);
+      setDetailEquipOptions(items.slice(0, 20).map((item: any) => ({
+        value: `${item.id}`,
+        label: `${item.level}${item.quality}${item.name} ${item.category}`,
+        item,
+      })));
+    } catch { setDetailEquipOptions([]); }
+  };
+
+  // V2.10.5: 手动创建申请人搜索
+  const [memberOptions, setMemberOptions] = useState<any[]>([]);
+  const [memberSearchValue, setMemberSearchValue] = useState('');
+  const handleMemberSearch = async (value: string) => {
+    if (!value || value.length < 1) { setMemberOptions([]); return; }
+    try {
+      const res: any = await request.get(`/guild/${guildId}/members`, { params: { keyword: value, pageSize: 20 } });
+      const items = res?.list || res?.data || [];
+      setMemberOptions(items.map((m: any) => ({
+        value: m.nickname || m.kookUserId || `${m.id}`,
+        label: `${m.nickname || '未知'} ${m.kookUserId ? `(${m.kookUserId})` : ''}`,
+        member: m,
+      })));
+    } catch { setMemberOptions([]); }
+  };
   const handleCatalogSearch = async (kw: string) => {
     if (!kw || kw.trim().length < 2) { setCatalogOptions([]); return; }
     try {
@@ -433,11 +466,20 @@ export default function ResupplyPage() {
                 <div>
                   <Text strong>待补装备：</Text>
                   {detail.equipmentDetails?.length > 0 ? (
-                    <div style={{ marginTop: 4, padding: '8px 12px', background: '#fafafa', borderRadius: 6, maxHeight: 200, overflow: 'auto' }}>
+                    <div style={{ marginTop: 4, padding: '8px 12px', background: '#fafafa', borderRadius: 6, maxHeight: 240, overflow: 'auto' }}>
                       {detail.equipmentDetails.map((eq: any, i: number) => (
-                        <div key={i} style={{ padding: '2px 0', borderBottom: i < detail.equipmentDetails.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
-                          <Text>{i + 1}. P{eq.gearScore} {eq.name}</Text>
-                          <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{eq.category}</Text>
+                        <div key={i} style={{ padding: '3px 0', borderBottom: i < detail.equipmentDetails.length - 1 ? '1px solid #f0f0f0' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Text>{i + 1}. P{eq.gearScore} {eq.name} <Text type="secondary" style={{ fontSize: 12 }}>{eq.category}</Text></Text>
+                          {canProcess && detail.status === 0 && (
+                            <Button size="small" type="link" danger icon={<DeleteOutlined />}
+                              onClick={async () => {
+                                const ids = (detail.equipmentIds || '').split(',').filter(Boolean);
+                                ids.splice(i, 1);
+                                await updateResupplyFields(guildId, detail.id, { equipmentIds: ids.join(','), quantity: ids.length });
+                                openDetail(detail.id);
+                                message.success('已删除');
+                              }} />
+                          )}
                         </div>
                       ))}
                     </div>
@@ -445,6 +487,26 @@ export default function ResupplyPage() {
                     <Text>{detail.equipmentNames}</Text>
                   ) : (
                     <Text type="secondary">（暂无装备）</Text>
+                  )}
+                  {/* 添加装备搜索 */}
+                  {canProcess && detail.status === 0 && (
+                    <AutoComplete
+                      style={{ width: '100%', marginTop: 8 }}
+                      placeholder="搜索添加装备..."
+                      options={detailEquipOptions}
+                      onSearch={handleDetailEquipSearch}
+                      onSelect={async (_: string, option: any) => {
+                        const item = option.item;
+                        const ids = (detail.equipmentIds || '').split(',').filter(Boolean);
+                        ids.push(String(item.id));
+                        await updateResupplyFields(guildId, detail.id, { equipmentIds: ids.join(','), quantity: ids.length });
+                        openDetail(detail.id);
+                        setDetailEquipOptions([]);
+                        message.success(`已添加: ${item.name}`);
+                      }}
+                      value={detailEquipSearchValue}
+                      onChange={setDetailEquipSearchValue}
+                    />
                   )}
                 </div>
                 <div><Text strong>数量：</Text>{detail.quantity} | <Text strong>类型：</Text>{detail.applyType}</div>
@@ -595,7 +657,23 @@ export default function ResupplyPage() {
               </Select>
             </Form.Item>
           </Space>
-          <Form.Item name="kookNickname" label="申请人昵称"><Input placeholder="含箱子编号自动提取，如 玩家A 3-16" /></Form.Item>
+          <Form.Item name="kookNickname" label="申请人（搜索公会成员）">
+            <AutoComplete
+              options={memberOptions}
+              onSearch={handleMemberSearch}
+              onSelect={(_: string, option: any) => {
+                const m = option.member;
+                createForm.setFieldsValue({
+                  kookNickname: m.nickname || m.kookUserId,
+                  kookUserId: m.kookUserId || '',
+                });
+                setMemberSearchValue(m.nickname || m.kookUserId || '');
+              }}
+              value={memberSearchValue}
+              onChange={(v) => { setMemberSearchValue(v); createForm.setFieldsValue({ kookNickname: v }); }}
+              placeholder="输入昵称搜索公会成员..."
+            />
+          </Form.Item>
           <Form.Item name="reason" label="备注"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" block disabled={createEquipList.length === 0}>

@@ -237,7 +237,7 @@ export class EquipmentService {
    * 解析截图网格：按图标切片 → 返回每格的缩略图+自动识别的数量/品质
    * 装备名由用户后续手动填写
    */
-  async gridParse(imageUrl: string, layout?: string): Promise<any> {
+  async gridParse(imageUrl: string, layout?: string, anchor?: { x: number; y: number; w: number; h: number }): Promise<any> {
     // 获取图片 Buffer
     let buffer: Buffer;
     if (imageUrl.startsWith('http')) {
@@ -250,6 +250,13 @@ export class EquipmentService {
       const fs = require('fs/promises');
       const absPath = path.join(process.cwd(), imageUrl.replace(/^\//, ''));
       buffer = await fs.readFile(absPath);
+    }
+
+    // V2.10.5: 半自动画框模式 — 有 anchor 时直接用锚点等间距切图
+    if (anchor && anchor.w > 10 && anchor.h > 10) {
+      this.logger.log(`[V2.10.5 gridParse] 半自动画框: anchor=(${anchor.x},${anchor.y},${anchor.w}x${anchor.h}), layout=${layout}`);
+      const cropRegion = { topPercent: 0, bottomPercent: 0 }; // 不裁剪，直接用 anchor
+      return this.imageMatchService.gridParseWithAnchor(buffer, layout || '5x7', anchor);
     }
 
     // V2.10: OCR 锚点定位装备区

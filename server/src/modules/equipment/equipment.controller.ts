@@ -42,8 +42,8 @@ export class EquipmentController {
   @Post('grid-parse')
   @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
   @OperationLog({ module: 'equipment', action: 'grid_parse' })
-  gridParse(@Param('guildId', ParseIntPipe) _guildId: number, @Body() body: { imageUrl: string; layout?: string }) {
-    return this.equipmentService.gridParse(body.imageUrl, body.layout);
+  gridParse(@Param('guildId', ParseIntPipe) _guildId: number, @Body() body: { imageUrl: string; layout?: string; anchor?: { x: number; y: number; w: number; h: number } }) {
+    return this.equipmentService.gridParse(body.imageUrl, body.layout, body.anchor);
   }
 
   @Post('grid-save')

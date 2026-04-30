@@ -1109,6 +1109,110 @@ export class ImageMatchService {
    * @returns 每格的解析结果（按行列顺序）
    */
   /**
+   * V2.10.5: 半自动画框切图 — 用户标定第一个格子坐标，按等间距切出所有格子
+   */
+  async gridParseWithAnchor(imageBuffer: Buffer, layout: string, anchor: { x: number; y: number; w: number; h: number }): Promise<{
+    gridSize: { cols: number; rows: number };
+    cells: Array<{ row: number; col: number; thumbnail: string; quantity: number; detectedLevel: number | null; detectedQuality: number | null; matchedName?: string; matchedCatalogId?: number; matchedConfidence?: number }>;
+  }> {
+    let sharp: any;
+    try { sharp = require('sharp'); }
+    catch { throw new Error('图片处理模块未安装'); }
+
+    const metadata = await sharp(imageBuffer).metadata();
+    const { width, height } = metadata;
+    if (!width || !height) throw new Error('无法读取图片尺寸');
+
+    // 解析 layout
+    let cols = 5, rows = 7;
+    const parts = layout.split('x').map(Number);
+    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) { cols = parts[0]; rows = parts[1]; }
+
+    // anchor 是用户在前端预览图上画的第一格坐标
+    // 需要根据预览图和实际图的比例换算（前端 img maxWidth=100%, maxHeight=500px）
+    // 简化处理：假设前端显示的图片宽度 = 实际宽度（因为弹窗宽度足够）
+    const cellW = anchor.w;
+    const cellH = anchor.h;
+    const startX = anchor.x;
+    const startY = anchor.y;
+
+    this.logger.log(`[V2.10.5 anchor] 第一格: (${startX},${startY}) ${cellW}x${cellH}, layout=${cols}x${rows}`);
+
+    const cells: any[] = [];
+    const CONCURRENCY = 3;
+    const tasks: Array<() => Promise<void>> = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cellIndex = r * cols + c;
+        const left = Math.round(startX + c * cellW);
+        const top = Math.round(startY + r * cellH);
+        if (left + cellW > width || top + cellH > height) continue;
+
+        tasks.push(async () => {
+          try {
+            const subBuf = await sharp(imageBuffer)
+              .extract({ left, top, width: Math.round(cellW), height: Math.round(cellH) })
+              .toBuffer();
+
+            // 过滤空白格子
+            const stats = await sharp(subBuf).stats();
+            const avg = stats.channels[0]?.mean || 0;
+            const std = stats.channels[0]?.stdev || 0;
+            if (avg < 15 || avg > 240) return;
+            if (avg > 140 && avg < 220 && std < 25) return;
+
+            const thumbnail = await sharp(subBuf).resize(120, 120, { fit: 'cover' }).png().toBuffer();
+            const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
+            const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
+
+            cells.push({
+              row: r, col: c,
+              thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
+              quantity, detectedLevel: null, detectedQuality,
+            });
+          } catch { /* skip */ }
+        });
+      }
+    }
+
+    for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+      await Promise.all(tasks.slice(i, i + CONCURRENCY).map(t => t()));
+    }
+
+    cells.sort((a, b) => a.row - b.row || a.col - b.col);
+    this.logger.log(`[V2.10.5 anchor] 切图完成: ${cells.length}/${cols * rows} 格有效`);
+
+    // pHash 匹配预填
+    try {
+      const catalogs = await this.catalogRepo.find({ where: {}, select: ['id', 'name', 'imagePhash', 'category', 'gearScore'] });
+      const withHash = catalogs.filter(c => c.imagePhash);
+      if (withHash.length > 0) {
+        for (const cell of cells) {
+          try {
+            const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
+            const thumbBuf = Buffer.from(thumbBase64, 'base64');
+            const cellHash = await this.computePhash(sharp, thumbBuf);
+            if (!cellHash) continue;
+            let bestDist = 999, bestCat: any = null;
+            for (const cat of withHash) {
+              const dist = this.hammingDistance(cellHash, cat.imagePhash);
+              if (dist < bestDist) { bestDist = dist; bestCat = cat; }
+            }
+            if (bestCat && bestDist <= ImageMatchService.LOOSE_HAMMING_THRESHOLD) {
+              cell.matchedName = bestCat.name;
+              cell.matchedCatalogId = bestCat.id;
+              cell.matchedConfidence = parseFloat((1 - bestDist / 64).toFixed(2));
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch { /* skip */ }
+
+    return { gridSize: { cols, rows }, cells };
+  }
+
+  /**
    * V2.9.9.1: 按指定 layout 固定网格切图（替代自动探测）
    * layout: '5x7'(公会岛/军箱/背包中) | '4x5'(背包大) | '6x8'(背包小) | '5x2'(蛋箱)
    */

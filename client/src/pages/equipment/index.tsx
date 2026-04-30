@@ -87,6 +87,11 @@ export default function EquipmentPage() {
   const [gridLoading, setGridLoading] = useState(false);
   const [gridImageUrl, setGridImageUrl] = useState('');
   const [gridLayout, setGridLayout] = useState<string>('5x7');
+  // V2.10.5: 半自动画框
+  const [gridPreviewSrc, setGridPreviewSrc] = useState(''); // 上传后的本地预览 URL
+  const [gridAnchor, setGridAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [gridDrawing, setGridDrawing] = useState(false);
+  const [gridDrawStart, setGridDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [gridCells, setGridCells] = useState<Array<{
     row: number; col: number; thumbnail: string; quantity: number;
     detectedLevel: number | null; detectedQuality: number | null;
@@ -325,17 +330,32 @@ export default function EquipmentPage() {
     } catch {} finally { setOcrLoading(false); }
   };
 
-  // V2.10: 多图批量上传，逐张识别后合并 cells
+  // V2.10.5: 上传后进入画框预览模式
   const handleGridUpload = async (file: File) => {
-    setGridLoading(true);
+    // 先生成本地预览
+    const localUrl = URL.createObjectURL(file);
+    setGridPreviewSrc(localUrl);
+    setGridAnchor(null);
+    // 同时上传到服务器获取 URL
     try {
       const uploadRes: any = await uploadFile(file);
       const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
       setGridImageUrl(imageUrl);
-      const parseRes: any = await gridParseInventory(guildId, imageUrl, gridLayout);
-      const newCells = (parseRes?.cells || []).map((c: any, i: number) => ({
+    } catch (err: any) {
+      message.error('图片上传失败');
+      setGridPreviewSrc('');
+    }
+    return false;
+  };
+
+  // V2.10.5: 用户画框完成后执行切图
+  const handleGridCutWithAnchor = async () => {
+    if (!gridImageUrl || !gridAnchor) { message.warning('请先画出第一个装备格子'); return; }
+    setGridLoading(true);
+    try {
+      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, gridAnchor);
+      const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
-        // 多图时 row 偏移避免 key 冲突
         row: c.row + gridCells.length,
         col: c.col,
         aliasName: '',
@@ -343,12 +363,10 @@ export default function EquipmentPage() {
         quality: c.detectedQuality ?? 0,
         location: '公会仓库',
         aliasOptions: [],
-        // pHash 匹配结果预填（#3）
         matchedName: c.matchedName || '',
         matchedCatalogId: c.matchedCatalogId || null,
         matchedConfidence: c.matchedConfidence || 0,
       }));
-      // 自动预填：如果 pHash 匹配到了装备名，填入 aliasName
       for (const cell of newCells) {
         if (cell.matchedName && cell.matchedConfidence >= 0.55) {
           cell.aliasName = cell.matchedName;
@@ -356,8 +374,9 @@ export default function EquipmentPage() {
       }
       const merged = [...gridCells, ...newCells];
       setGridCells(merged);
+      setGridPreviewSrc(''); // 关闭预览
       if (newCells.length === 0) {
-        message.warning('未检测到装备图标，请确认截图内容');
+        message.warning('未检测到装备图标');
       } else {
         message.success(`识别完成，本张 ${newCells.length} 格，累计 ${merged.length} 格`);
       }
@@ -366,7 +385,6 @@ export default function EquipmentPage() {
     } finally {
       setGridLoading(false);
     }
-    return false;
   };
 
   const handleGridCellChange = (index: number, field: string, value: any) => {
@@ -720,6 +738,56 @@ export default function EquipmentPage() {
                 <Radio value="5x2">蛋箱（5×2）</Radio>
               </Radio.Group>
             </div>
+            {/* 画框预览模式 */}
+            {gridPreviewSrc ? (
+              <div>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                  在下方图片上拖拽画出<b>第一个装备格子</b>的范围（左上角第一格），系统将按等间距自动切图。
+                </Text>
+                <div
+                  style={{ position: 'relative', display: 'inline-block', cursor: 'crosshair', border: '1px solid #d9d9d9', borderRadius: 4 }}
+                  onMouseDown={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setGridDrawStart({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                    setGridDrawing(true);
+                  }}
+                  onMouseMove={(e) => {
+                    if (!gridDrawing || !gridDrawStart) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = gridDrawStart.x;
+                    const y = gridDrawStart.y;
+                    const w = Math.abs(e.clientX - rect.left - x);
+                    const h = Math.abs(e.clientY - rect.top - y);
+                    setGridAnchor({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+                  }}
+                  onMouseUp={() => { setGridDrawing(false); }}
+                >
+                  <img src={gridPreviewSrc} style={{ maxWidth: '100%', maxHeight: 500, display: 'block' }} alt="preview" />
+                  {gridAnchor && gridAnchor.w > 5 && gridAnchor.h > 5 && (
+                    <div style={{
+                      position: 'absolute',
+                      left: gridAnchor.x, top: gridAnchor.y,
+                      width: gridAnchor.w, height: gridAnchor.h,
+                      border: '2px solid #1677ff', background: 'rgba(22,119,255,0.1)',
+                      pointerEvents: 'none',
+                    }} />
+                  )}
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  {gridAnchor && gridAnchor.w > 10 && gridAnchor.h > 10 ? (
+                    <Space>
+                      <Text>已选区域：{gridAnchor.w}×{gridAnchor.h}px（起点 {gridAnchor.x},{gridAnchor.y}）</Text>
+                      <Button type="primary" loading={gridLoading} onClick={handleGridCutWithAnchor}>
+                        开始切图识别
+                      </Button>
+                      <Button onClick={() => setGridAnchor(null)}>重画</Button>
+                    </Space>
+                  ) : (
+                    <Text type="secondary">请拖拽画出第一个格子的范围</Text>
+                  )}
+                </div>
+              </div>
+            ) : (
             <Upload.Dragger
             accept="image/*"
             multiple
@@ -739,6 +807,7 @@ export default function EquipmentPage() {
               </>
             )}
           </Upload.Dragger>
+            )}
           </div>
         ) : (
           <>
