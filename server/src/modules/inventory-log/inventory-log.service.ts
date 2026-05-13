@@ -17,7 +17,10 @@ export interface CreateInventoryLogDto {
   inventoryId?: number;
   catalogId?: number;
   equipmentName?: string;
+  albionId?: string;
+  itemQuality?: number;
   action: string;
+
   delta: number;
   beforeQuantity: number;
   afterQuantity: number;
@@ -44,7 +47,12 @@ export class InventoryLogService {
     return saved;
   }
 
-  async findByInventoryId(guildId: number, inventoryId: number, page = 1, pageSize = 20) {
+  async findByInventoryId(
+    guildId: number,
+    inventoryId: number,
+    page = 1,
+    pageSize = 20,
+  ) {
     const [list, total] = await this.logRepo.findAndCount({
       where: { guildId, inventoryId },
       order: { createdAt: 'DESC' },
@@ -54,7 +62,12 @@ export class InventoryLogService {
     return { list, total, page, pageSize };
   }
 
-  async findByCatalogId(guildId: number, catalogId: number, page = 1, pageSize = 20) {
+  async findByCatalogId(
+    guildId: number,
+    catalogId: number,
+    page = 1,
+    pageSize = 20,
+  ) {
     const [list, total] = await this.logRepo.findAndCount({
       where: { guildId, catalogId },
       order: { createdAt: 'DESC' },

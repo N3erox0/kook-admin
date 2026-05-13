@@ -379,7 +379,9 @@ export default function EquipmentPage() {
         matchedName: c.matchedName || '',
         matchedCatalogId: c.matchedCatalogId || null,
         matchedConfidence: c.matchedConfidence || 0,
+        matchSource: c.matchSource || '',
       }));
+
       for (const cell of newCells) {
         if (cell.matchedName && cell.matchedConfidence >= 0.55) {
           cell.aliasName = cell.matchedName;
@@ -855,8 +857,9 @@ export default function EquipmentPage() {
                 <p><AppstoreOutlined style={{ fontSize: 48, color: '#1677ff' }} /></p>
                 <p style={{ fontSize: 16, fontWeight: 500 }}>点击或拖拽上传装备截图</p>
                 <p style={{ fontSize: 12, color: '#999' }}>
-                  系统将自动按网格切图并识别数量+品质；装备名由您手动填写（支持别名输入+自动补全）
+                  上传后请按提示画出第1行第1格、第1行第2格、第2行第1格，让装备格子与标线框对齐；系统按“热门库→现有pHash→官网图片库”预填装备。
                 </p>
+
               </>
             )}
           </Upload.Dragger>
@@ -914,7 +917,8 @@ export default function EquipmentPage() {
                           onChange={(v) => handleGridCellChange(idx, 'aliasName', v)}
                           allowClear
                         />
-                        {conf > 0 && <span style={{ fontSize: 11, color: conf >= 0.75 ? '#52c41a' : conf >= 0.55 ? '#faad14' : '#ff4d4f' }}>{(conf * 100).toFixed(0)}%</span>}
+                        {conf > 0 && <span style={{ fontSize: 11, color: conf >= 0.75 ? '#52c41a' : conf >= 0.55 ? '#faad14' : '#ff4d4f' }}>{(conf * 100).toFixed(0)}% {row.matchSource ? `(${row.matchSource})` : ''}</span>}
+
                       </div>
                     );
                   },

@@ -6,14 +6,24 @@ import { ImageMatchService } from './image-match.service';
 import { OcrRecognitionBatch } from './entities/ocr-recognition-batch.entity';
 import { OcrRecognitionItem } from './entities/ocr-recognition-item.entity';
 import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
+import { EquipmentImage } from '../equipment-catalog/entities/equipment-image.entity';
 import { EquipmentCatalogModule } from '../equipment-catalog/catalog.module';
+
 import { EquipmentModule } from '../equipment/equipment.module';
 import { GuildMember } from '../member/entities/guild-member.entity';
 import { User } from '../user/entities/user.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([OcrRecognitionBatch, OcrRecognitionItem, EquipmentCatalog, GuildMember, User]),
+    TypeOrmModule.forFeature([
+      OcrRecognitionBatch,
+      OcrRecognitionItem,
+      EquipmentCatalog,
+      EquipmentImage,
+      GuildMember,
+      User,
+    ]),
+
     forwardRef(() => EquipmentCatalogModule),
     forwardRef(() => EquipmentModule),
   ],

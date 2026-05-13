@@ -8,14 +8,22 @@ import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalo
 import { KookModule } from '../kook/kook.module';
 import { AlertModule } from '../alert/alert.module';
 import { ResupplyModule } from '../resupply/resupply.module';
+import { MemberModule } from '../member/member.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ScheduledTask, Guild, InventoryLog, EquipmentCatalog]),
+    TypeOrmModule.forFeature([
+      ScheduledTask,
+      Guild,
+      InventoryLog,
+      EquipmentCatalog,
+    ]),
     KookModule,
     AlertModule,
     ResupplyModule,
+    MemberModule,
   ],
+
   providers: [SchedulerService],
   exports: [SchedulerService],
 })

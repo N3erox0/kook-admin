@@ -8,7 +8,9 @@ import { KookNotifyService } from '../kook/kook-notify.service';
 import { KookService } from '../kook/kook.service';
 import { AlertService } from '../alert/alert.service';
 import { ResupplyService } from '../resupply/resupply.service';
+import { MemberService } from '../member/member.service';
 import { ScheduledTask } from './entities/scheduled-task.entity';
+
 import { InventoryLog } from '../inventory-log/entities/inventory-log.entity';
 import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
 import { GuildStatus } from '../../common/constants/enums';
@@ -19,17 +21,35 @@ export class SchedulerService {
 
   constructor(
     @InjectRepository(Guild) private guildRepo: Repository<Guild>,
-    @InjectRepository(ScheduledTask) private taskRepo: Repository<ScheduledTask>,
-    @InjectRepository(InventoryLog) private inventoryLogRepo: Repository<InventoryLog>,
-    @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
+    @InjectRepository(ScheduledTask)
+    private taskRepo: Repository<ScheduledTask>,
+    @InjectRepository(InventoryLog)
+    private inventoryLogRepo: Repository<InventoryLog>,
+    @InjectRepository(EquipmentCatalog)
+    private catalogRepo: Repository<EquipmentCatalog>,
     private kookSyncService: KookSyncService,
     private kookNotifyService: KookNotifyService,
     private kookService: KookService,
     private alertService: AlertService,
     private resupplyService: ResupplyService,
+    private memberService: MemberService,
   ) {}
 
+  /** 每天 07:00 — Albion 官网公会成员同步 */
+  @Cron('0 0 7 * * *')
+  async syncAllAlbionGuildMembers() {
+    this.logger.log('定时任务：开始同步所有公会 Albion 成员');
+    const startTime = Date.now();
+    const result = await this.memberService.syncAllAlbionGuildMembers();
+    await this.recordTask(
+      'albion_member_sync',
+      Date.now() - startTime,
+      `已同步 ${result.synced} 个公会`,
+    );
+  }
+
   /** 每天 0:15 — KOOK 成员同步 */
+
   @Cron('0 15 0 * * *')
   async syncAllGuildMembers() {
     this.logger.log('定时任务：开始同步所有公会 KOOK 成员');
@@ -43,14 +63,20 @@ export class SchedulerService {
       await this.kookSyncService.syncGuildMembers(guild);
     }
 
-    await this.recordTask('kook_member_sync', Date.now() - startTime, `已同步 ${guilds.length} 个公会`);
+    await this.recordTask(
+      'kook_member_sync',
+      Date.now() - startTime,
+      `已同步 ${guilds.length} 个公会`,
+    );
   }
 
   /** 每天 05:00 — 补装库存预警 */
   @Cron('0 0 5 * * *')
   async refreshInventoryAlerts() {
     this.logger.log('定时任务：开始刷新所有公会库存预警（05:00）');
-    const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });
+    const guilds = await this.guildRepo.find({
+      where: { status: GuildStatus.ACTIVE },
+    });
     const startTime = Date.now();
     let totalAlerts = 0;
 
@@ -64,7 +90,11 @@ export class SchedulerService {
             threshold: a.thresholdValue,
             message: a.message,
           }));
-          await this.kookNotifyService.pushAlertSummary(summary, guild.kookAdminChannelId, guild.kookAdminRoleId);
+          await this.kookNotifyService.pushAlertSummary(
+            summary,
+            guild.kookAdminChannelId,
+            guild.kookAdminRoleId,
+          );
           totalAlerts += alerts.length;
         }
         // 推送后标记 isCounted
@@ -74,7 +104,11 @@ export class SchedulerService {
       }
     }
 
-    await this.recordTask('inventory_alert', Date.now() - startTime, `已推送 ${totalAlerts} 条库存预警`);
+    await this.recordTask(
+      'inventory_alert',
+      Date.now() - startTime,
+      `已推送 ${totalAlerts} 条库存预警`,
+    );
   }
 
   /** 每天 06:00 — 死亡次数预警（统计补装申请记录） */
@@ -95,7 +129,11 @@ export class SchedulerService {
             threshold: a.thresholdValue,
             message: a.message,
           }));
-          await this.kookNotifyService.pushAlertSummary(summary, guild.kookAdminChannelId, guild.kookAdminRoleId);
+          await this.kookNotifyService.pushAlertSummary(
+            summary,
+            guild.kookAdminChannelId,
+            guild.kookAdminRoleId,
+          );
           totalAlerts += alerts.length;
         }
         // 推送后标记已统计
@@ -105,7 +143,11 @@ export class SchedulerService {
       }
     }
 
-    await this.recordTask('death_count_alert', Date.now() - startTime, `已推送 ${totalAlerts} 条死亡预警`);
+    await this.recordTask(
+      'death_count_alert',
+      Date.now() - startTime,
+      `已推送 ${totalAlerts} 条死亡预警`,
+    );
   }
 
   /** 每天 14:00 — 补装通过回应表情（V2.9.7: 暂停，待重新设计通知规则） */
@@ -170,13 +212,14 @@ export class SchedulerService {
 
     try {
       // 统计每个catalogId的总扣减次数（所有公会合计）
-      const deductCounts: { catalogId: number; cnt: string }[] = await this.inventoryLogRepo
-        .createQueryBuilder('l')
-        .select('l.catalog_id', 'catalogId')
-        .addSelect('COUNT(*)', 'cnt')
-        .where('l.action = :action', { action: 'resupply_deduct' })
-        .groupBy('l.catalog_id')
-        .getRawMany();
+      const deductCounts: { catalogId: number; cnt: string }[] =
+        await this.inventoryLogRepo
+          .createQueryBuilder('l')
+          .select('l.catalog_id', 'catalogId')
+          .addSelect('COUNT(*)', 'cnt')
+          .where('l.action = :action', { action: 'resupply_deduct' })
+          .groupBy('l.catalog_id')
+          .getRawMany();
 
       let updated = 0;
       for (const row of deductCounts) {
@@ -201,21 +244,37 @@ export class SchedulerService {
         .set({ popularity: 1 })
         .where('popularity > 1')
         .andWhere('id NOT IN (:...ids)', {
-          ids: deductCounts.filter(r => r.catalogId).map(r => r.catalogId).concat([0]),
+          ids: deductCounts
+            .filter((r) => r.catalogId)
+            .map((r) => r.catalogId)
+            .concat([0]),
         })
         .execute();
 
       this.logger.log(`装备热度刷新完成: ${updated} 件装备热度已更新`);
-      await this.recordTask('equipment_popularity', Date.now() - startTime, `已更新 ${updated} 件装备热度`);
+      await this.recordTask(
+        'equipment_popularity',
+        Date.now() - startTime,
+        `已更新 ${updated} 件装备热度`,
+      );
     } catch (err) {
       this.logger.error(`装备热度刷新失败: ${err}`);
-      await this.recordTask('equipment_popularity', Date.now() - startTime, `失败: ${err}`);
+      await this.recordTask(
+        'equipment_popularity',
+        Date.now() - startTime,
+        `失败: ${err}`,
+      );
     }
   }
 
   private async recordTask(name: string, durationMs: number, result: string) {
     let task = await this.taskRepo.findOne({ where: { taskName: name } });
-    if (!task) task = this.taskRepo.create({ taskName: name, cronExpression: '', status: 1 });
+    if (!task)
+      task = this.taskRepo.create({
+        taskName: name,
+        cronExpression: '',
+        status: 1,
+      });
     task.lastRunAt = new Date();
     task.lastRunResult = result;
     task.durationMs = durationMs;

@@ -1,10 +1,31 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseGuards, UseInterceptors, UploadedFile, BadRequestException, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  ParseIntPipe,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Res,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
 import { ImageMatchService } from '../ocr/image-match.service';
-import { CreateCatalogDto, UpdateCatalogDto, QueryCatalogDto, BatchCreateCatalogDto, BatchMatchCatalogDto } from './dto/catalog.dto';
+import {
+  CreateCatalogDto,
+  UpdateCatalogDto,
+  QueryCatalogDto,
+  BatchCreateCatalogDto,
+  BatchMatchCatalogDto,
+} from './dto/catalog.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -38,7 +59,10 @@ export class CatalogController {
     ];
     const csv = BOM + [header, ...examples].join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="catalog-template.csv"');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="catalog-template.csv"',
+    );
     res.send(csv);
   }
 
@@ -78,7 +102,10 @@ export class CatalogController {
   @Post('import-albion')
   @OperationLog({ module: 'catalog', action: 'import_albion' })
   @ApiOperation({ summary: '从 Albion Online API 导入装备参考库' })
-  async importAlbion(@Body() body: { minTier?: number }, @CurrentUser() user: any) {
+  async importAlbion(
+    @Body() body: { minTier?: number },
+    @CurrentUser() user: any,
+  ) {
     if (!user?.globalRole || user.globalRole !== 'ssvip') {
       throw new BadRequestException('仅 SSVIP 可执行此操作');
     }
@@ -88,7 +115,10 @@ export class CatalogController {
   @Post('download-images')
   @OperationLog({ module: 'catalog', action: 'download_images' })
   @ApiOperation({ summary: '批量下载 Albion 装备图片到服务器本地' })
-  async downloadImages(@Body() body: { concurrency?: number }, @CurrentUser() user: any) {
+  async downloadImages(
+    @Body() body: { concurrency?: number },
+    @CurrentUser() user: any,
+  ) {
     if (!user?.globalRole || user.globalRole !== 'ssvip') {
       throw new BadRequestException('仅 SSVIP 可执行此操作');
     }
@@ -104,7 +134,10 @@ export class CatalogController {
   @Post('batch-update-aliases')
   @OperationLog({ module: 'catalog', action: 'batch_update_aliases' })
   @ApiOperation({ summary: '批量更新装备别称（按ID）' })
-  async batchUpdateAliases(@Body() body: { items: { id: number; aliases: string }[] }, @CurrentUser() user: any) {
+  async batchUpdateAliases(
+    @Body() body: { items: { id: number; aliases: string }[] },
+    @CurrentUser() user: any,
+  ) {
     if (!user?.globalRole || user.globalRole !== 'ssvip') {
       throw new BadRequestException('仅 SSVIP 可执行此操作');
     }
@@ -137,7 +170,14 @@ export class CatalogController {
   @ApiOperation({ summary: '添加装备图片' })
   addImage(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { imageUrl: string; imageType?: string; fileName?: string; fileSize?: number; isPrimary?: boolean },
+    @Body()
+    body: {
+      imageUrl: string;
+      imageType?: string;
+      fileName?: string;
+      fileSize?: number;
+      isPrimary?: boolean;
+    },
   ) {
     return this.catalogService.addImage(id, body);
   }
@@ -157,7 +197,37 @@ export class CatalogController {
     return this.catalogService.setPrimaryImage(catalogId, imageId);
   }
 
+  @Get(':id/official-images')
+  @ApiOperation({ summary: '查询官网图片库中该装备的候选图' })
+  async listOfficialImages(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+  ) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new BadRequestException('仅 SSVIP 可执行此操作');
+    }
+    return this.catalogService.listOfficialImageCandidates(id);
+  }
+
+  @Post(':id/hot-images/select')
+  @OperationLog({ module: 'catalog', action: 'select_hot_images' })
+  @ApiOperation({ summary: '从官网图片库勾选热门装备图片' })
+  async selectOfficialHotImages(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { fileNames: string[] },
+    @CurrentUser() user: any,
+  ) {
+    if (!user?.globalRole || user.globalRole !== 'ssvip') {
+      throw new BadRequestException('仅 SSVIP 可执行此操作');
+    }
+    return this.catalogService.markOfficialImagesAsHot(
+      id,
+      body.fileNames || [],
+    );
+  }
+
   /** V2.9.7: 批量重算所有装备pHash（SSVIP限定） */
+
   @Post('generate-phash')
   @ApiOperation({ summary: '批量生成/重算图片指纹(pHash)' })
   async generatePhash(@CurrentUser() user: any) {

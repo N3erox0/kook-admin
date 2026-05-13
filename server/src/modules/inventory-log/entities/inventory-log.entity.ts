@@ -1,4 +1,12 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  Index,
+} from 'typeorm';
 import { Guild } from '../../guild/entities/guild.entity';
 
 @Entity('inventory_logs')
@@ -18,26 +26,71 @@ export class InventoryLog {
   @Column({ name: 'catalog_id', nullable: true, comment: '关联装备参考库ID' })
   catalogId: number;
 
-  @Column({ type: 'varchar', length: 100, nullable: true, name: 'equipment_name', comment: '装备名称（冗余，方便查询）' })
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'equipment_name',
+    comment: '装备名称（冗余，方便查询）',
+  })
   equipmentName: string;
 
+  @Index('idx_invlog_albion_id')
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'albion_id',
+    comment: 'Albion装备唯一ID快照',
+  })
+  albionId: string;
+
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'item_quality',
+    comment: '装备边框品质快照，仅展示保留',
+  })
+  itemQuality: number;
+
   @Index('idx_invlog_action')
-  @Column({ type: 'varchar', length: 30, comment: '操作类型: manual_add/manual_edit/csv_import/ocr_import/resupply_deduct/delete' })
+  @Column({
+    type: 'varchar',
+    length: 30,
+    comment:
+      '操作类型: manual_add/manual_edit/csv_import/ocr_import/resupply_deduct/delete',
+  })
   action: string;
 
   @Column({ type: 'int', default: 0, comment: '变动量（正=增加，负=减少）' })
   delta: number;
 
-  @Column({ type: 'int', default: 0, name: 'before_quantity', comment: '变动前数量' })
+  @Column({
+    type: 'int',
+    default: 0,
+    name: 'before_quantity',
+    comment: '变动前数量',
+  })
   beforeQuantity: number;
 
-  @Column({ type: 'int', default: 0, name: 'after_quantity', comment: '变动后数量' })
+  @Column({
+    type: 'int',
+    default: 0,
+    name: 'after_quantity',
+    comment: '变动后数量',
+  })
   afterQuantity: number;
 
   @Column({ name: 'operator_id', nullable: true, comment: '操作人ID' })
   operatorId: number;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'operator_name', comment: '操作人名称' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'operator_name',
+    comment: '操作人名称',
+  })
   operatorName: string;
 
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '备注' })

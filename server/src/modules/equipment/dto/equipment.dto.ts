@@ -1,4 +1,11 @@
-import { IsString, IsOptional, IsNumber, IsInt, IsArray, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsInt,
+  IsArray,
+  Min,
+} from 'class-validator';
 
 export class QueryInventoryDto {
   @IsOptional() @IsNumber() page?: number;
@@ -12,7 +19,10 @@ export class QueryInventoryDto {
 
 export class UpsertInventoryDto {
   @IsInt() catalogId: number;
+  @IsOptional() @IsString() albionId?: string;
+  @IsOptional() @IsInt() itemQuality?: number;
   @IsInt() @Min(0) quantity: number;
+
   @IsOptional() @IsString() location?: string;
   @IsOptional() @IsString() remark?: string;
 }

@@ -1,23 +1,36 @@
-import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EquipmentCatalog } from './entities/equipment-catalog.entity';
 import { EquipmentImage } from './entities/equipment-image.entity';
-import { CreateCatalogDto, UpdateCatalogDto, QueryCatalogDto } from './dto/catalog.dto';
+import {
+  CreateCatalogDto,
+  UpdateCatalogDto,
+  QueryCatalogDto,
+} from './dto/catalog.dto';
 import { join } from 'path';
 import * as fs from 'fs/promises';
 
 /** Levenshtein 编辑距离 */
 function levenshteinDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  const m = a.length,
+    n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array(n + 1).fill(0),
+  );
   for (let i = 0; i <= m; i++) dp[i][0] = i;
   for (let j = 0; j <= n; j++) dp[0][j] = j;
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
     }
   }
   return dp[m][n];
@@ -35,8 +48,10 @@ export class CatalogService {
   private readonly logger = new Logger(CatalogService.name);
 
   constructor(
-    @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
-    @InjectRepository(EquipmentImage) private imageRepo: Repository<EquipmentImage>,
+    @InjectRepository(EquipmentCatalog)
+    private catalogRepo: Repository<EquipmentCatalog>,
+    @InjectRepository(EquipmentImage)
+    private imageRepo: Repository<EquipmentImage>,
   ) {}
 
   async findAll(query: QueryCatalogDto) {
@@ -44,13 +59,21 @@ export class CatalogService {
     const pageSize = query.pageSize || 50;
     const qb = this.catalogRepo.createQueryBuilder('c');
 
-    if (query.keyword) qb.andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${query.keyword}%` });
+    if (query.keyword)
+      qb.andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', {
+        kw: `%${query.keyword}%`,
+      });
     if (query.level) qb.andWhere('c.level = :level', { level: query.level });
-    if (query.quality !== undefined) qb.andWhere('c.quality = :quality', { quality: query.quality });
-    if (query.category) qb.andWhere('c.category = :category', { category: query.category });
-    if (query.gearScore) qb.andWhere('c.gearScore = :gs', { gs: query.gearScore });
+    if (query.quality !== undefined)
+      qb.andWhere('c.quality = :quality', { quality: query.quality });
+    if (query.category)
+      qb.andWhere('c.category = :category', { category: query.category });
+    if (query.gearScore)
+      qb.andWhere('c.gearScore = :gs', { gs: query.gearScore });
 
-    qb.orderBy('c.category', 'ASC').addOrderBy('c.name', 'ASC').addOrderBy('c.level', 'ASC');
+    qb.orderBy('c.category', 'ASC')
+      .addOrderBy('c.name', 'ASC')
+      .addOrderBy('c.level', 'ASC');
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [list, total] = await qb.getManyAndCount();
@@ -61,20 +84,36 @@ export class CatalogService {
     const item = await this.catalogRepo.findOne({ where: { id } });
     if (!item) throw new NotFoundException('装备参考不存在');
     // 附带图片
-    const images = await this.imageRepo.find({ where: { catalogId: id }, order: { sortOrder: 'ASC' } });
+    const images = await this.imageRepo.find({
+      where: { catalogId: id },
+      order: { sortOrder: 'ASC' },
+    });
     return { ...item, images };
+  }
+
+  async findByAlbionId(albionId: string): Promise<EquipmentCatalog | null> {
+    if (!albionId) return null;
+    return this.catalogRepo.findOne({ where: { albionId } });
   }
 
   async create(dto: CreateCatalogDto) {
     // 检查唯一性
     const exists = await this.catalogRepo.findOne({
-      where: { name: dto.name, level: dto.level, quality: dto.quality, category: dto.category },
+      where: {
+        name: dto.name,
+        level: dto.level,
+        quality: dto.quality,
+        category: dto.category,
+      },
     });
-    if (exists) throw new ConflictException(`装备已存在: ${dto.name} Lv${dto.level} Q${dto.quality} ${dto.category}`);
+    if (exists)
+      throw new ConflictException(
+        `装备已存在: ${dto.name} Lv${dto.level} Q${dto.quality} ${dto.category}`,
+      );
 
     const item = this.catalogRepo.create({
       ...dto,
-      gearScore: dto.gearScore ?? (dto.level + dto.quality),
+      gearScore: dto.gearScore ?? dto.level + dto.quality,
     });
     return this.catalogRepo.save(item);
   }
@@ -84,7 +123,7 @@ export class CatalogService {
     if (!item) throw new NotFoundException('装备参考不存在');
     Object.assign(item, dto);
     if (dto.level !== undefined || dto.quality !== undefined) {
-      item.gearScore = dto.gearScore ?? (item.level + item.quality);
+      item.gearScore = dto.gearScore ?? item.level + item.quality;
     }
     return this.catalogRepo.save(item);
   }
@@ -96,37 +135,68 @@ export class CatalogService {
 
   /** CSV 批量导入 — 返回成功/跳过/失败详情 */
   async csvImport(rows: CreateCatalogDto[]): Promise<{
-    success: number; skipped: number; failed: number;
-    details: { index: number; name: string; status: string; message?: string }[];
+    success: number;
+    skipped: number;
+    failed: number;
+    details: {
+      index: number;
+      name: string;
+      status: string;
+      message?: string;
+    }[];
   }> {
-    let success = 0, skipped = 0, failed = 0;
-    const details: { index: number; name: string; status: string; message?: string }[] = [];
+    let success = 0,
+      skipped = 0,
+      failed = 0;
+    const details: {
+      index: number;
+      name: string;
+      status: string;
+      message?: string;
+    }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const dto = rows[i];
       try {
         const exists = await this.catalogRepo.findOne({
-          where: { name: dto.name, level: dto.level, quality: dto.quality, category: dto.category },
+          where: {
+            name: dto.name,
+            level: dto.level,
+            quality: dto.quality,
+            category: dto.category,
+          },
         });
         if (exists) {
           skipped++;
-          details.push({ index: i, name: dto.name, status: 'skipped', message: '已存在' });
+          details.push({
+            index: i,
+            name: dto.name,
+            status: 'skipped',
+            message: '已存在',
+          });
           continue;
         }
         const item = this.catalogRepo.create({
           ...dto,
-          gearScore: dto.gearScore ?? (dto.level + dto.quality),
+          gearScore: dto.gearScore ?? dto.level + dto.quality,
         });
         await this.catalogRepo.save(item);
         success++;
         details.push({ index: i, name: dto.name, status: 'success' });
       } catch (err: any) {
         failed++;
-        details.push({ index: i, name: dto.name, status: 'failed', message: err.message });
+        details.push({
+          index: i,
+          name: dto.name,
+          status: 'failed',
+          message: err.message,
+        });
       }
     }
 
-    this.logger.log(`CSV导入完成: 成功${success}, 跳过${skipped}, 失败${failed}`);
+    this.logger.log(
+      `CSV导入完成: 成功${success}, 跳过${skipped}, 失败${failed}`,
+    );
     return { success, skipped, failed, details };
   }
 
@@ -134,17 +204,29 @@ export class CatalogService {
     const entities = items.map((dto) =>
       this.catalogRepo.create({
         ...dto,
-        gearScore: dto.gearScore ?? (dto.level + dto.quality),
+        gearScore: dto.gearScore ?? dto.level + dto.quality,
       }),
     );
     return this.catalogRepo.save(entities);
   }
 
   /** 中文等级前缀（Albion导入的装备名都带这些） */
-  private static readonly TIER_PREFIXES = ['新手级', '学徒级', '熟练级', '老手级', '专家级', '大师级', '宗师级', '禅师级'];
+  private static readonly TIER_PREFIXES = [
+    '新手级',
+    '学徒级',
+    '熟练级',
+    '老手级',
+    '专家级',
+    '大师级',
+    '宗师级',
+    '禅师级',
+  ];
 
   /** Levenshtein 模糊匹配（支持去等级前缀+别称） */
-  async findByNameFuzzy(name: string, threshold = 0.8): Promise<{ item: EquipmentCatalog; score: number }[]> {
+  async findByNameFuzzy(
+    name: string,
+    threshold = 0.8,
+  ): Promise<{ item: EquipmentCatalog; score: number }[]> {
     const all = await this.catalogRepo.find();
     const results: { item: EquipmentCatalog; score: number }[] = [];
     const lowerName = name.toLowerCase();
@@ -164,13 +246,19 @@ export class CatalogService {
         }
       }
       if (strippedName !== item.name) {
-        const strippedScore = similarityScore(lowerName, strippedName.toLowerCase());
+        const strippedScore = similarityScore(
+          lowerName,
+          strippedName.toLowerCase(),
+        );
         if (strippedScore > score) score = strippedScore;
       }
 
       // 3. 别称匹配
       if (item.aliases) {
-        const aliasList = item.aliases.split(',').map(a => a.trim().toLowerCase()).filter(Boolean);
+        const aliasList = item.aliases
+          .split(',')
+          .map((a) => a.trim().toLowerCase())
+          .filter(Boolean);
         for (const alias of aliasList) {
           const aliasScore = similarityScore(lowerName, alias);
           if (aliasScore > score) score = aliasScore;
@@ -178,7 +266,10 @@ export class CatalogService {
       }
 
       // 4. 输入包含在名字中（子串匹配加分）
-      if (itemName.includes(lowerName) || strippedName.toLowerCase().includes(lowerName)) {
+      if (
+        itemName.includes(lowerName) ||
+        strippedName.toLowerCase().includes(lowerName)
+      ) {
         score = Math.max(score, 0.85);
       }
 
@@ -197,29 +288,49 @@ export class CatalogService {
    */
   async batchMatch(items: { name: string; level: number; quality: number }[]) {
     const all = await this.catalogRepo.find();
-    const results: { index: number; catalogId: number | null; catalogName: string | null; matchType: 'exact' | 'alias' | 'fuzzy' | 'none'; score?: number }[] = [];
+    const results: {
+      index: number;
+      catalogId: number | null;
+      catalogName: string | null;
+      matchType: 'exact' | 'alias' | 'fuzzy' | 'none';
+      score?: number;
+    }[] = [];
 
     for (let i = 0; i < items.length; i++) {
       const req = items[i];
 
       // 1. 精确匹配
       const exact = all.find(
-        (c) => c.name === req.name && c.level === req.level && c.quality === req.quality,
+        (c) =>
+          c.name === req.name &&
+          c.level === req.level &&
+          c.quality === req.quality,
       );
       if (exact) {
-        results.push({ index: i, catalogId: exact.id, catalogName: exact.name, matchType: 'exact' });
+        results.push({
+          index: i,
+          catalogId: exact.id,
+          catalogName: exact.name,
+          matchType: 'exact',
+        });
         continue;
       }
 
       // 2. 模糊匹配（别称/去前缀/子串）— 阈值 0.7
       const fuzzyMatches = await this.findByNameFuzzy(req.name, 0.7);
       // 仅保留 level + quality 完全匹配的
-      const validMatches = fuzzyMatches.filter(m => m.item.level === req.level && m.item.quality === req.quality);
+      const validMatches = fuzzyMatches.filter(
+        (m) => m.item.level === req.level && m.item.quality === req.quality,
+      );
 
       if (validMatches.length > 0) {
         const best = validMatches[0]; // findByNameFuzzy 已按 score 降序
         // 判断是别称匹配还是模糊匹配
-        const isAliasMatch = best.item.aliases && best.item.aliases.split(',').some(a => a.trim().toLowerCase() === req.name.toLowerCase());
+        const isAliasMatch =
+          best.item.aliases &&
+          best.item.aliases
+            .split(',')
+            .some((a) => a.trim().toLowerCase() === req.name.toLowerCase());
         results.push({
           index: i,
           catalogId: best.item.id,
@@ -228,7 +339,12 @@ export class CatalogService {
           score: best.score,
         });
       } else {
-        results.push({ index: i, catalogId: null, catalogName: null, matchType: 'none' });
+        results.push({
+          index: i,
+          catalogId: null,
+          catalogName: null,
+          matchType: 'none',
+        });
       }
     }
 
@@ -237,7 +353,19 @@ export class CatalogService {
 
   // ===== 图片管理 =====
 
-  async addImage(catalogId: number, data: { imageUrl: string; imageType?: string; fileName?: string; fileSize?: number; isPrimary?: boolean }) {
+  async addImage(
+    catalogId: number,
+    data: {
+      imageUrl: string;
+      imageType?: string;
+      fileName?: string;
+      fileSize?: number;
+      isPrimary?: boolean;
+      albionId?: string;
+      itemQuality?: number;
+      source?: string;
+    },
+  ) {
     await this.findById(catalogId);
     const image = this.imageRepo.create({
       catalogId,
@@ -246,12 +374,18 @@ export class CatalogService {
       fileName: data.fileName,
       fileSize: data.fileSize,
       isPrimary: data.isPrimary ? 1 : 0,
+      albionId: data.albionId || null,
+      itemQuality: data.itemQuality ?? 0,
+      source: data.source || 'manual_upload',
     });
     return this.imageRepo.save(image);
   }
 
   async getImages(catalogId: number) {
-    return this.imageRepo.find({ where: { catalogId }, order: { sortOrder: 'ASC', createdAt: 'DESC' } });
+    return this.imageRepo.find({
+      where: { catalogId },
+      order: { sortOrder: 'ASC', createdAt: 'DESC' },
+    });
   }
 
   async removeImage(imageId: number) {
@@ -289,12 +423,20 @@ export class CatalogService {
     if (pMatch) {
       const gs = parseInt(pMatch[1]);
       const name = pMatch[2].trim();
-      const qb = this.catalogRepo.createQueryBuilder('c')
+      const qb = this.catalogRepo
+        .createQueryBuilder('c')
         .where('c.gearScore = :gs', { gs });
       if (name) {
-        qb.andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${name}%` });
+        qb.andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', {
+          kw: `%${name}%`,
+        });
       }
-      return qb.orderBy('c.level', 'ASC').addOrderBy('c.quality', 'ASC').addOrderBy('c.name', 'ASC').take(limit).getMany();
+      return qb
+        .orderBy('c.level', 'ASC')
+        .addOrderBy('c.quality', 'ASC')
+        .addOrderBy('c.name', 'ASC')
+        .take(limit)
+        .getMany();
     }
 
     // 2. 解析数字前缀: "80牧师风帽" → level=8, quality=0, name=牧师风帽
@@ -305,10 +447,13 @@ export class CatalogService {
       const q = parseInt(lvqMatch[2]);
       const name = lvqMatch[3].trim();
       if (lv >= 1 && lv <= 8 && q >= 0 && q <= 4) {
-        return this.catalogRepo.createQueryBuilder('c')
+        return this.catalogRepo
+          .createQueryBuilder('c')
           .where('c.level = :lv', { lv })
           .andWhere('c.quality = :q', { q })
-          .andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${name}%` })
+          .andWhere('(c.name LIKE :kw OR c.aliases LIKE :kw)', {
+            kw: `%${name}%`,
+          })
           .orderBy('c.name', 'ASC')
           .take(limit)
           .getMany();
@@ -316,7 +461,8 @@ export class CatalogService {
     }
 
     // 3. 通用搜索: name + aliases 双字段模糊
-    return this.catalogRepo.createQueryBuilder('c')
+    return this.catalogRepo
+      .createQueryBuilder('c')
       .where('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${raw}%` })
       .orderBy('c.level', 'ASC')
       .addOrderBy('c.quality', 'ASC')
@@ -327,34 +473,111 @@ export class CatalogService {
 
   // ===== Albion Online 装备数据导入 =====
 
-  private static readonly ALBION_ITEMS_URL = 'https://raw.githubusercontent.com/broderickhyman/ao-bin-dumps/master/formatted/items.json';
-  private static readonly ALBION_RENDER_URL = 'https://render.albiononline.com/v1/item/{name}.png?size=217';
+  private static readonly ALBION_ITEMS_URL =
+    'https://raw.githubusercontent.com/broderickhyman/ao-bin-dumps/master/formatted/items.json';
+  private static readonly ALBION_RENDER_URL =
+    'https://render.albiononline.com/v1/item/{name}.png?size=217';
 
   // 排除规则（优先）— 注意：_LEATHER/_CLOTH 改为精确材料匹配，避免误杀皮甲/布甲装备
   private static readonly EXCLUDE_KW = [
-    'GATHER_', '_GATHER', '_ROCK', '_ORE', '_WOOD', '_FIBER', '_HIDE',
-    '_PLANKS', '_METALBAR', '_STONEBLOCK',
-    'LEATHER_ROYAL', 'CLOTH_ROYAL',
-    '_LEVEL', 'ARTEFACT', 'SKILLBOOK', 'JOURNAL', 'FISH_', 'MOUNTUPGRADE',
-    'FURNITURE', 'UNIQUE_FURNITURE', 'DECORATION', 'FARM', 'SEED',
-    '_RUNE', '_SOUL', '_RELIC', '_SHARD', 'TRASH', 'TOKEN', 'EVENT_',
-    'QUESTITEM', 'LOOTCHEST', 'UNIQUE_UNLOCK', 'VANITY', 'BACKPACK_SKIN',
-    'PAPERDOLL', 'EMOTE', 'FLAG', 'BANNER', 'CREST', 'CONTRACT',
+    'GATHER_',
+    '_GATHER',
+    '_ROCK',
+    '_ORE',
+    '_WOOD',
+    '_FIBER',
+    '_HIDE',
+    '_PLANKS',
+    '_METALBAR',
+    '_STONEBLOCK',
+    'LEATHER_ROYAL',
+    'CLOTH_ROYAL',
+    '_LEVEL',
+    'ARTEFACT',
+    'SKILLBOOK',
+    'JOURNAL',
+    'FISH_',
+    'MOUNTUPGRADE',
+    'FURNITURE',
+    'UNIQUE_FURNITURE',
+    'DECORATION',
+    'FARM',
+    'SEED',
+    '_RUNE',
+    '_SOUL',
+    '_RELIC',
+    '_SHARD',
+    'TRASH',
+    'TOKEN',
+    'EVENT_',
+    'QUESTITEM',
+    'LOOTCHEST',
+    'UNIQUE_UNLOCK',
+    'VANITY',
+    'BACKPACK_SKIN',
+    'PAPERDOLL',
+    'EMOTE',
+    'FLAG',
+    'BANNER',
+    'CREST',
+    'CONTRACT',
   ];
 
   // 包含规则
   private static readonly INCLUDE_KW = [
-    '_HEAD_', '_ARMOR_', '_SHOES_', '_CAPE', '_BAG',
-    '_MAIN_', '_OFF_', '_2H_', '_TRINKET_',
-    'PLATE_SET', 'LEATHER_SET', 'CLOTH_SET',
-    'HELLION', 'MERCENARY', 'ROYAL', 'STALKER', 'SOLDIER',
-    'KNIGHT', 'CULTIST', 'DRUID', 'HUNTER', 'MAGE', 'GUARDIAN',
-    'SWORD', 'AXE', 'HAMMER', 'SPEAR', 'DAGGER',
-    'CROSSBOW', 'BOW',
-    'STAFF', 'ARCANE', 'CURSED', 'FIRE', 'FROST', 'HOLY', 'NATURE',
-    'SHIELD', 'TORCH', 'TOTEM', 'ORB', 'BOOK', 'QUARTERSTAFF',
-    '_MOUNT_', 'MOUNT_',
-    'POTION', 'MEAL', 'SANDWICH', 'STEW', 'PIE', 'SOUP', 'SALAD', 'OMELETTE',
+    '_HEAD_',
+    '_ARMOR_',
+    '_SHOES_',
+    '_CAPE',
+    '_BAG',
+    '_MAIN_',
+    '_OFF_',
+    '_2H_',
+    '_TRINKET_',
+    'PLATE_SET',
+    'LEATHER_SET',
+    'CLOTH_SET',
+    'HELLION',
+    'MERCENARY',
+    'ROYAL',
+    'STALKER',
+    'SOLDIER',
+    'KNIGHT',
+    'CULTIST',
+    'DRUID',
+    'HUNTER',
+    'MAGE',
+    'GUARDIAN',
+    'SWORD',
+    'AXE',
+    'HAMMER',
+    'SPEAR',
+    'DAGGER',
+    'CROSSBOW',
+    'BOW',
+    'STAFF',
+    'ARCANE',
+    'CURSED',
+    'FIRE',
+    'FROST',
+    'HOLY',
+    'NATURE',
+    'SHIELD',
+    'TORCH',
+    'TOTEM',
+    'ORB',
+    'BOOK',
+    'QUARTERSTAFF',
+    '_MOUNT_',
+    'MOUNT_',
+    'POTION',
+    'MEAL',
+    'SANDWICH',
+    'STEW',
+    'PIE',
+    'SOUP',
+    'SALAD',
+    'OMELETTE',
   ];
 
   /** 从 Albion uniqueName 解析装备部位 */
@@ -366,9 +589,45 @@ export class CatalogService {
     if (u.includes('_CAPE')) return '披风';
     if (u.includes('_MOUNT') || u.includes('MOUNT_')) return '坐骑';
     if (u.includes('POTION')) return '药水';
-    if (u.includes('MEAL') || u.includes('SANDWICH') || u.includes('STEW') || u.includes('PIE') || u.includes('SOUP') || u.includes('SALAD') || u.includes('OMELETTE')) return '食物';
-    if (u.includes('_OFF_') || u.includes('SHIELD') || u.includes('TORCH') || u.includes('TOTEM') || u.includes('_ORB') || u.includes('BOOK')) return '副手';
-    if (u.includes('_MAIN_') || u.includes('_2H_') || u.includes('SWORD') || u.includes('AXE') || u.includes('HAMMER') || u.includes('SPEAR') || u.includes('DAGGER') || u.includes('CROSSBOW') || u.includes('BOW') || u.includes('STAFF') || u.includes('ARCANE') || u.includes('CURSED') || u.includes('FIRE') || u.includes('FROST') || u.includes('HOLY') || u.includes('NATURE') || u.includes('QUARTERSTAFF')) return '武器';
+    if (
+      u.includes('MEAL') ||
+      u.includes('SANDWICH') ||
+      u.includes('STEW') ||
+      u.includes('PIE') ||
+      u.includes('SOUP') ||
+      u.includes('SALAD') ||
+      u.includes('OMELETTE')
+    )
+      return '食物';
+    if (
+      u.includes('_OFF_') ||
+      u.includes('SHIELD') ||
+      u.includes('TORCH') ||
+      u.includes('TOTEM') ||
+      u.includes('_ORB') ||
+      u.includes('BOOK')
+    )
+      return '副手';
+    if (
+      u.includes('_MAIN_') ||
+      u.includes('_2H_') ||
+      u.includes('SWORD') ||
+      u.includes('AXE') ||
+      u.includes('HAMMER') ||
+      u.includes('SPEAR') ||
+      u.includes('DAGGER') ||
+      u.includes('CROSSBOW') ||
+      u.includes('BOW') ||
+      u.includes('STAFF') ||
+      u.includes('ARCANE') ||
+      u.includes('CURSED') ||
+      u.includes('FIRE') ||
+      u.includes('FROST') ||
+      u.includes('HOLY') ||
+      u.includes('NATURE') ||
+      u.includes('QUARTERSTAFF')
+    )
+      return '武器';
     if (u.includes('_BAG') || u.includes('_TRINKET_')) return '其他';
     return '其他';
   }
@@ -376,15 +635,16 @@ export class CatalogService {
   /** 判断 uniqueName 是否为有效物品（排除材料/采集装备） */
   private static isValidItem(name: string): boolean {
     const u = name.toUpperCase();
-    if (CatalogService.EXCLUDE_KW.some(kw => u.includes(kw))) return false;
+    if (CatalogService.EXCLUDE_KW.some((kw) => u.includes(kw))) return false;
     // 额外排除纯材料：T*_LEATHER 和 T*_CLOTH（不含 _SET/_HEAD/_ARMOR/_SHOES 等装备后缀）
     if (/^T\d+_LEATHER$/.test(u) || /^T\d+_CLOTH$/.test(u)) return false;
-    return CatalogService.INCLUDE_KW.some(kw => u.includes(kw));
+    return CatalogService.INCLUDE_KW.some((kw) => u.includes(kw));
   }
 
   /** 从 uniqueName 提取阶数 */
   private static getTier(name: string): number {
-    if (name.length >= 2 && name[0] === 'T' && name[1] >= '0' && name[1] <= '9') return parseInt(name[1]);
+    if (name.length >= 2 && name[0] === 'T' && name[1] >= '0' && name[1] <= '9')
+      return parseInt(name[1]);
     return 0;
   }
 
@@ -404,7 +664,11 @@ export class CatalogService {
    * @param minTier 最低阶数（0=全部，建议4）
    */
   async importFromAlbion(minTier = 4): Promise<{
-    total: number; imported: number; updated: number; skipped: number; failed: number;
+    total: number;
+    imported: number;
+    updated: number;
+    skipped: number;
+    failed: number;
   }> {
     this.logger.log(`开始从 Albion API 拉取装备数据 (minTier=${minTier})...`);
 
@@ -412,12 +676,20 @@ export class CatalogService {
     const response = await fetch(CatalogService.ALBION_ITEMS_URL, {
       headers: { 'User-Agent': 'kook-admin/1.0' },
     });
-    if (!response.ok) throw new Error(`拉取 Albion 数据失败: HTTP ${response.status}`);
+    if (!response.ok)
+      throw new Error(`拉取 Albion 数据失败: HTTP ${response.status}`);
     const rawData: any[] = await response.json();
     this.logger.log(`原始数据 ${rawData.length} 条`);
 
     // 2. 过滤物品 + 为每件装备生成 Q0~Q4 品质变体
-    const items: { uniqueName: string; zhName: string; enName: string; tier: number; quality: number; imageUrl: string }[] = [];
+    const items: {
+      uniqueName: string;
+      zhName: string;
+      enName: string;
+      tier: number;
+      quality: number;
+      imageUrl: string;
+    }[] = [];
     for (const r of rawData) {
       const name = r.UniqueName;
       if (!name) continue;
@@ -440,29 +712,52 @@ export class CatalogService {
           enName,
           tier,
           quality: q,
-          imageUrl: CatalogService.ALBION_RENDER_URL.replace('{name}', uniqueWithQ),
+          imageUrl: CatalogService.ALBION_RENDER_URL.replace(
+            '{name}',
+            uniqueWithQ,
+          ),
         });
       }
     }
     this.logger.log(`过滤+品质展开后物品 ${items.length} 件（含 Q0~Q4 变体）`);
 
     // 3. Upsert 到数据库（以 albionId 去重）
-    let imported = 0, updated = 0, skipped = 0, failed = 0;
+    let imported = 0,
+      updated = 0,
+      skipped = 0,
+      failed = 0;
 
     for (const item of items) {
       try {
-        if (!item.zhName && !item.enName) { skipped++; continue; }
+        if (!item.zhName && !item.enName) {
+          skipped++;
+          continue;
+        }
 
         const displayName = item.zhName || item.enName;
         const category = CatalogService.parseCategory(item.uniqueName);
 
-        const existing = await this.catalogRepo.findOne({ where: { albionId: item.uniqueName } });
+        const existing = await this.catalogRepo.findOne({
+          where: { albionId: item.uniqueName },
+        });
         if (existing) {
           let changed = false;
-          if (item.zhName && existing.name !== displayName) { existing.name = displayName; changed = true; }
-          if (item.imageUrl && existing.imageUrl !== item.imageUrl) { existing.imageUrl = item.imageUrl; changed = true; }
-          if (existing.quality !== item.quality) { existing.quality = item.quality; changed = true; }
-          if (existing.gearScore !== item.tier + item.quality) { existing.gearScore = item.tier + item.quality; changed = true; }
+          if (item.zhName && existing.name !== displayName) {
+            existing.name = displayName;
+            changed = true;
+          }
+          if (item.imageUrl && existing.imageUrl !== item.imageUrl) {
+            existing.imageUrl = item.imageUrl;
+            changed = true;
+          }
+          if (existing.quality !== item.quality) {
+            existing.quality = item.quality;
+            changed = true;
+          }
+          if (existing.gearScore !== item.tier + item.quality) {
+            existing.gearScore = item.tier + item.quality;
+            changed = true;
+          }
           if (changed) {
             await this.catalogRepo.save(existing);
             updated++;
@@ -486,12 +781,18 @@ export class CatalogService {
         await this.catalogRepo.save(catalog);
         imported++;
       } catch (err: any) {
-        if (err.code === 'ER_DUP_ENTRY') { skipped++; }
-        else { failed++; this.logger.warn(`导入失败 ${item.uniqueName}: ${err.message}`); }
+        if (err.code === 'ER_DUP_ENTRY') {
+          skipped++;
+        } else {
+          failed++;
+          this.logger.warn(`导入失败 ${item.uniqueName}: ${err.message}`);
+        }
       }
     }
 
-    this.logger.log(`Albion导入完成: 新增${imported} 更新${updated} 跳过${skipped} 失败${failed}`);
+    this.logger.log(
+      `Albion导入完成: 新增${imported} 更新${updated} 跳过${skipped} 失败${failed}`,
+    );
     return { total: items.length, imported, updated, skipped, failed };
   }
 
@@ -504,7 +805,10 @@ export class CatalogService {
    * @param concurrency 并发下载数（默认10）
    */
   async downloadAllImages(concurrency = 10): Promise<{
-    total: number; downloaded: number; skipped: number; failed: number;
+    total: number;
+    downloaded: number;
+    skipped: number;
+    failed: number;
   }> {
     const uploadDir = join(process.cwd(), 'uploads', 'catalog');
     await fs.mkdir(uploadDir, { recursive: true });
@@ -514,10 +818,16 @@ export class CatalogService {
       select: ['id', 'imageUrl', 'localImagePath', 'albionId'],
     });
 
-    const needDownload = catalogs.filter(c => c.imageUrl && c.imageUrl.startsWith('http'));
-    this.logger.log(`批量下载装备图片: 总计 ${needDownload.length} 条记录（并发=${concurrency}）`);
+    const needDownload = catalogs.filter(
+      (c) => c.imageUrl && c.imageUrl.startsWith('http'),
+    );
+    this.logger.log(
+      `批量下载装备图片: 总计 ${needDownload.length} 条记录（并发=${concurrency}）`,
+    );
 
-    let downloaded = 0, skipped = 0, failed = 0;
+    let downloaded = 0,
+      skipped = 0,
+      failed = 0;
 
     // 分批并发下载
     for (let i = 0; i < needDownload.length; i += concurrency) {
@@ -534,13 +844,18 @@ export class CatalogService {
           // 幂等检查：文件已存在且大小 > 0 则跳过
           if (cat.localImagePath) {
             try {
-              const absPath = join(process.cwd(), cat.localImagePath.replace(/^\//, ''));
+              const absPath = join(
+                process.cwd(),
+                cat.localImagePath.replace(/^\//, ''),
+              );
               const stat = await fs.stat(absPath);
               if (stat.size > 0) {
                 skipped++;
                 return;
               }
-            } catch { /* 文件不存在，继续下载 */ }
+            } catch {
+              /* 文件不存在，继续下载 */
+            }
           }
 
           // 也检查物理文件（可能之前下载了但DB未更新）
@@ -549,12 +864,16 @@ export class CatalogService {
             if (stat.size > 0) {
               // 文件存在但 DB 未记录 → 更新 DB
               if (cat.localImagePath !== relativePath) {
-                await this.catalogRepo.update(cat.id, { localImagePath: relativePath });
+                await this.catalogRepo.update(cat.id, {
+                  localImagePath: relativePath,
+                });
               }
               skipped++;
               return;
             }
-          } catch { /* 文件不存在，继续下载 */ }
+          } catch {
+            /* 文件不存在，继续下载 */
+          }
 
           // 下载（3次重试）
           let buffer: Buffer | null = null;
@@ -565,7 +884,10 @@ export class CatalogService {
                 signal: AbortSignal.timeout(15000),
               });
               if (!response.ok) {
-                if (retry < 2) { await this.sleep(500 * (retry + 1)); continue; }
+                if (retry < 2) {
+                  await this.sleep(500 * (retry + 1));
+                  continue;
+                }
                 throw new Error(`HTTP ${response.status}`);
               }
               buffer = Buffer.from(await response.arrayBuffer());
@@ -585,12 +907,16 @@ export class CatalogService {
           await fs.writeFile(localPath, buffer);
 
           // 更新数据库
-          await this.catalogRepo.update(cat.id, { localImagePath: relativePath });
+          await this.catalogRepo.update(cat.id, {
+            localImagePath: relativePath,
+          });
           downloaded++;
         } catch (err: any) {
           failed++;
           if (failed <= 10) {
-            this.logger.warn(`下载失败 ${cat.albionId || cat.id}: ${err.message}`);
+            this.logger.warn(
+              `下载失败 ${cat.albionId || cat.id}: ${err.message}`,
+            );
           }
         }
       });
@@ -599,35 +925,214 @@ export class CatalogService {
 
       // 每 100 条打印进度
       if ((i + concurrency) % 100 < concurrency) {
-        this.logger.log(`下载进度: ${Math.min(i + concurrency, needDownload.length)}/${needDownload.length} (下载${downloaded}/跳过${skipped}/失败${failed})`);
+        this.logger.log(
+          `下载进度: ${Math.min(i + concurrency, needDownload.length)}/${needDownload.length} (下载${downloaded}/跳过${skipped}/失败${failed})`,
+        );
       }
     }
 
-    this.logger.log(`批量下载完成: 下载${downloaded}, 跳过${skipped}, 失败${failed}, 总计${needDownload.length}`);
+    this.logger.log(
+      `批量下载完成: 下载${downloaded}, 跳过${skipped}, 失败${failed}, 总计${needDownload.length}`,
+    );
     return { total: needDownload.length, downloaded, skipped, failed };
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getOfficialImageDir(): string {
+    return (
+      process.env.OFFICIAL_IMAGE_LIBRARY_DIR ||
+      join(
+        process.cwd(),
+        '..',
+        'downloads',
+        'official-image-library',
+        'ImageResources',
+      )
+    );
+  }
+
+  private parseOfficialImageFile(
+    fileName: string,
+  ): { albionId: string; itemQuality: number } | null {
+    const match = fileName.match(/^(.+)-Quality=(\d+)\.(png|jpg|jpeg|webp)$/i);
+    if (!match) return null;
+    return { albionId: match[1], itemQuality: Number(match[2]) || 0 };
+  }
+
+  async listOfficialImageCandidates(catalogId: number): Promise<
+    Array<{
+      fileName: string;
+      albionId: string;
+      itemQuality: number;
+      dataUrl: string;
+      isHot: boolean;
+    }>
+  > {
+    const item = await this.catalogRepo.findOne({ where: { id: catalogId } });
+    if (!item) throw new NotFoundException('装备参考不存在');
+    if (!item.albionId) return [];
+
+    const dir = this.getOfficialImageDir();
+    let files: string[] = [];
+    try {
+      files = await fs.readdir(dir);
+    } catch {
+      return [];
+    }
+
+    const existingHot = await this.imageRepo.find({
+      where: { catalogId, imageType: 'hot' },
+    });
+    const hotSet = new Set(existingHot.map((img) => img.fileName));
+    const candidates = files
+      .filter((f) => f.startsWith(`${item.albionId}-Quality=`))
+      .sort((a, b) => {
+        const qa = this.parseOfficialImageFile(a)?.itemQuality ?? 0;
+        const qb = this.parseOfficialImageFile(b)?.itemQuality ?? 0;
+        return qa - qb;
+      });
+
+    const result: Array<{
+      fileName: string;
+      albionId: string;
+      itemQuality: number;
+      dataUrl: string;
+      isHot: boolean;
+    }> = [];
+    for (const fileName of candidates) {
+      const parsed = this.parseOfficialImageFile(fileName);
+      if (!parsed) continue;
+      try {
+        const buf = await fs.readFile(join(dir, fileName));
+        result.push({
+          fileName,
+          albionId: parsed.albionId,
+          itemQuality: parsed.itemQuality,
+          dataUrl: `data:image/png;base64,${buf.toString('base64')}`,
+          isHot: hotSet.has(fileName),
+        });
+      } catch {
+        /* skip */
+      }
+    }
+    return result;
+  }
+
+  async markOfficialImagesAsHot(
+    catalogId: number,
+    fileNames: string[],
+  ): Promise<{ selected: number; removed: number }> {
+    const item = await this.catalogRepo.findOne({ where: { id: catalogId } });
+    if (!item) throw new NotFoundException('装备参考不存在');
+    if (!item.albionId)
+      throw new NotFoundException('该装备缺少 albionId，无法从官网图片库筛选');
+
+    const selectedSet = new Set(fileNames || []);
+    const dir = this.getOfficialImageDir();
+    const uploadDir = join(process.cwd(), 'uploads', 'catalog-hot');
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    const existing = await this.imageRepo.find({
+      where: { catalogId, imageType: 'hot', source: 'official_library' },
+    });
+    let removed = 0;
+    for (const img of existing) {
+      if (img.fileName && !selectedSet.has(img.fileName)) {
+        await this.imageRepo.delete(img.id);
+        removed++;
+      }
+    }
+
+    let selected = 0;
+    let primaryPath: string | null = null;
+    for (const fileName of selectedSet) {
+      const parsed = this.parseOfficialImageFile(fileName);
+      if (!parsed || parsed.albionId !== item.albionId) continue;
+      const src = join(dir, fileName);
+      const safeName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+      const dest = join(uploadDir, safeName);
+      const relativePath = `/uploads/catalog-hot/${safeName}`;
+      try {
+        await fs.copyFile(src, dest);
+      } catch {
+        continue;
+      }
+
+      const exists = await this.imageRepo.findOne({
+        where: { catalogId, imageType: 'hot', fileName },
+      });
+      if (exists) {
+        exists.imageUrl = relativePath;
+        exists.albionId = parsed.albionId;
+        exists.itemQuality = parsed.itemQuality;
+        exists.source = 'official_library';
+        await this.imageRepo.save(exists);
+      } else {
+        await this.imageRepo.save(
+          this.imageRepo.create({
+            catalogId,
+            imageUrl: relativePath,
+            imageType: 'hot',
+            fileName,
+            isPrimary: primaryPath ? 0 : 1,
+            albionId: parsed.albionId,
+            itemQuality: parsed.itemQuality,
+            source: 'official_library',
+          }),
+        );
+      }
+      if (!primaryPath) primaryPath = relativePath;
+      selected++;
+    }
+
+    if (primaryPath) {
+      item.hotImagePath = primaryPath;
+      await this.catalogRepo.save(item);
+    } else if (selectedSet.size === 0) {
+      item.hotImagePath = null as any;
+      await this.catalogRepo.save(item);
+    }
+
+    return { selected, removed };
   }
 
   /** V2.9.8: 批量更新装备别称（按ID） */
   async batchUpdateAliases(items: { id: number; aliases: string }[]): Promise<{
-    updated: number; skipped: number; notFound: number;
+    updated: number;
+    skipped: number;
+    notFound: number;
   }> {
-    let updated = 0, skipped = 0, notFound = 0;
+    let updated = 0,
+      skipped = 0,
+      notFound = 0;
     for (const item of items) {
-      const existing = await this.catalogRepo.findOne({ where: { id: item.id } });
-      if (!existing) { notFound++; continue; }
+      const existing = await this.catalogRepo.findOne({
+        where: { id: item.id },
+      });
+      if (!existing) {
+        notFound++;
+        continue;
+      }
       const newAliases = (item.aliases || '').trim() || null;
-      if (existing.aliases === newAliases) { skipped++; continue; }
+      if (existing.aliases === newAliases) {
+        skipped++;
+        continue;
+      }
       // 只在 CSV 提供了非空别称时才更新（空值不覆盖已有别称）
-      if (!newAliases && existing.aliases) { skipped++; continue; }
+      if (!newAliases && existing.aliases) {
+        skipped++;
+        continue;
+      }
       existing.aliases = newAliases;
       await this.catalogRepo.save(existing);
       updated++;
     }
-    this.logger.log(`批量别称更新: 更新${updated}, 跳过${skipped}, 未找到${notFound}`);
+    this.logger.log(
+      `批量别称更新: 更新${updated}, 跳过${skipped}, 未找到${notFound}`,
+    );
     return { updated, skipped, notFound };
   }
 
@@ -638,7 +1143,10 @@ export class CatalogService {
    * 保存到 uploads/catalog-hot/{catalogId}.png
    * 更新 hotImagePath 字段并重算 pHash
    */
-  async uploadHotImage(catalogId: number, file: { buffer: Buffer; originalname: string; mimetype: string }): Promise<any> {
+  async uploadHotImage(
+    catalogId: number,
+    file: { buffer: Buffer; originalname: string; mimetype: string },
+  ): Promise<any> {
     const item = await this.catalogRepo.findOne({ where: { id: catalogId } });
     if (!item) throw new NotFoundException('装备参考不存在');
 
@@ -646,7 +1154,7 @@ export class CatalogService {
     await fs.mkdir(uploadDir, { recursive: true });
 
     const ext = file.originalname.split('.').pop() || 'png';
-    const fileName = `hot_${catalogId}.${ext}`;
+    const fileName = `hot_${catalogId}_${Date.now()}.${ext}`;
     const localPath = join(uploadDir, fileName);
     const relativePath = `/uploads/catalog-hot/${fileName}`;
 
@@ -655,9 +1163,22 @@ export class CatalogService {
     // 更新 DB
     item.hotImagePath = relativePath;
     await this.catalogRepo.save(item);
+    await this.imageRepo.save(
+      this.imageRepo.create({
+        catalogId,
+        imageUrl: relativePath,
+        imageType: 'hot',
+        fileName,
+        fileSize: file.buffer.length,
+        isPrimary: 1,
+        albionId: item.albionId || null,
+        itemQuality: 0,
+        source: 'manual_upload',
+      }),
+    );
 
     // 重算 pHash（使用热门截图）
-    let newPhash: string | null = null;
+    const newPhash: string | null = null;
     try {
       const { ImageMatchService } = await import('../ocr/image-match.service');
       // 手动计算 pHash（不依赖注入，直接用文件）
@@ -667,12 +1188,39 @@ export class CatalogService {
       const meta = await sharp(buffer).metadata();
       const w = meta.width || 64;
       const h = meta.height || 64;
-      const cornerSize = Math.round(Math.max(w, h) * 0.20);
+      const cornerSize = Math.round(Math.max(w, h) * 0.2);
       const brCornerW = Math.round(w * 0.25);
       const brCornerH = Math.round(h * 0.25);
-      const blackTL = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
-      const blackTR = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
-      const blackBR = await sharp({ create: { width: brCornerW, height: brCornerH, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+      const blackTL = await sharp({
+        create: {
+          width: cornerSize,
+          height: cornerSize,
+          channels: 3,
+          background: { r: 0, g: 0, b: 0 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const blackTR = await sharp({
+        create: {
+          width: cornerSize,
+          height: cornerSize,
+          channels: 3,
+          background: { r: 0, g: 0, b: 0 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const blackBR = await sharp({
+        create: {
+          width: brCornerW,
+          height: brCornerH,
+          channels: 3,
+          background: { r: 0, g: 0, b: 0 },
+        },
+      })
+        .png()
+        .toBuffer();
       const masked = await sharp(buffer)
         .flatten({ background: { r: 0, g: 0, b: 0 } })
         .composite([
@@ -681,20 +1229,33 @@ export class CatalogService {
           { input: blackBR, left: w - brCornerW, top: h - brCornerH },
         ])
         .toBuffer();
-      const ratio = 0.60;
+      const ratio = 0.6;
       const cropW = Math.round(w * ratio);
       const cropH = Math.round(h * ratio);
       const cropLeft = Math.round((w - cropW) / 2);
       const cropTop = Math.round((h - cropH) / 2);
-      const cropped = await sharp(masked).extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH }).toBuffer();
-      const pixels = await sharp(cropped).flatten({ background: { r: 0, g: 0, b: 0 } }).resize(32, 32, { fit: 'fill' }).grayscale().raw().toBuffer();
+      const cropped = await sharp(masked)
+        .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+        .toBuffer();
+      const pixels = await sharp(cropped)
+        .flatten({ background: { r: 0, g: 0, b: 0 } })
+        .resize(32, 32, { fit: 'fill' })
+        .grayscale()
+        .raw()
+        .toBuffer();
       // DCT + pHash（简化：直接更新DB，让batchGeneratePhash来做）
-      this.logger.log(`[V2.9.8] 热门截图上传成功 catalogId=${catalogId}, file=${fileName}, 需重算pHash`);
+      this.logger.log(
+        `[V2.9.8] 热门截图上传成功 catalogId=${catalogId}, file=${fileName}, 需重算pHash`,
+      );
     } catch (err) {
       this.logger.warn(`[V2.9.8] 热门截图pHash计算失败: ${err}`);
     }
 
-    return { id: catalogId, hotImagePath: relativePath, message: '热门截图上传成功，请执行"生成图片指纹"重算pHash' };
+    return {
+      id: catalogId,
+      hotImagePath: relativePath,
+      message: '热门截图上传成功，请执行"生成图片指纹"重算pHash',
+    };
   }
 
   /**
@@ -707,14 +1268,22 @@ export class CatalogService {
     if (item.hotImagePath) {
       // 删除本地文件
       try {
-        const absPath = join(process.cwd(), item.hotImagePath.replace(/^\//, ''));
+        const absPath = join(
+          process.cwd(),
+          item.hotImagePath.replace(/^\//, ''),
+        );
         await fs.unlink(absPath);
-      } catch { /* 文件不存在忽略 */ }
+      } catch {
+        /* 文件不存在忽略 */
+      }
     }
 
     item.hotImagePath = null as any;
     await this.catalogRepo.save(item);
 
-    return { id: catalogId, message: '热门截图已删除，请执行"生成图片指纹"重算pHash' };
+    return {
+      id: catalogId,
+      message: '热门截图已删除，请执行"生成图片指纹"重算pHash',
+    };
   }
 }

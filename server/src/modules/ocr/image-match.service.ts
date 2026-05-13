@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalog.entity';
+import { EquipmentImage } from '../equipment-catalog/entities/equipment-image.entity';
+
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import { join } from 'path';
@@ -29,7 +31,10 @@ export class ImageMatchService {
   private static readonly AMBIGUITY_GAP = 3;
 
   constructor(
-    @InjectRepository(EquipmentCatalog) private catalogRepo: Repository<EquipmentCatalog>,
+    @InjectRepository(EquipmentCatalog)
+    private catalogRepo: Repository<EquipmentCatalog>,
+    @InjectRepository(EquipmentImage)
+    private imageRepo: Repository<EquipmentImage>,
     private configService: ConfigService,
   ) {}
 
@@ -40,30 +45,45 @@ export class ImageMatchService {
    * @param options.strict 严格模式（装备库存=true/宽松模式=false，默认宽松）
    * @returns 匹配到的装备列表
    */
-  async matchFromScreenshot(imageBuffer: Buffer, options?: { skipQuantity?: boolean; strict?: boolean; hammingThreshold?: number }): Promise<{
-    catalogId: number;
-    catalogName: string;
-    level: number;
-    quality: number;
-    category: string;
-    gearScore: number;
-    confidence: number;
-    imageUrl: string | null;
-    quantity: number;
-  }[]> {
+  async matchFromScreenshot(
+    imageBuffer: Buffer,
+    options?: {
+      skipQuantity?: boolean;
+      strict?: boolean;
+      hammingThreshold?: number;
+    },
+  ): Promise<
+    {
+      catalogId: number;
+      catalogName: string;
+      level: number;
+      quality: number;
+      category: string;
+      gearScore: number;
+      confidence: number;
+      imageUrl: string | null;
+      quantity: number;
+    }[]
+  > {
     let sharp: any;
     try {
       sharp = require('sharp');
     } catch {
-      this.logger.error('sharp 模块未安装，图片相似度匹配不可用。请执行: npm install sharp');
+      this.logger.error(
+        'sharp 模块未安装，图片相似度匹配不可用。请执行: npm install sharp',
+      );
       throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖');
     }
 
     // V2.9.8: 支持外部传入阈值
-    const threshold = options?.hammingThreshold ?? (options?.strict
-      ? ImageMatchService.STRICT_HAMMING_THRESHOLD
-      : ImageMatchService.LOOSE_HAMMING_THRESHOLD);
-    this.logger.log(`[V2.9.8] 匹配模式: ${options?.strict ? '严格(≥70%)' : '宽松(≥60%)'}, 阈值=${threshold}`);
+    const threshold =
+      options?.hammingThreshold ??
+      (options?.strict
+        ? ImageMatchService.STRICT_HAMMING_THRESHOLD
+        : ImageMatchService.LOOSE_HAMMING_THRESHOLD);
+    this.logger.log(
+      `[V2.9.8] 匹配模式: ${options?.strict ? '严格(≥70%)' : '宽松(≥60%)'}, 阈值=${threshold}`,
+    );
 
     // 1. 获取图片尺寸
     const metadata = await sharp(imageBuffer).metadata();
@@ -72,8 +92,16 @@ export class ImageMatchService {
 
     // 2. 按网格切割（装备图标通常为正方形 ~60-80px）
     const iconSize = this.estimateIconSize(width, height);
-    const subImages = await this.gridCut(sharp, imageBuffer, width, height, iconSize);
-    this.logger.log(`截图 ${width}x${height} 切割为 ${subImages.length} 个子图 (iconSize=${iconSize})`);
+    const subImages = await this.gridCut(
+      sharp,
+      imageBuffer,
+      width,
+      height,
+      iconSize,
+    );
+    this.logger.log(
+      `截图 ${width}x${height} 切割为 ${subImages.length} 个子图 (iconSize=${iconSize})`,
+    );
 
     if (subImages.length === 0) {
       // 图片太小，当作单个图标处理
@@ -89,7 +117,9 @@ export class ImageMatchService {
 
     if (catalogs.length === 0) {
       this.logger.warn('参考库中没有已计算 pHash 的装备，请先执行 pHash 生成');
-      throw new Error('装备参考库未初始化图片指纹，请在参考库页面执行"生成图片指纹"');
+      throw new Error(
+        '装备参考库未初始化图片指纹，请在参考库页面执行"生成图片指纹"',
+      );
     }
 
     // 4. 对每个子图计算 pHash 并匹配
@@ -98,7 +128,7 @@ export class ImageMatchService {
     let discardedByThreshold = 0;
     for (const subBuf of subImages) {
       try {
-        const cropped = await this.cropCenter(sharp, subBuf, 0.60);
+        const cropped = await this.cropCenter(sharp, subBuf, 0.6);
         const hash = await this.computePhash(sharp, cropped);
 
         // 按装备名分组，同名不同品质取最佳
@@ -115,8 +145,13 @@ export class ImageMatchService {
         }
 
         // 取距离最小的装备名
-        const sortedByName = [...bestByName.values()].sort((a, b) => a.distance - b.distance);
-        if (sortedByName.length === 0) { discardedByThreshold++; continue; }
+        const sortedByName = [...bestByName.values()].sort(
+          (a, b) => a.distance - b.distance,
+        );
+        if (sortedByName.length === 0) {
+          discardedByThreshold++;
+          continue;
+        }
 
         const best = sortedByName[0];
 
@@ -127,36 +162,48 @@ export class ImageMatchService {
 
         // 直接取best，不做歧义丢弃
         matches.push({ subBuf, catalog: best.cat, distance: best.distance });
-        this.logger.debug(`[V2.9.6] 匹配成功: dist=${best.distance} name=${best.cat.name}`);
+        this.logger.debug(
+          `[V2.9.6] 匹配成功: dist=${best.distance} name=${best.cat.name}`,
+        );
       } catch (err) {
         this.logger.warn(`子图匹配失败: ${err}`);
       }
     }
 
-    this.logger.log(`[V2.9.6] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（阈值丢弃${discardedByThreshold}）`);
+    this.logger.log(
+      `[V2.9.6] pHash 匹配完成: ${matches.length}/${subImages.length} 子图匹配成功（阈值丢弃${discardedByThreshold}）`,
+    );
 
     // 5. 对匹配成功的子图批量提取数量（并发限制 + 总数上限）
     // 限制数量 OCR 总调用数不超过 MAX_QUANTITY_OCR，避免刷屏和配额消耗
     // F-106.2 击杀详情模式：skipQuantity=true 时每件=1，不做数量 OCR
     const MAX_QUANTITY_OCR = 30;
     const CONCURRENCY = 3;
-    const quantitySubImages = options?.skipQuantity ? [] : matches.slice(0, MAX_QUANTITY_OCR);
+    const quantitySubImages = options?.skipQuantity
+      ? []
+      : matches.slice(0, MAX_QUANTITY_OCR);
     const quantityMap = new Map<Buffer, number>();
 
     if (quantitySubImages.length > 0) {
-      this.logger.log(`[F-104] 开始数量OCR: ${quantitySubImages.length} 个子图（上限 ${MAX_QUANTITY_OCR}，并发 ${CONCURRENCY}）`);
+      this.logger.log(
+        `[F-104] 开始数量OCR: ${quantitySubImages.length} 个子图（上限 ${MAX_QUANTITY_OCR}，并发 ${CONCURRENCY}）`,
+      );
       for (let i = 0; i < quantitySubImages.length; i += CONCURRENCY) {
         const batch = quantitySubImages.slice(i, i + CONCURRENCY);
-        await Promise.all(batch.map(async (m) => {
-          try {
-            const qty = await this.extractQuantityFromCorner(sharp, m.subBuf);
-            quantityMap.set(m.subBuf, qty);
-          } catch {
-            quantityMap.set(m.subBuf, 1);
-          }
-        }));
+        await Promise.all(
+          batch.map(async (m) => {
+            try {
+              const qty = await this.extractQuantityFromCorner(sharp, m.subBuf);
+              quantityMap.set(m.subBuf, qty);
+            } catch {
+              quantityMap.set(m.subBuf, 1);
+            }
+          }),
+        );
       }
-      this.logger.log(`[F-104] 数量OCR完成: ${quantityMap.size}/${quantitySubImages.length}`);
+      this.logger.log(
+        `[F-104] 数量OCR完成: ${quantityMap.size}/${quantitySubImages.length}`,
+      );
     } else if (options?.skipQuantity) {
       this.logger.log(`[F-106.2] 击杀详情模式：跳过数量 OCR（每件=1）`);
     }
@@ -166,7 +213,7 @@ export class ImageMatchService {
     for (const m of matches) {
       const qty = quantityMap.get(m.subBuf) ?? 1;
       const confidence = 1 - m.distance / 64;
-      const existing = results.find(r => r.catalogId === m.catalog.id);
+      const existing = results.find((r) => r.catalogId === m.catalog.id);
       if (existing) {
         existing.quantity += qty;
       } else {
@@ -184,7 +231,9 @@ export class ImageMatchService {
       }
     }
 
-    this.logger.log(`图片相似度匹配完成: ${results.length}/${subImages.length} 匹配成功，总数量${results.reduce((s, r) => s + r.quantity, 0)}`);
+    this.logger.log(
+      `图片相似度匹配完成: ${results.length}/${subImages.length} 匹配成功，总数量${results.reduce((s, r) => s + r.quantity, 0)}`,
+    );
     return results;
   }
 
@@ -196,9 +245,18 @@ export class ImageMatchService {
    * @param localImagePath 本地图片路径（如 /uploads/catalog/T4_2H_CLAYMORE.png）
    * @param hotImagePath 热门装备游戏截图路径
    */
-  async generatePhashForCatalog(catalogId: number, imageUrl: string, localImagePath?: string | null, hotImagePath?: string | null): Promise<string | null> {
+  async generatePhashForCatalog(
+    catalogId: number,
+    imageUrl: string,
+    localImagePath?: string | null,
+    hotImagePath?: string | null,
+  ): Promise<string | null> {
     let sharp: any;
-    try { sharp = require('sharp'); } catch { return null; }
+    try {
+      sharp = require('sharp');
+    } catch {
+      return null;
+    }
 
     let buffer: Buffer | null = null;
 
@@ -208,7 +266,8 @@ export class ImageMatchService {
         const absPath = join(process.cwd(), hotImagePath.replace(/^\//, ''));
         buffer = await fs.readFile(absPath);
         if (buffer.length === 0) buffer = null;
-        else this.logger.debug(`[V2.9.8] pHash使用hotImagePath: ${hotImagePath}`);
+        else
+          this.logger.debug(`[V2.9.8] pHash使用hotImagePath: ${hotImagePath}`);
       } catch {
         buffer = null;
       }
@@ -243,7 +302,7 @@ export class ImageMatchService {
     if (!buffer || buffer.length === 0) return null;
 
     try {
-      const cropped = await this.cropCenter(sharp, buffer, 0.60);
+      const cropped = await this.cropCenter(sharp, buffer, 0.6);
       return this.computePhash(sharp, cropped);
     } catch (err) {
       this.logger.warn(`生成 pHash 失败 catalogId=${catalogId}: ${err}`);
@@ -255,22 +314,42 @@ export class ImageMatchService {
    * 批量为所有参考库装备生成 pHash
    * V2.9.6.1: 默认强制重算所有（force=true），修复alpha通道后需刷新全部
    */
-  async batchGeneratePhash(force = true): Promise<{ total: number; success: number; failed: number }> {
+  async batchGeneratePhash(
+    force = true,
+  ): Promise<{ total: number; success: number; failed: number }> {
     const catalogs = await this.catalogRepo.find({
       where: {},
-      select: ['id', 'imageUrl', 'imagePhash', 'localImagePath', 'hotImagePath'],
+      select: [
+        'id',
+        'imageUrl',
+        'imagePhash',
+        'localImagePath',
+        'hotImagePath',
+      ],
     });
 
-    let success = 0, failed = 0;
+    let success = 0,
+      failed = 0;
     const batchSize = 20;
 
     for (let i = 0; i < catalogs.length; i += batchSize) {
       const batch = catalogs.slice(i, i + batchSize);
       const promises = batch.map(async (cat) => {
-        if (!force && cat.imagePhash) { success++; return; } // 非强制模式：已有则跳过
-        if (!cat.imageUrl && !cat.localImagePath && !cat.hotImagePath) { failed++; return; }
+        if (!force && cat.imagePhash) {
+          success++;
+          return;
+        } // 非强制模式：已有则跳过
+        if (!cat.imageUrl && !cat.localImagePath && !cat.hotImagePath) {
+          failed++;
+          return;
+        }
 
-        const hash = await this.generatePhashForCatalog(cat.id, cat.imageUrl, cat.localImagePath, cat.hotImagePath);
+        const hash = await this.generatePhashForCatalog(
+          cat.id,
+          cat.imageUrl,
+          cat.localImagePath,
+          cat.hotImagePath,
+        );
         if (hash) {
           await this.catalogRepo.update(cat.id, { imagePhash: hash });
           success++;
@@ -285,7 +364,9 @@ export class ImageMatchService {
       }
     }
 
-    this.logger.log(`pHash 批量生成完成: 成功 ${success}, 失败 ${failed}, 总计 ${catalogs.length}`);
+    this.logger.log(
+      `pHash 批量生成完成: 成功 ${success}, 失败 ${failed}, 总计 ${catalogs.length}`,
+    );
     return { total: catalogs.length, success, failed };
   }
 
@@ -294,28 +375,42 @@ export class ImageMatchService {
    * @param imageBuffer 完整截图 Buffer
    * @param region 裁切区域 { left, top, width, height }
    */
-  async matchFromRegion(imageBuffer: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<{
-    catalogId: number;
-    catalogName: string;
-    level: number;
-    quality: number;
-    category: string;
-    gearScore: number;
-    confidence: number;
-    imageUrl: string | null;
-    quantity: number;
-  }[]> {
+  async matchFromRegion(
+    imageBuffer: Buffer,
+    region: { left: number; top: number; width: number; height: number },
+  ): Promise<
+    {
+      catalogId: number;
+      catalogName: string;
+      level: number;
+      quality: number;
+      category: string;
+      gearScore: number;
+      confidence: number;
+      imageUrl: string | null;
+      quantity: number;
+    }[]
+  > {
     let sharp: any;
-    try { sharp = require('sharp'); } catch {
+    try {
+      sharp = require('sharp');
+    } catch {
       throw new Error('图片处理模块未安装');
     }
 
     // 裁切指定区域
     const regionBuffer = await sharp(imageBuffer)
-      .extract({ left: region.left, top: region.top, width: region.width, height: region.height })
+      .extract({
+        left: region.left,
+        top: region.top,
+        width: region.width,
+        height: region.height,
+      })
       .toBuffer();
 
-    this.logger.log(`裁切击杀详情左面板: left=${region.left}, top=${region.top}, ${region.width}x${region.height}`);
+    this.logger.log(
+      `裁切击杀详情左面板: left=${region.left}, top=${region.top}, ${region.width}x${region.height}`,
+    );
 
     // 对裁切后的区域执行标准匹配（击杀详情模式：跳过数量 OCR，每件=1）
     return this.matchFromScreenshot(regionBuffer, { skipQuantity: true });
@@ -330,35 +425,47 @@ export class ImageMatchService {
    *   行2: [药水]    [鞋]     [食物]
    *   行3: [空]      [坐骑]   [空]
    */
-  private static readonly KILL_DETAIL_SLOT_MAP: Array<{ cx: number; cy: number; category: string; label: string }> = [
+  private static readonly KILL_DETAIL_SLOT_MAP: Array<{
+    cx: number;
+    cy: number;
+    category: string;
+    label: string;
+  }> = [
     // cx, cy 为格子中心相对于装备区的百分比坐标
     // 每格尺寸约 28%W x 22%H
     { cx: 0.16, cy: 0.11, category: '其他', label: '包' },
-    { cx: 0.50, cy: 0.11, category: '头', label: '头盔' },
+    { cx: 0.5, cy: 0.11, category: '头', label: '头盔' },
     { cx: 0.84, cy: 0.11, category: '披风', label: '披风' },
     { cx: 0.16, cy: 0.37, category: '武器', label: '武器' },
-    { cx: 0.50, cy: 0.37, category: '甲', label: '胸甲' },
+    { cx: 0.5, cy: 0.37, category: '甲', label: '胸甲' },
     { cx: 0.84, cy: 0.37, category: '副手', label: '副手' },
     { cx: 0.16, cy: 0.63, category: '药水', label: '药水' },
-    { cx: 0.50, cy: 0.63, category: '鞋', label: '鞋子' },
+    { cx: 0.5, cy: 0.63, category: '鞋', label: '鞋子' },
     { cx: 0.84, cy: 0.63, category: '食物', label: '食物' },
-    { cx: 0.50, cy: 0.88, category: '坐骑', label: '坐骑' },
+    { cx: 0.5, cy: 0.88, category: '坐骑', label: '坐骑' },
   ];
 
-  async matchKillDetailSlots(leftPanelBuffer: Buffer, hammingThreshold?: number): Promise<{
-    catalogId: number;
-    catalogName: string;
-    level: number;
-    quality: number;
-    category: string;
-    gearScore: number;
-    confidence: number;
-    imageUrl: string | null;
-    quantity: number;
-    slotCategory: string;
-  }[]> {
+  async matchKillDetailSlots(
+    leftPanelBuffer: Buffer,
+    hammingThreshold?: number,
+  ): Promise<
+    {
+      catalogId: number;
+      catalogName: string;
+      level: number;
+      quality: number;
+      category: string;
+      gearScore: number;
+      confidence: number;
+      imageUrl: string | null;
+      quantity: number;
+      slotCategory: string;
+    }[]
+  > {
     let sharp: any;
-    try { sharp = require('sharp'); } catch {
+    try {
+      sharp = require('sharp');
+    } catch {
       throw new Error('图片处理模块未安装');
     }
 
@@ -373,7 +480,9 @@ export class ImageMatchService {
     const cellW = Math.floor(panelW * cellWRatio);
     const cellH = Math.floor(panelH * cellHRatio);
 
-    this.logger.log(`[V2.9.9] 左面板 ${panelW}x${panelH}, 格子 ${cellW}x${cellH} (百分比切图)`);
+    this.logger.log(
+      `[V2.9.9] 左面板 ${panelW}x${panelH}, 格子 ${cellW}x${cellH} (百分比切图)`,
+    );
 
     // 加载参考库（带pHash的），按category分组
     const allCatalogs = await this.catalogRepo
@@ -396,7 +505,8 @@ export class ImageMatchService {
       catalogsByCategory.set(cat.category, arr);
     }
 
-    const threshold = hammingThreshold ?? ImageMatchService.LOOSE_HAMMING_THRESHOLD;
+    const threshold =
+      hammingThreshold ?? ImageMatchService.LOOSE_HAMMING_THRESHOLD;
     this.logger.log(`[V2.9.8] 击杀详情匹配阈值: ${threshold}`);
     const results: any[] = [];
 
@@ -424,14 +534,16 @@ export class ImageMatchService {
         const stdDev = stats.channels[0]?.stdev || 0;
         // 空格子特征：亮度在150-210之间（米色背景）且方差很低（<25，颜色均匀）
         const isEmptyByBrightness = avg < 15 || avg > 240;
-        const isEmptyByVariance = (avg > 140 && avg < 220 && stdDev < 25);
+        const isEmptyByVariance = avg > 140 && avg < 220 && stdDev < 25;
         if (isEmptyByBrightness || isEmptyByVariance) {
-          this.logger.debug(`[V2.9.9] 格子 ${slot.label} 空白(avg=${avg.toFixed(0)},std=${stdDev.toFixed(1)})，跳过`);
+          this.logger.debug(
+            `[V2.9.9] 格子 ${slot.label} 空白(avg=${avg.toFixed(0)},std=${stdDev.toFixed(1)})，跳过`,
+          );
           continue;
         }
 
         // 计算 pHash
-        const cropped = await this.cropCenter(sharp, cellBuf, 0.60);
+        const cropped = await this.cropCenter(sharp, cellBuf, 0.6);
         const hash = await this.computePhash(sharp, cropped);
 
         // 只在对应 category 内匹配
@@ -443,7 +555,9 @@ export class ImageMatchService {
         }
 
         if (candidateCatalogs.length === 0) {
-          this.logger.debug(`[V2.9.9] ${slot.label}(${slot.category}) 分类无参考库装备，跳过`);
+          this.logger.debug(
+            `[V2.9.9] ${slot.label}(${slot.category}) 分类无参考库装备，跳过`,
+          );
           continue;
         }
 
@@ -459,12 +573,16 @@ export class ImageMatchService {
           }
         }
 
-        const sorted = [...bestByName.values()].sort((a, b) => a.distance - b.distance);
+        const sorted = [...bestByName.values()].sort(
+          (a, b) => a.distance - b.distance,
+        );
         if (sorted.length === 0) continue;
 
         const best = sorted[0];
         if (best.distance > threshold) {
-          this.logger.debug(`[V2.9.9] 格子 ${slot.label} best=${best.distance}(${best.cat.name}) 超阈值${threshold}`);
+          this.logger.debug(
+            `[V2.9.9] 格子 ${slot.label} best=${best.distance}(${best.cat.name}) 超阈值${threshold}`,
+          );
           continue;
         }
 
@@ -481,13 +599,17 @@ export class ImageMatchService {
           quantity: 1,
           slotCategory: slot.category,
         });
-        this.logger.log(`[V2.9.9] 格子 ${slot.label} → ${best.cat.name} dist=${best.distance} conf=${confidence}`);
+        this.logger.log(
+          `[V2.9.9] 格子 ${slot.label} → ${best.cat.name} dist=${best.distance} conf=${confidence}`,
+        );
       } catch (err) {
         this.logger.warn(`[V2.9.9] 格子 ${slot.label} 处理失败: ${err}`);
       }
     }
 
-    this.logger.log(`[V2.9.9] 击杀详情百分比切图匹配完成: ${results.length}/10 格子匹配成功`);
+    this.logger.log(
+      `[V2.9.9] 击杀详情百分比切图匹配完成: ${results.length}/10 格子匹配成功`,
+    );
     return results;
   }
 
@@ -507,12 +629,13 @@ export class ImageMatchService {
    * V2.9.5: 对不同宽度使用更细粒度的列数估算
    */
   private estimateIconSize(imgWidth: number, imgHeight: number): number {
-    if (imgWidth <= 120 && imgHeight <= 120) return Math.min(imgWidth, imgHeight);
+    if (imgWidth <= 120 && imgHeight <= 120)
+      return Math.min(imgWidth, imgHeight);
     if (imgWidth <= 200) return Math.round(imgWidth / 3);
-    if (imgWidth <= 400) return Math.round(imgWidth / 5);  // 手机小截图，5列
-    if (imgWidth <= 600) return Math.round(imgWidth / 6);  // 中等截图，6列
-    if (imgWidth <= 900) return Math.round(imgWidth / 7);  // 大截图，7列
-    return Math.round(imgWidth / 8);  // 超宽截图，8列
+    if (imgWidth <= 400) return Math.round(imgWidth / 5); // 手机小截图，5列
+    if (imgWidth <= 600) return Math.round(imgWidth / 6); // 中等截图，6列
+    if (imgWidth <= 900) return Math.round(imgWidth / 7); // 大截图，7列
+    return Math.round(imgWidth / 8); // 超宽截图，8列
   }
 
   /**
@@ -523,7 +646,12 @@ export class ImageMatchService {
    *  3. 找到最大的连续高方差行块作为装备网格区域
    * @returns 装备网格的 {left, top, width, height} 区域
    */
-  private async detectGridRegion(sharp: any, buffer: Buffer, width: number, height: number): Promise<{ left: number; top: number; width: number; height: number }> {
+  private async detectGridRegion(
+    sharp: any,
+    buffer: Buffer,
+    width: number,
+    height: number,
+  ): Promise<{ left: number; top: number; width: number; height: number }> {
     try {
       const analyzeW = 200;
       const analyzeH = Math.round((height / width) * analyzeW);
@@ -536,10 +664,12 @@ export class ImageMatchService {
       // 计算每一行的方差
       const rowVariances: number[] = [];
       for (let y = 0; y < analyzeH; y++) {
-        let sum = 0, sumSq = 0;
+        let sum = 0,
+          sumSq = 0;
         for (let x = 0; x < analyzeW; x++) {
           const v = data[y * analyzeW + x];
-          sum += v; sumSq += v * v;
+          sum += v;
+          sumSq += v * v;
         }
         const mean = sum / analyzeW;
         const variance = sumSq / analyzeW - mean * mean;
@@ -557,7 +687,8 @@ export class ImageMatchService {
       const threshold = Math.max(medianVar * 0.4, 200); // 至少200的方差才认为是装备区域
 
       // 在安全区域内找最大的连续高方差行块
-      let bestStart = safeTop, bestEnd = safeBottom;
+      let bestStart = safeTop,
+        bestEnd = safeBottom;
       let maxBlockLen = 0;
       let curStart = -1;
       for (let y = safeTop; y < safeBottom; y++) {
@@ -598,7 +729,9 @@ export class ImageMatchService {
       const top = Math.max(0, Math.round(bestStart * scale));
       const bottom = Math.min(height, Math.round(bestEnd * scale));
 
-      this.logger.log(`[V2.9.5 detectGridRegion] 安全区域: ${safeTop}~${safeBottom}, 装备块: ${bestStart}~${bestEnd} (方差阈值=${Math.round(threshold)})`);
+      this.logger.log(
+        `[V2.9.5 detectGridRegion] 安全区域: ${safeTop}~${safeBottom}, 装备块: ${bestStart}~${bestEnd} (方差阈值=${Math.round(threshold)})`,
+      );
 
       return {
         left: 0,
@@ -616,15 +749,24 @@ export class ImageMatchService {
    * 按网格切割图片为子图
    * 自动检测装备区域 + 多候选 iconSize 尝试，选出产生最多有效子图的组合
    */
-  private async gridCut(sharp: any, buffer: Buffer, width: number, height: number, iconSize: number): Promise<Buffer[]> {
+  private async gridCut(
+    sharp: any,
+    buffer: Buffer,
+    width: number,
+    height: number,
+    iconSize: number,
+  ): Promise<Buffer[]> {
     // 先检测装备网格区域（裁掉顶部/底部UI）
     const region = await this.detectGridRegion(sharp, buffer, width, height);
-    this.logger.log(`装备区域检测: top=${region.top}, height=${region.height} (原图 ${width}x${height})`);
+    this.logger.log(
+      `装备区域检测: top=${region.top}, height=${region.height} (原图 ${width}x${height})`,
+    );
 
     // 裁切到装备区域
-    const regionBuf = (region.top === 0 && region.height === height)
-      ? buffer
-      : await sharp(buffer).extract(region).toBuffer();
+    const regionBuf =
+      region.top === 0 && region.height === height
+        ? buffer
+        : await sharp(buffer).extract(region).toBuffer();
     const regionW = region.width;
     const regionH = region.height;
 
@@ -633,15 +775,21 @@ export class ImageMatchService {
       iconSize,
       Math.round(iconSize * 0.85),
       Math.round(iconSize * 1.15),
-      Math.round(iconSize * 0.70),
-      Math.round(iconSize * 1.30),
+      Math.round(iconSize * 0.7),
+      Math.round(iconSize * 1.3),
     ].filter((s, i, arr) => s >= 40 && s <= 200 && arr.indexOf(s) === i);
 
     let bestResult: Buffer[] = [];
     let bestCount = 0;
 
     for (const size of candidates) {
-      const subs = await this.gridCutWithSize(sharp, regionBuf, regionW, regionH, size);
+      const subs = await this.gridCutWithSize(
+        sharp,
+        regionBuf,
+        regionW,
+        regionH,
+        size,
+      );
       if (subs.length > bestCount) {
         bestCount = subs.length;
         bestResult = subs;
@@ -653,7 +801,13 @@ export class ImageMatchService {
   }
 
   /** 用指定 iconSize 切割子图（原 gridCut 逻辑） */
-  private async gridCutWithSize(sharp: any, buffer: Buffer, width: number, height: number, iconSize: number): Promise<Buffer[]> {
+  private async gridCutWithSize(
+    sharp: any,
+    buffer: Buffer,
+    width: number,
+    height: number,
+    iconSize: number,
+  ): Promise<Buffer[]> {
     const results: Buffer[] = [];
     const cols = Math.floor(width / iconSize);
     const rows = Math.floor(height / iconSize);
@@ -674,7 +828,9 @@ export class ImageMatchService {
           if (avgBrightness > 15 && avgBrightness < 240) {
             results.push(sub);
           }
-        } catch { /* 边界越界忽略 */ }
+        } catch {
+          /* 边界越界忽略 */
+        }
       }
     }
     return results;
@@ -685,7 +841,11 @@ export class ImageMatchService {
    * 先将右上角（附魔五角星）、左上角（罗马数字等级）、右下角（数量数字）填黑，
    * 再裁切中心区域，确保参考库图（无角标）和用户截图（有角标）pHash一致。
    */
-  private async cropCenter(sharp: any, buffer: Buffer, ratio: number): Promise<Buffer> {
+  private async cropCenter(
+    sharp: any,
+    buffer: Buffer,
+    ratio: number,
+  ): Promise<Buffer> {
     const meta = await sharp(buffer).metadata();
     const w = meta.width || 64;
     const h = meta.height || 64;
@@ -708,15 +868,47 @@ export class ImageMatchService {
    * - 右上角 20%×20%：附魔五角星
    * - 右下角 25%×25%：数量数字
    */
-  private async maskCorners(sharp: any, buffer: Buffer, w: number, h: number): Promise<Buffer> {
-    const cornerSize = Math.round(Math.max(w, h) * 0.20);
+  private async maskCorners(
+    sharp: any,
+    buffer: Buffer,
+    w: number,
+    h: number,
+  ): Promise<Buffer> {
+    const cornerSize = Math.round(Math.max(w, h) * 0.2);
     const brCornerW = Math.round(w * 0.25);
     const brCornerH = Math.round(h * 0.25);
 
     // 创建黑色遮盖块
-    const blackTL = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
-    const blackTR = await sharp({ create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
-    const blackBR = await sharp({ create: { width: brCornerW, height: brCornerH, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+    const blackTL = await sharp({
+      create: {
+        width: cornerSize,
+        height: cornerSize,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const blackTR = await sharp({
+      create: {
+        width: cornerSize,
+        height: cornerSize,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const blackBR = await sharp({
+      create: {
+        width: brCornerW,
+        height: brCornerH,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
 
     // V2.9.6.1: flatten先消除alpha通道，确保composite通道一致
     return sharp(buffer)
@@ -771,7 +963,10 @@ export class ImageMatchService {
     let hash = '';
     for (let y = 0; y < 8; y++) {
       for (let x = 0; x < 8; x++) {
-        if (y === 0 && x === 0) { hash += '0'; continue; }
+        if (y === 0 && x === 0) {
+          hash += '0';
+          continue;
+        }
         hash += dctMatrix[y][x] > median ? '1' : '0';
       }
     }
@@ -782,10 +977,14 @@ export class ImageMatchService {
 
   /** 二维 DCT-II 变换 */
   private dct2d(matrix: number[][], N: number): number[][] {
-    const result: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
+    const result: number[][] = Array.from({ length: N }, () =>
+      new Array(N).fill(0),
+    );
 
     // 行变换
-    const rowDct: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
+    const rowDct: number[][] = Array.from({ length: N }, () =>
+      new Array(N).fill(0),
+    );
     for (let y = 0; y < N; y++) {
       for (let u = 0; u < N; u++) {
         let sum = 0;
@@ -831,7 +1030,10 @@ export class ImageMatchService {
   }
 
   private hexToBinary(hex: string): string {
-    return hex.split('').map(c => parseInt(c, 16).toString(2).padStart(4, '0')).join('');
+    return hex
+      .split('')
+      .map((c) => parseInt(c, 16).toString(2).padStart(4, '0'))
+      .join('');
   }
 
   // ===== 右下角数量提取 =====
@@ -862,7 +1064,7 @@ export class ImageMatchService {
         .resize(cropW * 3, cropH * 3, { kernel: 'lanczos3' })
         .grayscale()
         .linear(1.5, -30) // 提升对比度
-        .threshold(180)   // 二值化：亮度>180为白，其余为黑
+        .threshold(180) // 二值化：亮度>180为白，其余为黑
         .png()
         .toBuffer();
 
@@ -883,10 +1085,13 @@ export class ImageMatchService {
    * 调用腾讯云 GeneralBasicOCR 识别 Base64 图片中的数字
    * 专用于数量识别：只关心第一个连续数字
    */
-  private async callTencentOcrForDigits(base64Data: string): Promise<number | null> {
+  private async callTencentOcrForDigits(
+    base64Data: string,
+  ): Promise<number | null> {
     const secretId = this.configService.get<string>('tencent.secretId');
     const secretKey = this.configService.get<string>('tencent.secretKey');
-    const region = this.configService.get<string>('ocr.region') || 'ap-guangzhou';
+    const region =
+      this.configService.get<string>('ocr.region') || 'ap-guangzhou';
 
     if (!secretId || !secretKey) {
       this.logger.debug('腾讯云 OCR 未配置，跳过数量识别');
@@ -902,25 +1107,40 @@ export class ImageMatchService {
       const date = new Date(timestamp * 1000).toISOString().split('T')[0];
 
       const payload = JSON.stringify({ ImageBase64: base64Data });
-      const hashedPayload = crypto.createHash('sha256').update(payload).digest('hex');
+      const hashedPayload = crypto
+        .createHash('sha256')
+        .update(payload)
+        .digest('hex');
 
       // 签名步骤（与 ocr.service 保持一致）
       const canonicalRequest = `POST\n/\n\ncontent-type:application/json; charset=utf-8\nhost:${host}\nx-tc-action:${action.toLowerCase()}\n\ncontent-type;host;x-tc-action\n${hashedPayload}`;
       const stringToSign = `TC3-HMAC-SHA256\n${timestamp}\n${date}/${service}/tc3_request\n${crypto.createHash('sha256').update(canonicalRequest).digest('hex')}`;
 
-      const kDate = crypto.createHmac('sha256', `TC3${secretKey}`).update(date).digest();
-      const kService = crypto.createHmac('sha256', kDate).update(service).digest();
-      const kSigning = crypto.createHmac('sha256', kService).update('tc3_request').digest();
-      const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+      const kDate = crypto
+        .createHmac('sha256', `TC3${secretKey}`)
+        .update(date)
+        .digest();
+      const kService = crypto
+        .createHmac('sha256', kDate)
+        .update(service)
+        .digest();
+      const kSigning = crypto
+        .createHmac('sha256', kService)
+        .update('tc3_request')
+        .digest();
+      const signature = crypto
+        .createHmac('sha256', kSigning)
+        .update(stringToSign)
+        .digest('hex');
 
       const authorization = `TC3-HMAC-SHA256 Credential=${secretId}/${date}/${service}/tc3_request, SignedHeaders=content-type;host;x-tc-action, Signature=${signature}`;
 
       const response = await fetch(`https://${host}`, {
         method: 'POST',
         headers: {
-          'Authorization': authorization,
+          Authorization: authorization,
           'Content-Type': 'application/json; charset=utf-8',
-          'Host': host,
+          Host: host,
           'X-TC-Action': action,
           'X-TC-Timestamp': timestamp.toString(),
           'X-TC-Version': version,
@@ -938,7 +1158,9 @@ export class ImageMatchService {
 
       const detections = result.Response?.TextDetections || [];
       // 合并所有文本，提取第一个数字序列
-      const allText = detections.map((d: any) => d.DetectedText || '').join(' ');
+      const allText = detections
+        .map((d: any) => d.DetectedText || '')
+        .join(' ');
       const match = allText.match(/\d+/);
       if (match) {
         const num = parseInt(match[0], 10);
@@ -969,7 +1191,11 @@ export class ImageMatchService {
    */
   async previewMatchWithCandidates(
     imageBuffer: Buffer,
-    options?: { topN?: number; autoThreshold?: number; hammingThreshold?: number },
+    options?: {
+      topN?: number;
+      autoThreshold?: number;
+      hammingThreshold?: number;
+    },
   ): Promise<{
     imgWidth: number;
     imgHeight: number;
@@ -993,11 +1219,14 @@ export class ImageMatchService {
     }>;
   }> {
     const topN = options?.topN ?? 5;
-    const autoThreshold = options?.autoThreshold ?? 0.80;
+    const autoThreshold = options?.autoThreshold ?? 0.8;
 
     let sharp: any;
-    try { sharp = require('sharp'); }
-    catch { throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖'); }
+    try {
+      sharp = require('sharp');
+    } catch {
+      throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖');
+    }
 
     const metadata = await sharp(imageBuffer).metadata();
     const imgWidth = metadata.width || 0;
@@ -1005,15 +1234,23 @@ export class ImageMatchService {
     if (!imgWidth || !imgHeight) throw new Error('无法读取图片尺寸');
 
     // 1. 装备区域检测 + 网格切割（记录坐标）
-    const region = await this.detectGridRegion(sharp, imageBuffer, imgWidth, imgHeight);
+    const region = await this.detectGridRegion(
+      sharp,
+      imageBuffer,
+      imgWidth,
+      imgHeight,
+    );
     const iconSize = this.estimateIconSize(imgWidth, imgHeight);
-    const regionBuf = (region.top === 0 && region.height === imgHeight)
-      ? imageBuffer
-      : await sharp(imageBuffer).extract(region).toBuffer();
+    const regionBuf =
+      region.top === 0 && region.height === imgHeight
+        ? imageBuffer
+        : await sharp(imageBuffer).extract(region).toBuffer();
     const cols = Math.floor(region.width / iconSize);
     const rows = Math.floor(region.height / iconSize);
 
-    this.logger.log(`[V2.9.3 previewMatch] 区域=${region.width}x${region.height}@(${region.left},${region.top}), iconSize=${iconSize}, 网格=${cols}x${rows}`);
+    this.logger.log(
+      `[V2.9.3 previewMatch] 区域=${region.width}x${region.height}@(${region.left},${region.top}), iconSize=${iconSize}, 网格=${cols}x${rows}`,
+    );
 
     // 2. 加载参考库
     const catalogs = await this.catalogRepo
@@ -1036,7 +1273,12 @@ export class ImageMatchService {
           const cellLeft = c * iconSize;
           const cellTop = r * iconSize;
           const subBuf = await sharp(regionBuf)
-            .extract({ left: cellLeft, top: cellTop, width: iconSize, height: iconSize })
+            .extract({
+              left: cellLeft,
+              top: cellTop,
+              width: iconSize,
+              height: iconSize,
+            })
             .toBuffer();
 
           // 过滤空白格子
@@ -1045,20 +1287,26 @@ export class ImageMatchService {
           if (avgBrightness < 15 || avgBrightness > 240) continue;
 
           // 计算该格 pHash
-          const cropped = await this.cropCenter(sharp, subBuf, 0.60);
+          const cropped = await this.cropCenter(sharp, subBuf, 0.6);
           const hash = await this.computePhash(sharp, cropped);
 
           // 与全库比对 → Top N
-          const scored = catalogs.map(cat => ({
-            cat,
-            distance: this.hammingDistance(hash, cat.imagePhash),
-          })).sort((a, b) => a.distance - b.distance).slice(0, topN);
+          const scored = catalogs
+            .map((cat) => ({
+              cat,
+              distance: this.hammingDistance(hash, cat.imagePhash),
+            }))
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, topN);
 
           // 生成缩略图 base64（展示用，120x120）
-          const thumb = await sharp(subBuf).resize(120, 120, { fit: 'cover' }).png().toBuffer();
+          const thumb = await sharp(subBuf)
+            .resize(120, 120, { fit: 'cover' })
+            .png()
+            .toBuffer();
           const cropBase64 = `data:image/png;base64,${thumb.toString('base64')}`;
 
-          const candidates = scored.map(s => {
+          const candidates = scored.map((s) => {
             const sim = 1 - s.distance / 64;
             return {
               catalogId: s.cat.id,
@@ -1094,7 +1342,9 @@ export class ImageMatchService {
       if (boxes.length >= MAX_BOXES) break;
     }
 
-    this.logger.log(`[V2.9.3 previewMatch] 生成 ${boxes.length} 个方框候选（阈值=${autoThreshold}，自动勾选=${boxes.filter(b => b.checked).length}）`);
+    this.logger.log(
+      `[V2.9.3 previewMatch] 生成 ${boxes.length} 个方框候选（阈值=${autoThreshold}，自动勾选=${boxes.filter((b) => b.checked).length}）`,
+    );
 
     return { imgWidth, imgHeight, boxes };
   }
@@ -1111,21 +1361,42 @@ export class ImageMatchService {
   /**
    * V2.10.6: 3框定位法 — 用户标定3个格子(R1C1, R1C2, R2C1)精确计算步进
    */
-  async gridParseWith3Boxes(imageBuffer: Buffer, layout: string, boxes: Array<{ x: number; y: number; w: number; h: number }>): Promise<{
+  async gridParseWith3Boxes(
+    imageBuffer: Buffer,
+    layout: string,
+    boxes: Array<{ x: number; y: number; w: number; h: number }>,
+  ): Promise<{
     gridSize: { cols: number; rows: number };
-    cells: Array<{ row: number; col: number; thumbnail: string; quantity: number; detectedLevel: number | null; detectedQuality: number | null; matchedName?: string; matchedCatalogId?: number; matchedConfidence?: number }>;
+    cells: Array<{
+      row: number;
+      col: number;
+      thumbnail: string;
+      quantity: number;
+      detectedLevel: number | null;
+      detectedQuality: number | null;
+      matchedName?: string;
+      matchedCatalogId?: number;
+      matchedConfidence?: number;
+    }>;
   }> {
     let sharp: any;
-    try { sharp = require('sharp'); }
-    catch { throw new Error('图片处理模块未安装'); }
+    try {
+      sharp = require('sharp');
+    } catch {
+      throw new Error('图片处理模块未安装');
+    }
 
     const metadata = await sharp(imageBuffer).metadata();
     const { width, height } = metadata;
     if (!width || !height) throw new Error('无法读取图片尺寸');
 
-    let cols = 5, rows = 7;
+    let cols = 5,
+      rows = 7;
     const parts = layout.split('x').map(Number);
-    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) { cols = parts[0]; rows = parts[1]; }
+    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
+      cols = parts[0];
+      rows = parts[1];
+    }
 
     const [box1, box2, box3] = boxes; // R1C1, R1C2, R2C1
 
@@ -1150,7 +1421,9 @@ export class ImageMatchService {
     const startX = box1.x;
     const startY = box1.y;
 
-    this.logger.log(`[V2.10.6 3boxes] cellW=${cellW}, cellH=${cellH}, colStep=${colStep}(gap=${colGap}), rowStep=${rowStep}(gap=${rowGap}), start=(${startX},${startY}), layout=${cols}x${rows}`);
+    this.logger.log(
+      `[V2.10.6 3boxes] cellW=${cellW}, cellH=${cellH}, colStep=${colStep}(gap=${colGap}), rowStep=${rowStep}(gap=${rowGap}), start=(${startX},${startY}), layout=${cols}x${rows}`,
+    );
 
     const cells: any[] = [];
     const CONCURRENCY = 3;
@@ -1163,7 +1436,13 @@ export class ImageMatchService {
             const left = Math.round(startX + c * colStep);
             const top = Math.round(startY + r * rowStep);
 
-            if (left < 0 || top < 0 || left + cellW > width || top + cellH > height) return;
+            if (
+              left < 0 ||
+              top < 0 ||
+              left + cellW > width ||
+              top + cellH > height
+            )
+              return;
 
             const subBuf = await sharp(imageBuffer)
               .extract({ left, top, width: cellW, height: cellH })
@@ -1176,78 +1455,52 @@ export class ImageMatchService {
             if (avg < 15 || avg > 240) return;
             if (avg > 140 && avg < 220 && std < 25) return;
 
-            const thumbnail = await sharp(subBuf).resize(120, 120, { fit: 'cover' }).png().toBuffer();
-            const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
-            const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
+            const thumbnail = await sharp(subBuf)
+              .resize(120, 120, { fit: 'cover' })
+              .png()
+              .toBuffer();
+            const quantity = await this.extractQuantityFromCorner(
+              sharp,
+              subBuf,
+            );
+            const detectedQuality = await this.detectQualityFromBorder(
+              sharp,
+              subBuf,
+            );
 
             cells.push({
-              row: r, col: c,
+              row: r,
+              col: c,
               thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
-              quantity, detectedLevel: null, detectedQuality,
+              quantity,
+              detectedLevel: null,
+              detectedQuality,
             });
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         });
       }
     }
 
     for (let i = 0; i < tasks.length; i += CONCURRENCY) {
-      await Promise.all(tasks.slice(i, i + CONCURRENCY).map(t => t()));
+      await Promise.all(tasks.slice(i, i + CONCURRENCY).map((t) => t()));
     }
 
     cells.sort((a, b) => a.row - b.row || a.col - b.col);
-    this.logger.log(`[V2.10.6 3boxes] 切图完成: ${cells.length}/${cols * rows} 格有效`);
+    this.logger.log(
+      `[V2.10.6 3boxes] 切图完成: ${cells.length}/${cols * rows} 格有效`,
+    );
 
-    // V2.10.7: 分层识别 pipeline
-    // Layer 2: 主体区裁剪后算 pHash（去掉四周15%角标/边框干扰）
-    // Layer 5: 等级品质从匹配到的参考库带出
-    try {
-      const catalogs = await this.catalogRepo.find({ where: {}, select: ['id', 'name', 'imagePhash', 'category', 'gearScore', 'level', 'quality'] });
-      const withHash = catalogs.filter(c => c.imagePhash);
-      if (withHash.length > 0) {
-        for (const cell of cells) {
-          try {
-            const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
-            const thumbBuf = Buffer.from(thumbBase64, 'base64');
-
-            // Layer 2: 裁剪主体区（中心70%，去掉四边各15%）
-            const thumbMeta = await sharp(thumbBuf).metadata();
-            const tw = thumbMeta.width || 120;
-            const th = thumbMeta.height || 120;
-            const cropX = Math.round(tw * 0.15);
-            const cropY = Math.round(th * 0.15);
-            const cropW = tw - cropX * 2;
-            const cropH = th - cropY * 2;
-            const coreBuf = await sharp(thumbBuf)
-              .extract({ left: cropX, top: cropY, width: cropW, height: cropH })
-              .toBuffer();
-
-            const cellHash = await this.computePhash(sharp, coreBuf);
-            if (!cellHash) continue;
-            let bestDist = 999, bestCat: any = null;
-            for (const cat of withHash) {
-              const dist = this.hammingDistance(cellHash, cat.imagePhash);
-              if (dist < bestDist) { bestDist = dist; bestCat = cat; }
-            }
-            const confidence = parseFloat((1 - bestDist / 64).toFixed(2));
-            if (bestCat) {
-              cell.matchedName = bestCat.name;
-              cell.matchedCatalogId = bestCat.id;
-              cell.matchedConfidence = confidence;
-              // Layer 5: 从参考库带出等级品质
-              cell.detectedLevel = bestCat.level || null;
-              cell.detectedQuality = bestCat.quality ?? null;
-              cell.matchedCategory = bestCat.category || '';
-              cell.matchedGearScore = bestCat.gearScore || 0;
-            }
-          } catch { /* skip */ }
-        }
-      }
-    } catch { /* skip */ }
+    await this.prefillGridCellsByLayeredPhash(sharp, cells);
 
     // Layer 4: 数量识别 — 裁右下角28%区域放大后重新识别
     for (const cell of cells) {
       try {
-        const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
+        const thumbBase64 = cell.thumbnail.replace(
+          /^data:image\/\w+;base64,/,
+          '',
+        );
         const thumbBuf = Buffer.from(thumbBase64, 'base64');
         const thumbMeta = await sharp(thumbBuf).metadata();
         const tw = thumbMeta.width || 120;
@@ -1263,7 +1516,9 @@ export class ImageMatchService {
           .toBuffer();
         const qty = await this.extractQuantityFromCorner(sharp, roiBuf);
         if (qty > 0) cell.quantity = qty;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
     return { gridSize: { cols, rows }, cells };
@@ -1272,22 +1527,43 @@ export class ImageMatchService {
   /**
    * V2.10.5: 半自动画框切图 — 用户框选整个装备区域，按 cols×rows 等分 + 内缩10%
    */
-  async gridParseWithAnchor(imageBuffer: Buffer, layout: string, anchor: { x: number; y: number; w: number; h: number }): Promise<{
+  async gridParseWithAnchor(
+    imageBuffer: Buffer,
+    layout: string,
+    anchor: { x: number; y: number; w: number; h: number },
+  ): Promise<{
     gridSize: { cols: number; rows: number };
-    cells: Array<{ row: number; col: number; thumbnail: string; quantity: number; detectedLevel: number | null; detectedQuality: number | null; matchedName?: string; matchedCatalogId?: number; matchedConfidence?: number }>;
+    cells: Array<{
+      row: number;
+      col: number;
+      thumbnail: string;
+      quantity: number;
+      detectedLevel: number | null;
+      detectedQuality: number | null;
+      matchedName?: string;
+      matchedCatalogId?: number;
+      matchedConfidence?: number;
+    }>;
   }> {
     let sharp: any;
-    try { sharp = require('sharp'); }
-    catch { throw new Error('图片处理模块未安装'); }
+    try {
+      sharp = require('sharp');
+    } catch {
+      throw new Error('图片处理模块未安装');
+    }
 
     const metadata = await sharp(imageBuffer).metadata();
     const { width, height } = metadata;
     if (!width || !height) throw new Error('无法读取图片尺寸');
 
     // 解析 layout
-    let cols = 5, rows = 7;
+    let cols = 5,
+      rows = 7;
     const parts = layout.split('x').map(Number);
-    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) { cols = parts[0]; rows = parts[1]; }
+    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
+      cols = parts[0];
+      rows = parts[1];
+    }
 
     // anchor = 整个装备区域的坐标（已换算为实际图片像素）
     const regionX = anchor.x;
@@ -1308,7 +1584,9 @@ export class ImageMatchService {
     const gapW = cellW * gapRatio;
     const gapH = cellH * gapRatio;
 
-    this.logger.log(`[V2.10.5 anchor] 装备区: (${regionX},${regionY}) ${regionW}x${regionH}, cell=${cellW.toFixed(1)}x${cellH.toFixed(1)}, gap=${gapW.toFixed(1)}x${gapH.toFixed(1)}, layout=${cols}x${rows}`);
+    this.logger.log(
+      `[V2.10.5 anchor] 装备区: (${regionX},${regionY}) ${regionW}x${regionH}, cell=${cellW.toFixed(1)}x${cellH.toFixed(1)}, gap=${gapW.toFixed(1)}x${gapH.toFixed(1)}, layout=${cols}x${rows}`,
+    );
 
     const cells: any[] = [];
     const CONCURRENCY = 3;
@@ -1324,7 +1602,15 @@ export class ImageMatchService {
             const w = Math.round(cellW);
             const h = Math.round(cellH);
 
-            if (left < 0 || top < 0 || left + w > width || top + h > height || w < 10 || h < 10) return;
+            if (
+              left < 0 ||
+              top < 0 ||
+              left + w > width ||
+              top + h > height ||
+              w < 10 ||
+              h < 10
+            )
+              return;
 
             const subBuf = await sharp(imageBuffer)
               .extract({ left, top, width: w, height: h })
@@ -1337,52 +1623,44 @@ export class ImageMatchService {
             if (avg < 15 || avg > 240) return;
             if (avg > 140 && avg < 220 && std < 25) return;
 
-            const thumbnail = await sharp(subBuf).resize(120, 120, { fit: 'cover' }).png().toBuffer();
-            const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
-            const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
+            const thumbnail = await sharp(subBuf)
+              .resize(120, 120, { fit: 'cover' })
+              .png()
+              .toBuffer();
+            const quantity = await this.extractQuantityFromCorner(
+              sharp,
+              subBuf,
+            );
+            const detectedQuality = await this.detectQualityFromBorder(
+              sharp,
+              subBuf,
+            );
 
             cells.push({
-              row: r, col: c,
+              row: r,
+              col: c,
               thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
-              quantity, detectedLevel: null, detectedQuality,
+              quantity,
+              detectedLevel: null,
+              detectedQuality,
             });
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         });
       }
     }
 
     for (let i = 0; i < tasks.length; i += CONCURRENCY) {
-      await Promise.all(tasks.slice(i, i + CONCURRENCY).map(t => t()));
+      await Promise.all(tasks.slice(i, i + CONCURRENCY).map((t) => t()));
     }
 
     cells.sort((a, b) => a.row - b.row || a.col - b.col);
-    this.logger.log(`[V2.10.5 anchor] 切图完成: ${cells.length}/${cols * rows} 格有效`);
+    this.logger.log(
+      `[V2.10.5 anchor] 切图完成: ${cells.length}/${cols * rows} 格有效`,
+    );
 
-    // pHash 匹配预填
-    try {
-      const catalogs = await this.catalogRepo.find({ where: {}, select: ['id', 'name', 'imagePhash', 'category', 'gearScore'] });
-      const withHash = catalogs.filter(c => c.imagePhash);
-      if (withHash.length > 0) {
-        for (const cell of cells) {
-          try {
-            const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
-            const thumbBuf = Buffer.from(thumbBase64, 'base64');
-            const cellHash = await this.computePhash(sharp, thumbBuf);
-            if (!cellHash) continue;
-            let bestDist = 999, bestCat: any = null;
-            for (const cat of withHash) {
-              const dist = this.hammingDistance(cellHash, cat.imagePhash);
-              if (dist < bestDist) { bestDist = dist; bestCat = cat; }
-            }
-            if (bestCat && bestDist <= ImageMatchService.LOOSE_HAMMING_THRESHOLD) {
-              cell.matchedName = bestCat.name;
-              cell.matchedCatalogId = bestCat.id;
-              cell.matchedConfidence = parseFloat((1 - bestDist / 64).toFixed(2));
-            }
-          } catch { /* skip */ }
-        }
-      }
-    } catch { /* skip */ }
+    await this.prefillGridCellsByLayeredPhash(sharp, cells);
 
     return { gridSize: { cols, rows }, cells };
   }
@@ -1391,7 +1669,11 @@ export class ImageMatchService {
    * V2.9.9.1: 按指定 layout 固定网格切图（替代自动探测）
    * layout: '5x7'(公会岛/军箱/背包中) | '4x5'(背包大) | '6x8'(背包小) | '5x2'(蛋箱)
    */
-  async gridParseForManualInput(imageBuffer: Buffer, layout?: string, cropRegion?: { topPercent: number; bottomPercent: number }): Promise<{
+  async gridParseForManualInput(
+    imageBuffer: Buffer,
+    layout?: string,
+    cropRegion?: { topPercent: number; bottomPercent: number },
+  ): Promise<{
     gridSize: { cols: number; rows: number };
     cells: Array<{
       row: number;
@@ -1403,15 +1685,19 @@ export class ImageMatchService {
     }>;
   }> {
     let sharp: any;
-    try { sharp = require('sharp'); }
-    catch { throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖'); }
+    try {
+      sharp = require('sharp');
+    } catch {
+      throw new Error('图片处理模块未安装，请联系管理员安装 sharp 依赖');
+    }
 
     const metadata = await sharp(imageBuffer).metadata();
     const { width, height } = metadata;
     if (!width || !height) throw new Error('无法读取图片尺寸');
 
     // V2.9.9.1: 解析 layout 参数（默认 5x7）
-    let cols = 5, rows = 7;
+    let cols = 5,
+      rows = 7;
     if (layout) {
       const parts = layout.split('x').map(Number);
       if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
@@ -1421,7 +1707,12 @@ export class ImageMatchService {
     }
 
     // V2.10.3: 使用 opencv-wasm findContours 精确检测装备格子
-    let detectedCells: Array<{ left: number; top: number; width: number; height: number }> = [];
+    const detectedCells: Array<{
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+    }> = [];
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1439,7 +1730,15 @@ export class ImageMatchService {
 
       // 自适应阈值二值化（反转：装备格子边框变白，背景变黑）
       const binary = new cv.Mat();
-      cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, -2);
+      cv.adaptiveThreshold(
+        gray,
+        binary,
+        255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv.THRESH_BINARY,
+        15,
+        -2,
+      );
 
       // 形态学操作：膨胀连接边框断裂
       const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
@@ -1449,13 +1748,25 @@ export class ImageMatchService {
       // 查找轮廓
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
-      cv.findContours(morphed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      cv.findContours(
+        morphed,
+        contours,
+        hierarchy,
+        cv.RETR_EXTERNAL,
+        cv.CHAIN_APPROX_SIMPLE,
+      );
 
       // 过滤轮廓：只保留接近正方形且面积合理的（装备格子）
       const expectedCellArea = (width / cols) * (height / (rows + 2)); // 粗估每格面积
       const minArea = expectedCellArea * 0.3;
       const maxArea = expectedCellArea * 2.5;
-      const candidates: Array<{ x: number; y: number; w: number; h: number; area: number }> = [];
+      const candidates: Array<{
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+        area: number;
+      }> = [];
 
       for (let i = 0; i < contours.size(); i++) {
         const rect = cv.boundingRect(contours.get(i));
@@ -1463,8 +1774,19 @@ export class ImageMatchService {
         const aspectRatio = rect.width / rect.height;
 
         // 近正方形 (0.6~1.6) + 面积合理
-        if (area >= minArea && area <= maxArea && aspectRatio >= 0.6 && aspectRatio <= 1.6) {
-          candidates.push({ x: rect.x, y: rect.y, w: rect.width, h: rect.height, area });
+        if (
+          area >= minArea &&
+          area <= maxArea &&
+          aspectRatio >= 0.6 &&
+          aspectRatio <= 1.6
+        ) {
+          candidates.push({
+            x: rect.x,
+            y: rect.y,
+            w: rect.width,
+            h: rect.height,
+            area,
+          });
         }
       }
 
@@ -1475,42 +1797,67 @@ export class ImageMatchService {
         return a.y - b.y;
       });
 
-      this.logger.log(`[V2.10.3] OpenCV findContours: ${contours.size()} 轮廓, ${candidates.length} 候选格子 (期望面积${minArea.toFixed(0)}~${maxArea.toFixed(0)})`);
+      this.logger.log(
+        `[V2.10.3] OpenCV findContours: ${contours.size()} 轮廓, ${candidates.length} 候选格子 (期望面积${minArea.toFixed(0)}~${maxArea.toFixed(0)})`,
+      );
 
       // 如果候选格子数量接近预期（±20%），直接使用
       const expected = cols * rows;
-      if (candidates.length >= expected * 0.7 && candidates.length <= expected * 1.5) {
+      if (
+        candidates.length >= expected * 0.7 &&
+        candidates.length <= expected * 1.5
+      ) {
         // 取前 expected 个（最多）
         const finalCells = candidates.slice(0, expected);
         for (const c of finalCells) {
           // 内缩 2px 去掉边框
-          detectedCells.push({ left: c.x + 2, top: c.y + 2, width: c.w - 4, height: c.h - 4 });
+          detectedCells.push({
+            left: c.x + 2,
+            top: c.y + 2,
+            width: c.w - 4,
+            height: c.h - 4,
+          });
         }
       } else if (candidates.length > 0) {
         // 候选数量不对，用候选的中位数大小推算网格
-        const medianW = candidates.sort((a, b) => a.w - b.w)[Math.floor(candidates.length / 2)].w;
-        const medianH = candidates.sort((a, b) => a.h - b.h)[Math.floor(candidates.length / 2)].h;
+        const medianW = candidates.sort((a, b) => a.w - b.w)[
+          Math.floor(candidates.length / 2)
+        ].w;
+        const medianH = candidates.sort((a, b) => a.h - b.h)[
+          Math.floor(candidates.length / 2)
+        ].h;
         // 用第一个候选推算起始位置
-        const firstY = Math.min(...candidates.map(c => c.y));
-        const firstX = Math.min(...candidates.map(c => c.x));
+        const firstY = Math.min(...candidates.map((c) => c.y));
+        const firstX = Math.min(...candidates.map((c) => c.x));
 
-        this.logger.log(`[V2.10.3] 候选数${candidates.length}≠期望${expected}, 用中位数(${medianW}x${medianH})从(${firstX},${firstY})推算网格`);
+        this.logger.log(
+          `[V2.10.3] 候选数${candidates.length}≠期望${expected}, 用中位数(${medianW}x${medianH})从(${firstX},${firstY})推算网格`,
+        );
 
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             const left = firstX + c * medianW + 2;
             const top = firstY + r * medianH + 2;
             if (left + medianW - 4 <= width && top + medianH - 4 <= height) {
-              detectedCells.push({ left, top, width: medianW - 4, height: medianH - 4 });
+              detectedCells.push({
+                left,
+                top,
+                width: medianW - 4,
+                height: medianH - 4,
+              });
             }
           }
         }
       }
 
       // 释放内存
-      mat.delete(); gray.delete(); binary.delete(); morphed.delete();
-      kernel.delete(); contours.delete(); hierarchy.delete();
-
+      mat.delete();
+      gray.delete();
+      binary.delete();
+      morphed.delete();
+      kernel.delete();
+      contours.delete();
+      hierarchy.delete();
     } catch (err) {
       this.logger.warn(`[V2.10.3] OpenCV检测失败: ${err}, 使用fallback`);
     }
@@ -1524,18 +1871,27 @@ export class ImageMatchService {
       const cellW = Math.floor(width / cols);
       const cellH = Math.floor(gridH / rows);
 
-      this.logger.log(`[V2.10.3] fallback等分: top=${topCrop}, gridH=${gridH}, cell=${cellW}x${cellH}`);
+      this.logger.log(
+        `[V2.10.3] fallback等分: top=${topCrop}, gridH=${gridH}, cell=${cellW}x${cellH}`,
+      );
 
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const left = c * cellW + 2;
           const top = topCrop + r * cellH + 2;
-          detectedCells.push({ left, top, width: cellW - 4, height: cellH - 4 });
+          detectedCells.push({
+            left,
+            top,
+            width: cellW - 4,
+            height: cellH - 4,
+          });
         }
       }
     }
 
-    this.logger.log(`[V2.10.3 gridParse] 检测到 ${detectedCells.length} 个格子位置`);
+    this.logger.log(
+      `[V2.10.3 gridParse] 检测到 ${detectedCells.length} 个格子位置`,
+    );
 
     const cells: any[] = [];
     const MAX_CELLS = 60;
@@ -1548,7 +1904,12 @@ export class ImageMatchService {
       tasks.push(async () => {
         try {
           const subBuf = await sharp(imageBuffer)
-            .extract({ left: cellRect.left, top: cellRect.top, width: cellRect.width, height: cellRect.height })
+            .extract({
+              left: cellRect.left,
+              top: cellRect.top,
+              width: cellRect.width,
+              height: cellRect.height,
+            })
             .toBuffer();
 
           // 过滤空白格子
@@ -1564,82 +1925,250 @@ export class ImageMatchService {
             .png()
             .toBuffer();
 
-            // 数量 OCR
-            const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
+          // 数量 OCR
+          const quantity = await this.extractQuantityFromCorner(sharp, subBuf);
 
-            // 品质边框检测
-            const detectedQuality = await this.detectQualityFromBorder(sharp, subBuf);
+          // 品质边框检测
+          const detectedQuality = await this.detectQualityFromBorder(
+            sharp,
+            subBuf,
+          );
 
-            cells.push({
-              row: Math.floor(cellIndex / cols), col: cellIndex % cols,
-              thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
-              quantity,
-              detectedLevel: null,
-              detectedQuality,
-            });
-          } catch (err) {
-            this.logger.warn(`[V2.10.1] 格子${cellIndex}解析失败: ${err}`);
-          }
-        });
+          cells.push({
+            row: Math.floor(cellIndex / cols),
+            col: cellIndex % cols,
+            thumbnail: `data:image/png;base64,${thumbnail.toString('base64')}`,
+            quantity,
+            detectedLevel: null,
+            detectedQuality,
+          });
+        } catch (err) {
+          this.logger.warn(`[V2.10.1] 格子${cellIndex}解析失败: ${err}`);
+        }
+      });
     }
 
     // 分批并发执行
     for (let i = 0; i < tasks.length; i += CONCURRENCY) {
-      await Promise.all(tasks.slice(i, i + CONCURRENCY).map(t => t()));
+      await Promise.all(tasks.slice(i, i + CONCURRENCY).map((t) => t()));
     }
 
     cells.sort((a, b) => a.row - b.row || a.col - b.col);
-    this.logger.log(`[V2.10 gridParse] 解析完成: ${cells.length}/${cols * rows} 格有效 (layout=${layout || '5x7'})`);
+    this.logger.log(
+      `[V2.10 gridParse] 解析完成: ${cells.length}/${cols * rows} 格有效 (layout=${layout || '5x7'})`,
+    );
 
-    // V2.10 #3: 自动 pHash 匹配预填装备名
-    try {
-      const catalogs = await this.catalogRepo.find({
-        where: {},
-        select: ['id', 'name', 'imagePhash', 'category', 'level', 'quality', 'gearScore'],
-      });
-      const withHash = catalogs.filter(c => c.imagePhash);
-      if (withHash.length > 0) {
-        for (const cell of cells) {
-          try {
-            // 从 thumbnail base64 恢复 buffer 计算 pHash
-            const thumbBase64 = cell.thumbnail.replace(/^data:image\/\w+;base64,/, '');
-            const thumbBuf = Buffer.from(thumbBase64, 'base64');
-            const cellHash = await this.computePhash(sharp, thumbBuf);
-            if (!cellHash) continue;
-
-            // 匹配参考库
-            let bestDist = 999, bestCat: any = null;
-            for (const cat of withHash) {
-              const dist = this.hammingDistance(cellHash, cat.imagePhash);
-              if (dist < bestDist) {
-                bestDist = dist;
-                bestCat = cat;
-              }
-            }
-            if (bestCat && bestDist <= ImageMatchService.LOOSE_HAMMING_THRESHOLD) {
-              const confidence = 1 - bestDist / 64;
-              cell.matchedName = bestCat.name;
-              cell.matchedCatalogId = bestCat.id;
-              cell.matchedConfidence = parseFloat(confidence.toFixed(2));
-            }
-          } catch { /* 单格 pHash 失败不影响整体 */ }
-        }
-        const matched = cells.filter((c: any) => c.matchedName).length;
-        this.logger.log(`[V2.10 gridParse] pHash预填: ${matched}/${cells.length} 格匹配成功`);
-      }
-    } catch (err) {
-      this.logger.warn(`[V2.10 gridParse] pHash预填失败: ${err}`);
-    }
+    await this.prefillGridCellsByLayeredPhash(sharp, cells);
 
     return { gridSize: { cols, rows }, cells };
   }
 
+  private getOfficialImageDir(): string {
+    return (
+      process.env.OFFICIAL_IMAGE_LIBRARY_DIR ||
+      join(
+        process.cwd(),
+        '..',
+        'downloads',
+        'official-image-library',
+        'ImageResources',
+      )
+    );
+  }
+
+  private async buildOfficialFallbackHashes(
+    sharp: any,
+    limit = 3000,
+  ): Promise<
+    Array<{ catalog: EquipmentCatalog; hash: string; source: string }>
+  > {
+    const dir = this.getOfficialImageDir();
+    let files: string[] = [];
+    try {
+      files = await fs.readdir(dir);
+    } catch {
+      return [];
+    }
+    const catalogs = await this.catalogRepo.find({
+      select: [
+        'id',
+        'name',
+        'albionId',
+        'level',
+        'quality',
+        'category',
+        'gearScore',
+      ],
+    });
+    const catalogMap = new Map(
+      catalogs.filter((c) => c.albionId).map((c) => [c.albionId, c]),
+    );
+    const result: Array<{
+      catalog: EquipmentCatalog;
+      hash: string;
+      source: string;
+    }> = [];
+    for (const file of files.slice(0, limit)) {
+      const match = file.match(/^(.+)-Quality=\d+\.(png|jpg|jpeg|webp)$/i);
+      if (!match) continue;
+      const catalog = catalogMap.get(match[1]);
+      if (!catalog) continue;
+      try {
+        const buf = await fs.readFile(join(dir, file));
+        const core = await this.cropCenter(sharp, buf, 0.7);
+        const hash = await this.computePhash(sharp, core);
+        if (hash) result.push({ catalog, hash, source: 'official' });
+      } catch {
+        /* skip */
+      }
+      if (result.length >= limit) break;
+    }
+    return result;
+  }
+
+  private async prefillGridCellsByLayeredPhash(
+    sharp: any,
+    cells: any[],
+  ): Promise<void> {
+    try {
+      const catalogs = await this.catalogRepo.find({
+        where: {},
+        select: [
+          'id',
+          'name',
+          'albionId',
+          'imagePhash',
+          'category',
+          'gearScore',
+          'level',
+          'quality',
+        ],
+      });
+      const hotImages = await this.imageRepo.find({
+        where: { imageType: 'hot' },
+      });
+      const hotCandidates: Array<{
+        catalog: EquipmentCatalog;
+        hash: string;
+        source: string;
+      }> = [];
+      const catalogById = new Map(catalogs.map((c) => [c.id, c]));
+      for (const img of hotImages) {
+        const catalog = catalogById.get(img.catalogId);
+        if (!catalog) continue;
+        try {
+          const imgPath = join(process.cwd(), img.imageUrl.replace(/^\//, ''));
+          const buf = await fs.readFile(imgPath);
+          const core = await this.cropCenter(sharp, buf, 0.7);
+          const hash = await this.computePhash(sharp, core);
+          if (hash) hotCandidates.push({ catalog, hash, source: 'hot' });
+        } catch {
+          /* skip */
+        }
+      }
+      const phashCandidates = catalogs
+        .filter((c) => c.imagePhash)
+        .map((c) => ({ catalog: c, hash: c.imagePhash, source: 'phash' }));
+      let officialCandidates: Array<{
+        catalog: EquipmentCatalog;
+        hash: string;
+        source: string;
+      }> | null = null;
+
+      for (const cell of cells) {
+        try {
+          const thumbBase64 = cell.thumbnail.replace(
+            /^data:image\/\w+;base64,/,
+            '',
+          );
+          const thumbBuf = Buffer.from(thumbBase64, 'base64');
+          const core = await this.cropCenter(sharp, thumbBuf, 0.7);
+          const cellHash = await this.computePhash(sharp, core);
+          if (!cellHash) continue;
+          const tryMatch = (
+            candidates: Array<{
+              catalog: EquipmentCatalog;
+              hash: string;
+              source: string;
+            }>,
+            threshold: number,
+          ) => {
+            let bestDist = 999;
+            let best: {
+              catalog: EquipmentCatalog;
+              hash: string;
+              source: string;
+            } | null = null;
+            for (const candidate of candidates) {
+              const dist = this.hammingDistance(cellHash, candidate.hash);
+              if (dist < bestDist) {
+                bestDist = dist;
+                best = candidate;
+              }
+            }
+            if (!best || bestDist > threshold) return null;
+            return {
+              ...best,
+              distance: bestDist,
+              confidence: parseFloat((1 - bestDist / 64).toFixed(2)),
+            };
+          };
+
+          let matched = tryMatch(
+            hotCandidates,
+            ImageMatchService.STRICT_HAMMING_THRESHOLD,
+          );
+          if (!matched)
+            matched = tryMatch(
+              phashCandidates,
+              ImageMatchService.LOOSE_HAMMING_THRESHOLD,
+            );
+          if (!matched) {
+            if (!officialCandidates)
+              officialCandidates = await this.buildOfficialFallbackHashes(
+                sharp,
+                3000,
+              );
+            matched = tryMatch(
+              officialCandidates,
+              ImageMatchService.STRICT_HAMMING_THRESHOLD,
+            );
+          }
+          if (matched) {
+            const cat = matched.catalog;
+            cell.matchedName = cat.name;
+            cell.matchedCatalogId = cat.id;
+            cell.matchedConfidence = matched.confidence;
+            cell.matchSource = matched.source;
+            cell.detectedLevel = cat.level || null;
+            cell.detectedQuality = cat.quality ?? null;
+            cell.matchedCategory = cat.category || '';
+            cell.matchedGearScore = cat.gearScore || 0;
+            cell.albionId = cat.albionId || null;
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      const matchedCount = cells.filter((c: any) => c.matchedName).length;
+      this.logger.log(
+        `[gridParse] 分层匹配: ${matchedCount}/${cells.length} 格匹配成功（hot→pHash→official）`,
+      );
+    } catch (err) {
+      this.logger.warn(`[gridParse] 分层匹配失败: ${err}`);
+    }
+  }
+
   /**
    * 检测装备图标的品质边框颜色
+
    * Albion 品质边框：灰(Q0) / 绿(Q1) / 蓝(Q2) / 紫(Q3) / 金(Q4)
    * 采样四条边中央的像素平均色 → HSV → 映射到品质等级
    */
-  private async detectQualityFromBorder(sharp: any, subBuf: Buffer): Promise<number | null> {
+  private async detectQualityFromBorder(
+    sharp: any,
+    subBuf: Buffer,
+  ): Promise<number | null> {
     try {
       const meta = await sharp(subBuf).metadata();
       const w = meta.width || 64;
@@ -1652,23 +2181,27 @@ export class ImageMatchService {
       // 采样上边中央 20%×厚度 的像素
       const { data } = await sharp(subBuf)
         .extract({
-          left: Math.round(w * 0.30),
+          left: Math.round(w * 0.3),
           top: 1,
-          width: Math.round(w * 0.40),
+          width: Math.round(w * 0.4),
           height: borderThickness,
         })
         .raw()
         .toBuffer({ resolveWithObject: true });
 
       // 计算平均 RGB
-      let rSum = 0, gSum = 0, bSum = 0;
+      let rSum = 0,
+        gSum = 0,
+        bSum = 0;
       const pixelCount = data.length / 3;
       for (let i = 0; i < data.length; i += 3) {
         rSum += data[i];
         gSum += data[i + 1];
         bSum += data[i + 2];
       }
-      const r = rSum / pixelCount, g = gSum / pixelCount, b = bSum / pixelCount;
+      const r = rSum / pixelCount,
+        g = gSum / pixelCount,
+        b = bSum / pixelCount;
 
       // RGB → HSV 色相判断
       const max = Math.max(r, g, b);
@@ -1688,7 +2221,7 @@ export class ImageMatchService {
       if (hue < 0) hue += 360;
 
       // 色相映射：绿90~150，蓝180~250，紫260~310，金40~60
-      if (hue >= 80 && hue <= 160) return 1;  // 绿
+      if (hue >= 80 && hue <= 160) return 1; // 绿
       if (hue >= 180 && hue <= 250) return 2; // 蓝
       if (hue >= 260 && hue <= 320) return 3; // 紫
       if (hue >= 30 && hue <= 70 && lightness > 0.5) return 4; // 金/橙

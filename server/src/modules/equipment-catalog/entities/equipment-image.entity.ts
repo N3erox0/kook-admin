@@ -1,4 +1,12 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  Index,
+} from 'typeorm';
 import { EquipmentCatalog } from './equipment-catalog.entity';
 
 @Entity('equipment_images')
@@ -9,16 +17,64 @@ export class EquipmentImage {
   @Column({ name: 'catalog_id', comment: '关联装备参考库ID' })
   catalogId: number;
 
-  @Column({ type: 'varchar', length: 500, name: 'image_url', comment: '图片URL' })
+  @Column({
+    type: 'varchar',
+    length: 500,
+    name: 'image_url',
+    comment: '图片URL',
+  })
   imageUrl: string;
 
-  @Column({ type: 'varchar', length: 20, default: 'icon', name: 'image_type', comment: '图片类型: icon/screenshot/template' })
+  @Index('idx_ei_albion_id')
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'albion_id',
+    comment: 'Albion装备唯一ID',
+  })
+  albionId: string;
+
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'item_quality',
+    comment: '装备边框品质 0无/1普通/2良好/3优秀/4杰出/5不凡',
+  })
+  itemQuality: number;
+
+  @Column({
+    type: 'varchar',
+    length: 30,
+    default: 'manual_upload',
+    comment: '图片来源: manual_upload/official_library/albion_render',
+  })
+  source: string;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: 'icon',
+    name: 'image_type',
+    comment: '图片类型: icon/screenshot/template/hot/official',
+  })
   imageType: string;
 
-  @Column({ type: 'varchar', length: 200, nullable: true, name: 'file_name', comment: '原始文件名' })
+  @Column({
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+    name: 'file_name',
+    comment: '原始文件名',
+  })
   fileName: string;
 
-  @Column({ type: 'int', nullable: true, name: 'file_size', comment: '文件大小(bytes)' })
+  @Column({
+    type: 'int',
+    nullable: true,
+    name: 'file_size',
+    comment: '文件大小(bytes)',
+  })
   fileSize: number;
 
   @Column({ type: 'int', nullable: true, comment: '图片宽度(px)' })
@@ -27,7 +83,12 @@ export class EquipmentImage {
   @Column({ type: 'int', nullable: true, comment: '图片高度(px)' })
   height: number;
 
-  @Column({ type: 'tinyint', default: 0, name: 'is_primary', comment: '是否主图' })
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'is_primary',
+    comment: '是否主图',
+  })
   isPrimary: number;
 
   @Column({ type: 'int', default: 0, name: 'sort_order', comment: '排序' })

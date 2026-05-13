@@ -1,14 +1,30 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { GuildResupply } from './entities/guild-resupply.entity';
+import { GuildResupplyItem } from './entities/guild-resupply-item.entity';
 import { GuildResupplyLog } from './entities/guild-resupply-log.entity';
+
 import { EquipmentService } from '../equipment/equipment.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
 import { CatalogService } from '../equipment-catalog/catalog.service';
 import { ImageMatchService } from '../ocr/image-match.service';
-import { CreateResupplyDto, ProcessResupplyDto, UpdateResupplyFieldsDto, BatchProcessDto, BatchAssignRoomDto, QueryResupplyDto, QuickCompleteResupplyDto, BatchRejectDto } from './dto/resupply.dto';
+import {
+  CreateResupplyDto,
+  ProcessResupplyDto,
+  UpdateResupplyFieldsDto,
+  BatchProcessDto,
+  BatchAssignRoomDto,
+  QueryResupplyDto,
+  QuickCompleteResupplyDto,
+  BatchRejectDto,
+} from './dto/resupply.dto';
 import { ResupplyStatus } from '../../common/constants/enums';
 import * as crypto from 'crypto';
 
@@ -38,8 +54,13 @@ export class ResupplyService {
   private readonly logger = new Logger(ResupplyService.name);
 
   constructor(
-    @InjectRepository(GuildResupply) private resupplyRepo: Repository<GuildResupply>,
-    @InjectRepository(GuildResupplyLog) private logRepo: Repository<GuildResupplyLog>,
+    @InjectRepository(GuildResupply)
+    private resupplyRepo: Repository<GuildResupply>,
+    @InjectRepository(GuildResupplyItem)
+    private itemRepo: Repository<GuildResupplyItem>,
+    @InjectRepository(GuildResupplyLog)
+    private logRepo: Repository<GuildResupplyLog>,
+
     private equipmentService: EquipmentService,
     private kookNotifyService: KookNotifyService,
     private catalogService: CatalogService,
@@ -50,14 +71,19 @@ export class ResupplyService {
   async findAll(guildId: number, query: QueryResupplyDto) {
     const page = query.page || 1;
     const pageSize = query.pageSize || 20;
-    const qb = this.resupplyRepo.createQueryBuilder('r')
+    const qb = this.resupplyRepo
+      .createQueryBuilder('r')
       .where('r.guildId = :guildId', { guildId });
 
-    if (query.status !== undefined) qb.andWhere('r.status = :s', { s: query.status });
+    if (query.status !== undefined)
+      qb.andWhere('r.status = :s', { s: query.status });
     if (query.keyword) {
-      qb.andWhere('(r.equipmentIds LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
+      qb.andWhere('(r.equipmentIds LIKE :kw OR r.kookNickname LIKE :kw)', {
+        kw: `%${query.keyword}%`,
+      });
     }
-    if (query.applyType) qb.andWhere('r.applyType = :at', { at: query.applyType });
+    if (query.applyType)
+      qb.andWhere('r.applyType = :at', { at: query.applyType });
     if (query.room) qb.andWhere('r.resupplyRoom = :room', { room: query.room });
     if (query.startDate && query.endDate) {
       qb.andWhere('r.createdAt BETWEEN :startDate AND :endDate', {
@@ -65,12 +91,18 @@ export class ResupplyService {
         endDate: `${query.endDate} 23:59:59`,
       });
     } else if (query.startDate) {
-      qb.andWhere('r.createdAt >= :startDate', { startDate: `${query.startDate} 00:00:00` });
+      qb.andWhere('r.createdAt >= :startDate', {
+        startDate: `${query.startDate} 00:00:00`,
+      });
     } else if (query.endDate) {
-      qb.andWhere('r.createdAt <= :endDate', { endDate: `${query.endDate} 23:59:59` });
+      qb.andWhere('r.createdAt <= :endDate', {
+        endDate: `${query.endDate} 23:59:59`,
+      });
     }
 
-    qb.orderBy('r.createdAt', 'DESC').skip((page - 1) * pageSize).take(pageSize);
+    qb.orderBy('r.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
     const [list, total] = await qb.getManyAndCount();
 
     // 解析 equipmentIds → 装备名称
@@ -80,8 +112,16 @@ export class ResupplyService {
 
   /** 部位排序权重：武器→副手→头→甲→鞋→其他 */
   private static readonly CATEGORY_ORDER: Record<string, number> = {
-    '武器': 1, '副手': 2, '头': 3, '甲': 4, '鞋': 5,
-    '披风': 6, '坐骑': 7, '药水': 8, '食物': 9, '其他': 10,
+    武器: 1,
+    副手: 2,
+    头: 3,
+    甲: 4,
+    鞋: 5,
+    披风: 6,
+    坐骑: 7,
+    药水: 8,
+    食物: 9,
+    其他: 10,
   };
 
   /** 将补装记录中的 equipmentIds (逗号分隔catalog ID) 解析为装备名称 */
@@ -89,48 +129,103 @@ export class ResupplyService {
     const allIds = new Set<number>();
     for (const item of items) {
       if (item.equipmentIds) {
-        item.equipmentIds.split(',').filter(Boolean).map(Number).forEach(id => { if (!isNaN(id)) allIds.add(id); });
+        item.equipmentIds
+          .split(',')
+          .filter(Boolean)
+          .map(Number)
+          .forEach((id) => {
+            if (!isNaN(id)) allIds.add(id);
+          });
       }
     }
     if (allIds.size === 0) return items;
 
     // 批量查询 catalog 名称
-    const catalogMap = new Map<number, { name: string; level: number; quality: number; gearScore: number; category: string }>();
+    const catalogMap = new Map<
+      number,
+      {
+        name: string;
+        level: number;
+        quality: number;
+        gearScore: number;
+        category: string;
+      }
+    >();
     for (const id of allIds) {
       try {
         const cat = await this.catalogService.findById(id);
-        if (cat) catalogMap.set(id, { name: cat.name, level: cat.level, quality: cat.quality, gearScore: cat.gearScore, category: cat.category });
+        if (cat)
+          catalogMap.set(id, {
+            name: cat.name,
+            level: cat.level,
+            quality: cat.quality,
+            gearScore: cat.gearScore,
+            category: cat.category,
+          });
       } catch {}
     }
 
-    return items.map(item => {
-      const ids = (item.equipmentIds || '').split(',').filter(Boolean).map(Number);
-      const details = ids.map(id => catalogMap.get(id) || null).filter(Boolean) as { name: string; level: number; quality: number; gearScore: number; category: string }[];
+    return items.map((item) => {
+      const ids = (item.equipmentIds || '')
+        .split(',')
+        .filter(Boolean)
+        .map(Number);
+      const details = ids
+        .map((id) => catalogMap.get(id) || null)
+        .filter(Boolean) as {
+        name: string;
+        level: number;
+        quality: number;
+        gearScore: number;
+        category: string;
+      }[];
       // 按部位排序：武器→副手→头→甲→鞋→其他
-      details.sort((a, b) => (ResupplyService.CATEGORY_ORDER[a.category] || 10) - (ResupplyService.CATEGORY_ORDER[b.category] || 10));
+      details.sort(
+        (a, b) =>
+          (ResupplyService.CATEGORY_ORDER[a.category] || 10) -
+          (ResupplyService.CATEGORY_ORDER[b.category] || 10),
+      );
       // 格式：P{装等} {名称}
-      const names = details.map(cat => `P${cat.gearScore} ${cat.name}`);
-      return { ...item, equipmentNames: names.join('、'), equipmentDetails: details };
+      const names = details.map((cat) => `P${cat.gearScore} ${cat.name}`);
+      return {
+        ...item,
+        equipmentNames: names.join('、'),
+        equipmentDetails: details,
+      };
     });
   }
 
   async findOne(guildId: number, id: number) {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
-    const logs = await this.logRepo.find({ where: { resupplyId: id }, order: { createdAt: 'ASC' } });
+    const logs = await this.logRepo.find({
+      where: { resupplyId: id },
+      order: { createdAt: 'ASC' },
+    });
+    const items = await this.itemRepo.find({
+      where: { resupplyId: id },
+      order: { id: 'ASC' },
+    });
     // V2.10.4: 解析 equipmentIds 为装备名称
     const [enriched] = await this.enrichEquipmentNames([r]);
-    return { ...enriched, logs };
+    return { ...enriched, logs, items };
   }
 
   /** 生成去重哈希：图片URL + 日期 + 人员 */
-  generateDedupHash(screenshotUrl: string, date: string, kookUserId: string): string {
+  generateDedupHash(
+    screenshotUrl: string,
+    date: string,
+    kookUserId: string,
+  ): string {
     const raw = `${screenshotUrl}|${date}|${kookUserId}`;
     return crypto.createHash('md5').update(raw).digest('hex');
   }
 
   /** 根据去重哈希查找已有补装申请 */
-  async findByDedupHash(guildId: number, dedupHash: string): Promise<GuildResupply | null> {
+  async findByDedupHash(
+    guildId: number,
+    dedupHash: string,
+  ): Promise<GuildResupply | null> {
     return this.resupplyRepo.findOne({ where: { guildId, dedupHash } });
   }
 
@@ -139,14 +234,24 @@ export class ResupplyService {
     // 去重检查
     if (dto.screenshotUrl && dto.kookUserId) {
       const dateStr = dto.killDate || new Date().toISOString().slice(0, 10);
-      const hash = this.generateDedupHash(dto.screenshotUrl, dateStr, dto.kookUserId);
+      const hash = this.generateDedupHash(
+        dto.screenshotUrl,
+        dateStr,
+        dto.kookUserId,
+      );
 
       const existing = await this.resupplyRepo.findOne({
         where: { guildId, dedupHash: hash },
       });
       if (existing) {
-        this.logger.warn(`补装去重命中: hash=${hash}, 已有申请ID=${existing.id}`);
-        return { deduplicated: true, existingId: existing.id, message: '该补装申请已存在（去重）' };
+        this.logger.warn(
+          `补装去重命中: hash=${hash}, 已有申请ID=${existing.id}`,
+        );
+        return {
+          deduplicated: true,
+          existingId: existing.id,
+          message: '该补装申请已存在（去重）',
+        };
       }
 
       dto['_dedupHash'] = hash;
@@ -183,35 +288,72 @@ export class ResupplyService {
       killDate: dto.killDate,
       mapName: dto.mapName,
       gameId: dto.gameId,
-      resupplyBox: dto.resupplyBox || parseResupplyBox(dto.kookNickname) || null,
+      resupplyBox:
+        dto.resupplyBox || parseResupplyBox(dto.kookNickname) || null,
       status: ResupplyStatus.PENDING,
       dedupHash: dto['_dedupHash'] || null,
     });
     const saved = await this.resupplyRepo.save(r);
-    await this.addLog(guildId, saved.id, 'create', null, 'pending', null, null, '创建补装申请');
+    await this.addLog(
+      guildId,
+      saved.id,
+      'create',
+      null,
+      'pending',
+      null,
+      null,
+      '创建补装申请',
+    );
     return saved;
   }
 
   /** 从击杀详情创建一条补装申请（一次死亡=一条记录=多件装备ID，V2.9.6: 支持空装备数组） */
-  async createFromKillDetail(guildId: number, data: {
-    kookUserId: string;
-    kookNickname: string;
-    screenshotUrl: string;
-    killDate: string;
-    mapName: string;
-    gameId: string;
-    guild: string;
-    equipmentCatalogIds: number[]; // catalog ID 数组（V2.9.6: 可为空数组）
-    kookMessageId?: string;
-    _dedupHash?: string;
-    _reason?: string;
-  }): Promise<{ created: boolean; skipped: boolean; resupplyId?: number }> {
+  async createFromKillDetail(
+    guildId: number,
+    data: {
+      kookUserId: string;
+      kookNickname: string;
+      screenshotUrl: string;
+      killDate: string;
+      mapName: string;
+      gameId: string;
+      guild: string;
+      equipmentCatalogIds: number[]; // catalog ID 数组（V2.9.6: 可为空数组）
+      equipmentItems?: Array<{
+        catalogId: number | null;
+        albionId: string;
+        equipmentName: string;
+        slot?: string | null;
+        level?: number | null;
+        enchantLevel?: number | null;
+        itemQuality?: number;
+        quantity?: number;
+        source?: string;
+        matchStatus?: string;
+      }>;
+      kookMessageId?: string;
+      _dedupHash?: string;
+      _reason?: string;
+      source?: string;
+      albionEventId?: number;
+      albionBattleId?: number;
+      killTimeUtc?: string | null;
+      killboardMatchStatus?: string;
+      killboardTimeDiffMinutes?: number;
+      killboardUrl?: string;
+      killboardRaw?: any;
+    },
+  ): Promise<{ created: boolean; skipped: boolean; resupplyId?: number }> {
     const dateStr = data.killDate || new Date().toISOString().slice(0, 10);
     // V2.9.6: 优先使用传入的dedupHash
-    const hash = data._dedupHash || this.generateDedupHash(data.screenshotUrl, dateStr, data.kookUserId);
+    const hash =
+      data._dedupHash ||
+      this.generateDedupHash(data.screenshotUrl, dateStr, data.kookUserId);
 
     // 去重检查
-    const existing = await this.resupplyRepo.findOne({ where: { guildId, dedupHash: hash } });
+    const existing = await this.resupplyRepo.findOne({
+      where: { guildId, dedupHash: hash },
+    });
     if (existing) {
       this.logger.warn(`补装去重命中: hash=${hash}, 已有申请ID=${existing.id}`);
       return { created: false, skipped: true };
@@ -219,7 +361,9 @@ export class ResupplyService {
 
     const equipmentIds = data.equipmentCatalogIds.join(',');
     // V2.9.6 F-151: 支持自定义reason（含消息原文备注）
-    const reason = data._reason || `击杀详情 | 日期:${data.killDate} | 地图:${data.mapName} | 游戏ID:${data.gameId}`;
+    const reason =
+      data._reason ||
+      `击杀详情 | 日期:${data.killDate} | 地图:${data.mapName} | 游戏ID:${data.gameId}`;
     const r = this.resupplyRepo.create({
       guildId,
       kookUserId: data.kookUserId,
@@ -236,23 +380,73 @@ export class ResupplyService {
       mapName: data.mapName || null,
       gameId: data.gameId || null,
       ocrGuildName: data.guild || null,
+      source: data.source || 'ocr',
+      albionEventId: data.albionEventId || null,
+      albionBattleId: data.albionBattleId || null,
+      killTimeUtc: data.killTimeUtc ? new Date(data.killTimeUtc) : null,
+      killboardMatchStatus: data.killboardMatchStatus || null,
+      killboardTimeDiffMinutes: data.killboardTimeDiffMinutes ?? null,
+      killboardUrl: data.killboardUrl || null,
+      killboardRaw: data.killboardRaw || null,
       status: ResupplyStatus.PENDING,
     });
     const saved = await this.resupplyRepo.save(r);
-    await this.addLog(guildId, saved.id, 'create', null, 'pending', null, null, '击杀详情自动创建');
 
-    this.logger.log(`[公会${guildId}] 击杀详情补装: 创建1条, ${data.equipmentCatalogIds.length}件装备`);
+    if (data.equipmentItems && data.equipmentItems.length > 0) {
+      const detailRows = data.equipmentItems.map((item) =>
+        this.itemRepo.create({
+          resupplyId: saved.id,
+          catalogId: item.catalogId || null,
+          albionId: item.albionId || null,
+          equipmentName: item.equipmentName || item.albionId,
+          slot: item.slot || null,
+          level: item.level || null,
+          enchantLevel: item.enchantLevel ?? null,
+          itemQuality: item.itemQuality ?? 0,
+          quantity: item.quantity || 1,
+          source: item.source || data.source || 'killboard',
+          matchStatus:
+            item.matchStatus || (item.catalogId ? 'matched' : 'unmatched'),
+        }),
+      );
+      await this.itemRepo.save(detailRows);
+    }
+
+    await this.addLog(
+      guildId,
+      saved.id,
+      'create',
+      null,
+      'pending',
+      null,
+      null,
+      data.source === 'killboard' ? '击杀详情官网战报创建' : '击杀详情自动创建',
+    );
+
+    this.logger.log(
+      `[公会${guildId}] 击杀详情补装: 创建1条, ${data.equipmentCatalogIds.length}件装备`,
+    );
     return { created: true, skipped: false, resupplyId: saved.id };
   }
 
-  async updateFields(guildId: number, id: number, dto: UpdateResupplyFieldsDto) {
+  async updateFields(
+    guildId: number,
+    id: number,
+    dto: UpdateResupplyFieldsDto,
+  ) {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
     Object.assign(r, dto);
     return this.resupplyRepo.save(r);
   }
 
-  async process(guildId: number, id: number, dto: ProcessResupplyDto, operatorId: number, operatorName: string) {
+  async process(
+    guildId: number,
+    id: number,
+    dto: ProcessResupplyDto,
+    operatorId: number,
+    operatorName: string,
+  ) {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
 
@@ -260,7 +454,8 @@ export class ResupplyService {
 
     switch (dto.action) {
       case 'approve': {
-        if (r.status !== ResupplyStatus.PENDING) throw new BadRequestException('当前状态不允许通过');
+        if (r.status !== ResupplyStatus.PENDING)
+          throw new BadRequestException('当前状态不允许通过');
         r.status = ResupplyStatus.APPROVED;
         r.processedBy = operatorId;
         r.processRemark = dto.remark || null;
@@ -268,25 +463,50 @@ export class ResupplyService {
 
         // 逐个 equipment_ids 中的 catalogId 各扣减库存 1
         try {
-          const ids = (r.equipmentIds || '').split(',').filter(Boolean).map(Number);
+          let ids = (r.equipmentIds || '')
+            .split(',')
+            .filter(Boolean)
+            .map(Number);
+          const detailItems = await this.itemRepo.find({
+            where: { resupplyId: r.id },
+          });
+          if (detailItems.length > 0) {
+            ids = [];
+            for (const item of detailItems) {
+              if (!item.catalogId) continue;
+              const times = Math.max(1, item.quantity || 1);
+              for (let i = 0; i < times; i++) ids.push(item.catalogId);
+            }
+          }
           let deducted = 0;
           for (const catalogId of ids) {
             if (!catalogId || isNaN(catalogId)) continue;
             try {
-              await this.equipmentService.deductForDispatch(guildId, catalogId, 1, operatorId, operatorName);
+              await this.equipmentService.deductForDispatch(
+                guildId,
+                catalogId,
+                1,
+                operatorId,
+                operatorName,
+              );
               deducted++;
             } catch (err: any) {
-              this.logger.warn(`补装扣减库存失败 catalogId=${catalogId}: ${err.message}`);
+              this.logger.warn(
+                `补装扣减库存失败 catalogId=${catalogId}: ${err.message}`,
+              );
             }
           }
-          this.logger.log(`补装通过扣减库存: ${deducted}/${ids.length} 件 (申请ID=${r.id})`);
+          this.logger.log(
+            `补装通过扣减库存: ${deducted}/${ids.length} 件 (申请ID=${r.id})`,
+          );
         } catch (err: any) {
           this.logger.error(`补装扣减库存异常: ${err.message}`);
         }
         break;
       }
       case 'reject': {
-        if (r.status !== ResupplyStatus.PENDING) throw new BadRequestException('当前状态不允许驳回');
+        if (r.status !== ResupplyStatus.PENDING)
+          throw new BadRequestException('当前状态不允许驳回');
         if (!dto.remark) throw new BadRequestException('驳回必须填写原因');
         r.status = ResupplyStatus.REJECTED;
         r.processedBy = operatorId;
@@ -295,7 +515,8 @@ export class ResupplyService {
         break;
       }
       case 'dispatch': {
-        if (r.status !== ResupplyStatus.APPROVED) throw new BadRequestException('只有已通过的申请才能标记已发放');
+        if (r.status !== ResupplyStatus.APPROVED)
+          throw new BadRequestException('只有已通过的申请才能标记已发放');
         r.status = ResupplyStatus.DISPATCHED;
         r.dispatchedBy = operatorId;
         r.dispatchedAt = new Date();
@@ -307,7 +528,16 @@ export class ResupplyService {
     }
 
     await this.resupplyRepo.save(r);
-    await this.addLog(guildId, id, dto.action, fromStatus, String(r.status), operatorId, operatorName, dto.remark);
+    await this.addLog(
+      guildId,
+      id,
+      dto.action,
+      fromStatus,
+      String(r.status),
+      operatorId,
+      operatorName,
+      dto.remark,
+    );
 
     // V2.9.7: 暂停所有KOOK补装通知，待重新设计通知规则
     // try {
@@ -329,11 +559,22 @@ export class ResupplyService {
     return { id, status: r.status };
   }
 
-  async batchProcess(guildId: number, dto: BatchProcessDto, operatorId: number, operatorName: string) {
+  async batchProcess(
+    guildId: number,
+    dto: BatchProcessDto,
+    operatorId: number,
+    operatorName: string,
+  ) {
     const results: any[] = [];
     for (const id of dto.ids) {
       try {
-        const result = await this.process(guildId, id, { action: dto.action, remark: dto.remark }, operatorId, operatorName);
+        const result = await this.process(
+          guildId,
+          id,
+          { action: dto.action, remark: dto.remark },
+          operatorId,
+          operatorName,
+        );
         results.push(result);
       } catch (err: any) {
         results.push({ id, error: err.message });
@@ -344,7 +585,8 @@ export class ResupplyService {
 
   /** 获取今日已通过但未回应表情的补装 */
   async getApprovedUnreacted(guildId: number): Promise<GuildResupply[]> {
-    return this.resupplyRepo.createQueryBuilder('r')
+    return this.resupplyRepo
+      .createQueryBuilder('r')
       .where('r.guildId = :guildId', { guildId })
       .andWhere('r.status = :status', { status: ResupplyStatus.APPROVED })
       .andWhere('r.kookMessageId IS NOT NULL')
@@ -355,7 +597,8 @@ export class ResupplyService {
   /** 标记为已回应 */
   async markAsCounted(ids: number[]) {
     if (ids.length === 0) return;
-    await this.resupplyRepo.createQueryBuilder()
+    await this.resupplyRepo
+      .createQueryBuilder()
       .update(GuildResupply)
       .set({ isCounted: 1 })
       .where('id IN (:...ids)', { ids })
@@ -365,7 +608,8 @@ export class ResupplyService {
   /** 批量分配补装房间 */
   async batchAssignRoom(guildId: number, dto: BatchAssignRoomDto) {
     if (dto.ids.length === 0) return { updated: 0 };
-    await this.resupplyRepo.createQueryBuilder()
+    await this.resupplyRepo
+      .createQueryBuilder()
       .update(GuildResupply)
       .set({ resupplyRoom: dto.room })
       .where('id IN (:...ids)', { ids: dto.ids })
@@ -380,16 +624,21 @@ export class ResupplyService {
     const pageSize = query.pageSize || 20;
 
     // 先正常查询所有记录
-    const qb = this.resupplyRepo.createQueryBuilder('r')
+    const qb = this.resupplyRepo
+      .createQueryBuilder('r')
       .where('r.guildId = :guildId', { guildId });
 
-    if (query.status !== undefined) qb.andWhere('r.status = :s', { s: query.status });
+    if (query.status !== undefined)
+      qb.andWhere('r.status = :s', { s: query.status });
     if (query.keyword) {
-      qb.andWhere('(r.equipmentIds LIKE :kw OR r.kookNickname LIKE :kw)', { kw: `%${query.keyword}%` });
+      qb.andWhere('(r.equipmentIds LIKE :kw OR r.kookNickname LIKE :kw)', {
+        kw: `%${query.keyword}%`,
+      });
     }
     if (query.startDate && query.endDate) {
       qb.andWhere('r.createdAt BETWEEN :startDate AND :endDate', {
-        startDate: `${query.startDate} 00:00:00`, endDate: `${query.endDate} 23:59:59`,
+        startDate: `${query.startDate} 00:00:00`,
+        endDate: `${query.endDate} 23:59:59`,
       });
     }
 
@@ -397,21 +646,26 @@ export class ResupplyService {
     const allItems = await qb.getMany();
 
     // 按 kookUserId + screenshotUrl + 日期 分组合并
-    const groups = new Map<string, {
-      key: string;
-      kookUserId: string;
-      kookNickname: string;
-      resupplyBox: string | null;
-      screenshotUrl: string | null;
-      status: number;
-      createdAt: Date;
-      items: GuildResupply[];
-      equipmentSummary: string;
-      totalQuantity: number;
-    }>();
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        kookUserId: string;
+        kookNickname: string;
+        resupplyBox: string | null;
+        screenshotUrl: string | null;
+        status: number;
+        createdAt: Date;
+        items: GuildResupply[];
+        equipmentSummary: string;
+        totalQuantity: number;
+      }
+    >();
 
     for (const item of allItems) {
-      const dateKey = item.createdAt ? new Date(item.createdAt).toISOString().slice(0, 10) : 'unknown';
+      const dateKey = item.createdAt
+        ? new Date(item.createdAt).toISOString().slice(0, 10)
+        : 'unknown';
       const groupKey = `${item.kookUserId || 'manual'}_${item.screenshotUrl || item.id}_${dateKey}`;
 
       if (!groups.has(groupKey)) {
@@ -434,8 +688,10 @@ export class ResupplyService {
     }
 
     // 生成摘要
-    const merged = Array.from(groups.values()).map(g => {
-      g.equipmentSummary = g.items.map(i => `${i.equipmentIds || '?'} x${i.quantity}`).join('、');
+    const merged = Array.from(groups.values()).map((g) => {
+      g.equipmentSummary = g.items
+        .map((i) => `${i.equipmentIds || '?'} x${i.quantity}`)
+        .join('、');
       return g;
     });
 
@@ -447,8 +703,12 @@ export class ResupplyService {
   /** 获取待处理记录按装备聚合排序（临时排序视图）
    * 支持关键词过滤（如 P8+堕神）
    */
-  async getGroupedByEquipment(guildId: number, keyword?: string): Promise<GuildResupply[]> {
-    const qb = this.resupplyRepo.createQueryBuilder('r')
+  async getGroupedByEquipment(
+    guildId: number,
+    keyword?: string,
+  ): Promise<GuildResupply[]> {
+    const qb = this.resupplyRepo
+      .createQueryBuilder('r')
       .where('r.guildId = :guildId', { guildId })
       .andWhere('r.status = :s', { s: ResupplyStatus.PENDING });
 
@@ -456,16 +716,33 @@ export class ResupplyService {
       qb.andWhere('r.equipmentIds LIKE :kw', { kw: `%${keyword}%` });
     }
 
-    qb.orderBy('r.equipmentIds', 'ASC')
-      .addOrderBy('r.createdAt', 'ASC');
+    qb.orderBy('r.equipmentIds', 'ASC').addOrderBy('r.createdAt', 'ASC');
 
     return qb.getMany();
   }
 
-  private async addLog(guildId: number, resupplyId: number, action: string, from: string | null, to: string, operatorId?: number, operatorName?: string, remark?: string) {
-    await this.logRepo.save(this.logRepo.create({
-      guildId, resupplyId, action, fromStatus: from, toStatus: to, operatorId, operatorName, remark,
-    }));
+  private async addLog(
+    guildId: number,
+    resupplyId: number,
+    action: string,
+    from: string | null,
+    to: string,
+    operatorId?: number,
+    operatorName?: string,
+    remark?: string,
+  ) {
+    await this.logRepo.save(
+      this.logRepo.create({
+        guildId,
+        resupplyId,
+        action,
+        fromStatus: from,
+        toStatus: to,
+        operatorId,
+        operatorName,
+        remark,
+      }),
+    );
   }
 
   /**
@@ -474,8 +751,11 @@ export class ResupplyService {
    * 适用：待识别条目经人工确认后直接完成补装
    */
   async quickComplete(
-    guildId: number, id: number, dto: QuickCompleteResupplyDto,
-    operatorId: number, operatorName: string,
+    guildId: number,
+    id: number,
+    dto: QuickCompleteResupplyDto,
+    operatorId: number,
+    operatorName: string,
   ) {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
@@ -493,10 +773,18 @@ export class ResupplyService {
         for (let i = 0; i < times; i++) expandedIds.push(entry.catalogId);
       }
     } else if (dto.equipmentIds) {
-      expandedIds = dto.equipmentIds.split(',').filter(Boolean).map(Number).filter(n => !isNaN(n));
+      expandedIds = dto.equipmentIds
+        .split(',')
+        .filter(Boolean)
+        .map(Number)
+        .filter((n) => !isNaN(n));
     } else if (r.equipmentIds) {
       // 沿用原装备列表
-      expandedIds = r.equipmentIds.split(',').filter(Boolean).map(Number).filter(n => !isNaN(n));
+      expandedIds = r.equipmentIds
+        .split(',')
+        .filter(Boolean)
+        .map(Number)
+        .filter((n) => !isNaN(n));
     }
 
     if (expandedIds.length === 0) {
@@ -518,13 +806,23 @@ export class ResupplyService {
     for (const catalogId of expandedIds) {
       if (!catalogId || isNaN(catalogId)) continue;
       try {
-        await this.equipmentService.deductForDispatch(guildId, catalogId, 1, operatorId, operatorName);
+        await this.equipmentService.deductForDispatch(
+          guildId,
+          catalogId,
+          1,
+          operatorId,
+          operatorName,
+        );
         deducted++;
       } catch (err: any) {
-        this.logger.warn(`[quickComplete] 扣减库存失败 catalogId=${catalogId}: ${err.message}`);
+        this.logger.warn(
+          `[quickComplete] 扣减库存失败 catalogId=${catalogId}: ${err.message}`,
+        );
       }
     }
-    this.logger.log(`[quickComplete] 申请ID=${id} 扣减库存: ${deducted}/${expandedIds.length} 件`);
+    this.logger.log(
+      `[quickComplete] 申请ID=${id} 扣减库存: ${deducted}/${expandedIds.length} 件`,
+    );
 
     // 4. 标记为已发放（最终态）
     r.status = ResupplyStatus.DISPATCHED;
@@ -535,8 +833,16 @@ export class ResupplyService {
     r.dispatchQuantity = expandedIds.length;
     await this.resupplyRepo.save(r);
 
-    await this.addLog(guildId, id, 'quick_complete', fromStatus, String(r.status), operatorId, operatorName,
-      `快捷补装完成: 装备${expandedIds.length}件, 扣库存${deducted}件${dto.remark ? ' | ' + dto.remark : ''}`);
+    await this.addLog(
+      guildId,
+      id,
+      'quick_complete',
+      fromStatus,
+      String(r.status),
+      operatorId,
+      operatorName,
+      `快捷补装完成: 装备${expandedIds.length}件, 扣库存${deducted}件${dto.remark ? ' | ' + dto.remark : ''}`,
+    );
 
     return { id, status: r.status, deducted, total: expandedIds.length };
   }
@@ -546,11 +852,16 @@ export class ResupplyService {
    * 将多条申请一键标记为 rejected
    */
   async batchReject(
-    guildId: number, dto: BatchRejectDto, operatorId: number, operatorName: string,
+    guildId: number,
+    dto: BatchRejectDto,
+    operatorId: number,
+    operatorName: string,
   ) {
     if (!dto.ids || dto.ids.length === 0) return { updated: 0 };
 
-    const items = await this.resupplyRepo.find({ where: { id: In(dto.ids), guildId } });
+    const items = await this.resupplyRepo.find({
+      where: { id: In(dto.ids), guildId },
+    });
     let updated = 0;
     for (const r of items) {
       if (r.status === ResupplyStatus.DISPATCHED) continue; // 已发放的不能改
@@ -560,7 +871,16 @@ export class ResupplyService {
       r.processRemark = dto.remark || '批量废弃（待识别）';
       r.processedAt = new Date();
       await this.resupplyRepo.save(r);
-      await this.addLog(guildId, r.id, 'batch_reject', fromStatus, String(r.status), operatorId, operatorName, dto.remark || '批量废弃');
+      await this.addLog(
+        guildId,
+        r.id,
+        'batch_reject',
+        fromStatus,
+        String(r.status),
+        operatorId,
+        operatorName,
+        dto.remark || '批量废弃',
+      );
       updated++;
     }
     return { updated, total: dto.ids.length };
@@ -572,24 +892,46 @@ export class ResupplyService {
    * V2.9.3：获取补装申请的图像识别预览（原图 + 方框 + Top5 候选）
    * 用于详情 Modal 中点击"图像识别预览"后展示
    */
-  async previewMatchForResupply(guildId: number, id: number, options?: { topN?: number; autoThreshold?: number; hammingThreshold?: number }) {
+  async previewMatchForResupply(
+    guildId: number,
+    id: number,
+    options?: {
+      topN?: number;
+      autoThreshold?: number;
+      hammingThreshold?: number;
+    },
+  ) {
     const r = await this.resupplyRepo.findOne({ where: { id, guildId } });
     if (!r) throw new NotFoundException('补装申请不存在');
-    if (!r.screenshotUrl) throw new BadRequestException('该申请无截图，无法预览');
+    if (!r.screenshotUrl)
+      throw new BadRequestException('该申请无截图，无法预览');
     const buffer = await this.fetchImageBuffer(r.screenshotUrl);
     if (!buffer) throw new BadRequestException('截图下载失败，请检查 URL');
-    const preview = await this.imageMatchService.previewMatchWithCandidates(buffer, options);
+    const preview = await this.imageMatchService.previewMatchWithCandidates(
+      buffer,
+      options,
+    );
     return { ...preview, originalUrl: r.screenshotUrl };
   }
 
   /**
    * V2.9.3：按 URL 直接预览（供待识别 Tab 无 resupplyId 时使用）
    */
-  async previewMatchFromUrl(imageUrl: string, options?: { topN?: number; autoThreshold?: number; hammingThreshold?: number }) {
+  async previewMatchFromUrl(
+    imageUrl: string,
+    options?: {
+      topN?: number;
+      autoThreshold?: number;
+      hammingThreshold?: number;
+    },
+  ) {
     if (!imageUrl) throw new BadRequestException('imageUrl 必填');
     const buffer = await this.fetchImageBuffer(imageUrl);
     if (!buffer) throw new BadRequestException('截图下载失败，请检查 URL');
-    const preview = await this.imageMatchService.previewMatchWithCandidates(buffer, options);
+    const preview = await this.imageMatchService.previewMatchWithCandidates(
+      buffer,
+      options,
+    );
     return { ...preview, originalUrl: imageUrl };
   }
 
@@ -597,11 +939,15 @@ export class ResupplyService {
   private async fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
     let fullUrl = imageUrl;
     if (imageUrl && !imageUrl.startsWith('http')) {
-      const baseUrl = this.configService.get<string>('app.frontendUrl') || 'http://localhost:3000';
+      const baseUrl =
+        this.configService.get<string>('app.frontendUrl') ||
+        'http://localhost:3000';
       fullUrl = `${baseUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
     }
     try {
-      const response = await fetch(fullUrl, { signal: AbortSignal.timeout(15000) });
+      const response = await fetch(fullUrl, {
+        signal: AbortSignal.timeout(15000),
+      });
       if (!response.ok) return null;
       return Buffer.from(await response.arrayBuffer());
     } catch (err) {

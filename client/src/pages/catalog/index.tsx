@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image, AutoComplete } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined } from '@ant-design/icons';
-import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog, searchCatalog } from '@/api/catalog';
+import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image, AutoComplete, Checkbox, Spin } from 'antd';
+
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined, StarOutlined } from '@ant-design/icons';
+import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog, searchCatalog, getOfficialCatalogImages, selectHotCatalogImages } from '@/api/catalog';
+
 import { uploadFile } from '@/api/upload';
 import request from '@/api/request';
 import { CATEGORIES, QUALITY_LABELS } from '@/types';
@@ -32,8 +34,14 @@ export default function CatalogPage() {
   // V2.9.8: 热门截图上传
   const [hotUploadTarget, setHotUploadTarget] = useState<{ id: number; name: string } | null>(null);
   const [hotUploadModal, setHotUploadModal] = useState(false);
+  const [officialModal, setOfficialModal] = useState(false);
+  const [officialTarget, setOfficialTarget] = useState<EquipmentCatalog | null>(null);
+  const [officialImages, setOfficialImages] = useState<any[]>([]);
+  const [selectedOfficialFiles, setSelectedOfficialFiles] = useState<string[]>([]);
+  const [officialLoading, setOfficialLoading] = useState(false);
 
   // V2.10: 新增热门装备 — 搜索关联装备 + 热度
+
   const [hotSearchValue, setHotSearchValue] = useState('');
   const [hotSearchOptions, setHotSearchOptions] = useState<any[]>([]);
   const [hotSelectedCatalog, setHotSelectedCatalog] = useState<any>(null);
@@ -205,8 +213,34 @@ export default function CatalogPage() {
     } catch {}
   };
 
+  const openOfficialPicker = async (item: EquipmentCatalog) => {
+    setOfficialTarget(item);
+    setOfficialModal(true);
+    setOfficialLoading(true);
+    try {
+      const res: any = await getOfficialCatalogImages(item.id);
+      setOfficialImages(res || []);
+      setSelectedOfficialFiles((res || []).filter((img: any) => img.isHot).map((img: any) => img.fileName));
+    } catch (err: any) {
+      message.error(err?.message || '读取官网图片库失败');
+      setOfficialImages([]);
+      setSelectedOfficialFiles([]);
+    } finally {
+      setOfficialLoading(false);
+    }
+  };
+
+  const handleSaveOfficialHot = async () => {
+    if (!officialTarget) return;
+    await selectHotCatalogImages(officialTarget.id, selectedOfficialFiles);
+    message.success('热门装备图片已更新，请执行“生成图片指纹”刷新匹配库');
+    setOfficialModal(false);
+    fetchList();
+  };
+
   const handleAlbionImport = async () => {
     setAlbionImporting(true);
+
     try {
       const res: any = await importAlbionCatalog(4);
       message.success(`Albion导入完成：新增 ${res.imported}，更新 ${res.updated}，跳过 ${res.skipped}，失败 ${res.failed}（共 ${res.total} 件）`);
@@ -242,7 +276,9 @@ export default function CatalogPage() {
       render: (_: any, record: EquipmentCatalog) => (
         <Space size="small">
           <Button size="small" type="link" icon={<PictureOutlined />} onClick={() => openImageManager(record)}>图片</Button>
+          <Button size="small" type="link" icon={<StarOutlined />} onClick={() => openOfficialPicker(record)}>热门图</Button>
           <Button size="small" type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
             <Button size="small" type="link" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
@@ -420,8 +456,36 @@ export default function CatalogPage() {
         </div>
       </Modal>
 
+      <Modal
+        title={`从官网图片库筛选热门图 - ${officialTarget ? `${officialTarget.level}${officialTarget.quality}${officialTarget.name}` : ''}`}
+        open={officialModal}
+        onCancel={() => setOfficialModal(false)}
+        onOk={handleSaveOfficialHot}
+        confirmLoading={officialLoading}
+        width={760}
+      >
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          官网图片库仅作为源图库。勾选后的图片会写入热门装备库，库存截图识别将优先匹配热门库。
+        </Text>
+        <Spin spinning={officialLoading}>
+          <Checkbox.Group value={selectedOfficialFiles} onChange={(vals) => setSelectedOfficialFiles(vals as string[])} style={{ width: '100%' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              {officialImages.map((img: any) => (
+                <label key={img.fileName} style={{ width: 130, border: selectedOfficialFiles.includes(img.fileName) ? '2px solid #1677ff' : '1px solid #d9d9d9', borderRadius: 8, padding: 8, cursor: 'pointer' }}>
+                  <Checkbox value={img.fileName} style={{ marginBottom: 6 }}>Q{img.itemQuality}</Checkbox>
+                  <Image src={img.dataUrl} width={96} height={96} style={{ objectFit: 'cover', borderRadius: 6 }} preview={false} />
+                  <div style={{ fontSize: 11, marginTop: 4, wordBreak: 'break-all' }}>{img.fileName}</div>
+                </label>
+              ))}
+              {!officialLoading && officialImages.length === 0 && <Text type="secondary">官网图片库未找到该 albionId 的候选图，请先确认装备参考库已写入 albion_id。</Text>}
+            </div>
+          </Checkbox.Group>
+        </Spin>
+      </Modal>
+
       {/* V2.9.8: 热门截图上传弹窗（创建装备后自动弹出） */}
       <Modal
+
         title={`上传热门截图 - ${hotUploadTarget?.name || ''}`}
         open={hotUploadModal}
         onCancel={() => setHotUploadModal(false)}

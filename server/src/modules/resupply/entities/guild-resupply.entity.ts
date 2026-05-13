@@ -1,4 +1,13 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  Index,
+} from 'typeorm';
 import { Guild } from '../../guild/entities/guild.entity';
 
 @Entity('guild_resupply')
@@ -14,35 +23,75 @@ export class GuildResupply {
   guildMemberId: number;
 
   @Index('idx_gr_kook_user')
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'kook_user_id', comment: '申请人KOOK ID' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'kook_user_id',
+    comment: '申请人KOOK ID',
+  })
   kookUserId: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: true, name: 'kook_nickname', comment: '申请人昵称' })
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'kook_nickname',
+    comment: '申请人昵称',
+  })
   kookNickname: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true, name: 'equipment_ids', comment: '待补装备ID列表（逗号分隔的catalog ID）' })
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'equipment_ids',
+    comment: '待补装备ID列表（逗号分隔的catalog ID）',
+  })
   equipmentIds: string;
 
   @Column({ type: 'int', default: 0, comment: '待补装备总数量' })
   quantity: number;
 
-  @Column({ type: 'varchar', length: 30, default: '补装', name: 'apply_type', comment: '申请类型' })
+  @Column({
+    type: 'varchar',
+    length: 30,
+    default: '补装',
+    name: 'apply_type',
+    comment: '申请类型',
+  })
   applyType: string;
 
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '备注' })
   reason: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true, name: 'screenshot_url', comment: '截图' })
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'screenshot_url',
+    comment: '截图',
+  })
   screenshotUrl: string;
 
   @Index('idx_gr_status')
-  @Column({ type: 'tinyint', default: 0, comment: '0待处理 1已通过 2已驳回 3已发放' })
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    comment: '0待处理 1已通过 2已驳回 3已发放',
+  })
   status: number;
 
   @Column({ name: 'processed_by', nullable: true, comment: '处理人' })
   processedBy: number;
 
-  @Column({ type: 'varchar', length: 500, nullable: true, name: 'process_remark', comment: '处理备注' })
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'process_remark',
+    comment: '处理备注',
+  })
   processRemark: string;
 
   @Column({ type: 'datetime', nullable: true, name: 'processed_at' })
@@ -54,38 +103,170 @@ export class GuildResupply {
   @Column({ type: 'datetime', nullable: true, name: 'dispatched_at' })
   dispatchedAt: Date;
 
-  @Column({ type: 'int', nullable: true, name: 'dispatch_quantity', comment: '实际发放数量' })
+  @Column({
+    type: 'int',
+    nullable: true,
+    name: 'dispatch_quantity',
+    comment: '实际发放数量',
+  })
   dispatchQuantity: number;
 
-  @Column({ type: 'varchar', length: 100, nullable: true, name: 'kook_message_id', comment: 'KOOK消息ID' })
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'kook_message_id',
+    comment: 'KOOK消息ID',
+  })
   kookMessageId: string;
 
-  @Column({ type: 'tinyint', default: 0, name: 'is_counted', comment: '是否已统计（预警推送后标记）' })
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'is_counted',
+    comment: '是否已统计（预警推送后标记）',
+  })
   isCounted: number;
 
-  @Column({ type: 'varchar', length: 64, nullable: true, name: 'dedup_hash', comment: '去重哈希（图片+日期+人员）' })
+  @Column({
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    name: 'dedup_hash',
+    comment: '去重哈希（图片+日期+人员）',
+  })
   dedupHash: string;
 
-  @Column({ type: 'varchar', length: 30, nullable: true, name: 'resupply_box', comment: '补装箱子编号（如 3-16, 大厅32）' })
+  @Column({
+    type: 'varchar',
+    length: 30,
+    nullable: true,
+    name: 'resupply_box',
+    comment: '补装箱子编号（如 3-16, 大厅32）',
+  })
   resupplyBox: string;
 
-  @Column({ type: 'varchar', length: 20, nullable: true, name: 'resupply_room', comment: '补装房间（如 1-14, 大厅一, 大厅二）' })
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+    name: 'resupply_room',
+    comment: '补装房间（如 1-14, 大厅一, 大厅二）',
+  })
   resupplyRoom: string;
 
-  @Column({ type: 'varchar', length: 10, nullable: true, name: 'kill_date', comment: '击杀日期 YYYY-MM-DD' })
+  @Column({
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+    name: 'kill_date',
+    comment: '击杀日期 YYYY-MM-DD',
+  })
   killDate: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'map_name', comment: '地图名称' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'map_name',
+    comment: '地图名称',
+  })
   mapName: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'game_id', comment: '游戏ID' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'game_id',
+    comment: '游戏ID',
+  })
   gameId: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'guild_name', comment: '公会名（OCR识别）' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'guild_name',
+    comment: '公会名（OCR识别）',
+  })
   ocrGuildName: string;
 
-  @Column({ type: 'datetime', nullable: true, name: 'kook_message_time', comment: 'KOOK消息推送时间' })
+  @Column({
+    type: 'datetime',
+    nullable: true,
+    name: 'kook_message_time',
+    comment: 'KOOK消息推送时间',
+  })
   kookMessageTime: Date;
+
+  @Column({
+    type: 'varchar',
+    length: 30,
+    nullable: true,
+    name: 'source',
+    comment: '来源 ocr/killboard/manual/kook_text',
+  })
+  source: string;
+
+  @Column({
+    type: 'bigint',
+    nullable: true,
+    name: 'albion_event_id',
+    comment: 'Albion官网战报事件ID',
+  })
+  albionEventId: number;
+
+  @Column({
+    type: 'bigint',
+    nullable: true,
+    name: 'albion_battle_id',
+    comment: 'Albion官网战斗ID',
+  })
+  albionBattleId: number;
+
+  @Column({
+    type: 'datetime',
+    nullable: true,
+    name: 'kill_time_utc',
+    comment: '官网/截图UTC死亡时间',
+  })
+  killTimeUtc: Date;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+    name: 'killboard_match_status',
+    comment: '官网战报匹配状态 matched/unmatched/pending',
+  })
+  killboardMatchStatus: string;
+
+  @Column({
+    type: 'decimal',
+    precision: 6,
+    scale: 2,
+    nullable: true,
+    name: 'killboard_time_diff_minutes',
+    comment: '官网战报时间差分钟',
+  })
+  killboardTimeDiffMinutes: number;
+
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'killboard_url',
+    comment: '官网战报链接',
+  })
+  killboardUrl: string;
+
+  @Column({
+    type: 'json',
+    nullable: true,
+    name: 'killboard_raw',
+    comment: '官网战报原始JSON',
+  })
+  killboardRaw: any;
 
   @Index('idx_gr_created')
   @CreateDateColumn({ name: 'created_at' })

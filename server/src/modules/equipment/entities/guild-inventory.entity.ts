@@ -1,4 +1,13 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  Index,
+} from 'typeorm';
 import { Guild } from '../../guild/entities/guild.entity';
 import { EquipmentCatalog } from '../../equipment-catalog/entities/equipment-catalog.entity';
 
@@ -16,16 +25,44 @@ export class GuildInventory {
   @Column({ name: 'catalog_id', comment: '关联装备参考库' })
   catalogId: number;
 
+  @Index('idx_gi_albion_id')
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'albion_id',
+    comment: 'Albion装备唯一ID',
+  })
+  albionId: string;
+
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'item_quality',
+    comment: '装备边框品质，仅展示保留，库存统计/扣减忽略',
+  })
+  itemQuality: number;
+
   @Column({ type: 'int', default: 0, comment: '数量' })
   quantity: number;
 
-  @Column({ type: 'varchar', length: 50, default: '公会仓库', comment: '所在位置' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    default: '公会仓库',
+    comment: '所在位置',
+  })
   location: string;
 
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '备注' })
   remark: string;
 
-  @Column({ type: 'tinyint', default: 0, name: 'is_counted', comment: '是否已统计（预警推送后标记）' })
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'is_counted',
+    comment: '是否已统计（预警推送后标记）',
+  })
   isCounted: number;
 
   @CreateDateColumn({ name: 'created_at' })

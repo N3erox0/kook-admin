@@ -48,7 +48,10 @@ export interface EquipmentCatalog {
   category: string;
   gearScore: number;
   imageUrl: string | null;
+  albionId?: string | null;
+  hotImagePath?: string | null;
   aliases: string | null;
+
   description: string | null;
 }
 

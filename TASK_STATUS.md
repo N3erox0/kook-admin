@@ -262,6 +262,17 @@
 | F-182 | 网格识别Radio+多图批量上传 | completed | 2026-04-29 23:30 | Select改Radio.Group，Upload加multiple，多张图累加gridCells |
 | F-183 | pHash自动预填装备名 | completed | 2026-04-29 23:30 | 切图后每格计算pHash匹配参考库，confidence≥0.55自动填入aliasName |
 | F-184 | 新增热门装备弹窗重做 | completed | 2026-04-29 23:30 | 改为搜索已有参考库装备+上传图片+热度，去掉装等/别称/描述 |
+| **V2.11** | **Albion官网战报+成员同步+热门图库重构** | | | |
+| F-185 | 成员管理双TAB | completed | 2026-05-13 13:30 | 成员管理拆分为公会成员(Albion)与KOOK成员，公会成员显示KOOK昵称并支持手动绑定 |
+| F-186 | Albion成员同步 | completed | 2026-05-13 13:30 | 新增Albion公会成员快照/绑定表，每天07:00按playerId同步加入离开并按昵称自动绑定 |
+| F-187 | 死亡补装改官网战报 | completed | 2026-05-13 13:30 | 暂停死亡装备图标OCR/pHash，改为文字OCR提取时间/地图/玩家/公会后按UTC±5分钟匹配官网死亡战报 |
+| F-188 | 战报装备明细 | completed | 2026-05-13 13:30 | 新增guild_resupply_items保存albionId、装备名、等级、附魔、item_quality、数量与匹配状态 |
+| F-189 | 装备AlbionID与边框品质字段 | completed | 2026-05-13 13:30 | 库存/日志/OCR/旧补装表补齐albion_id和item_quality，item_quality仅展示保留不参与库存统计扣减 |
+| F-190 | 官网图片库筛选热门图 | completed | 2026-05-13 13:30 | SSVIP装备参考库可按albionId查看官网图片库候选图并勾选为热门装备图片 |
+| F-191 | 库存识别分层匹配 | completed | 2026-05-13 13:30 | 网格识别按热门库→现有pHash→官网图片库顺序预填装备，上传区保留三框标线校准 |
+
+
+
 
 
 

@@ -27,3 +27,10 @@ export const deleteCatalogImage = (imageId: number) => request.delete(`/catalog/
 
 export const setPrimaryCatalogImage = (catalogId: number, imageId: number) =>
   request.put(`/catalog/${catalogId}/images/${imageId}/primary`);
+
+export const getOfficialCatalogImages = (catalogId: number) =>
+  request.get(`/catalog/${catalogId}/official-images`);
+
+export const selectHotCatalogImages = (catalogId: number, fileNames: string[]) =>
+  request.post(`/catalog/${catalogId}/hot-images/select`, { fileNames });
+

@@ -13,16 +13,31 @@ import { BotJoinRecord } from './entities/bot-join-record.entity';
 import { OcrModule } from '../ocr/ocr.module';
 import { EquipmentCatalogModule } from '../equipment-catalog/catalog.module';
 import { ResupplyModule } from '../resupply/resupply.module';
+import { AlbionModule } from '../albion/albion.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([GuildMember, Guild, InviteCode, BotJoinRecord]),
     OcrModule,
     EquipmentCatalogModule,
+    AlbionModule,
     forwardRef(() => ResupplyModule),
   ],
+
   controllers: [KookController],
-  providers: [KookService, KookSyncService, KookNotifyService, KookMessageService, KookBotInteractionService],
-  exports: [KookService, KookSyncService, KookNotifyService, KookMessageService, KookBotInteractionService],
+  providers: [
+    KookService,
+    KookSyncService,
+    KookNotifyService,
+    KookMessageService,
+    KookBotInteractionService,
+  ],
+  exports: [
+    KookService,
+    KookSyncService,
+    KookNotifyService,
+    KookMessageService,
+    KookBotInteractionService,
+  ],
 })
 export class KookModule {}
