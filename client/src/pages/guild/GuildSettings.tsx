@@ -214,12 +214,42 @@ export default function GuildSettingsPage() {
         </Form>
       </Card>
 
+      {/* Albion 公会绑定 */}
+      <Card title="Albion 公会绑定" style={{ marginBottom: 16 }}>
+        <Form layout="vertical" initialValues={{ albionGuildId: guild?.albionGuildId || '', albionServer: guild?.albionServer || 'sgp', albionGuildName: guild?.albionGuildName || '' }}
+          onFinish={async (values: any) => {
+            setSaving(true);
+            try {
+              await updateGuild(guildId, values);
+              message.success('Albion 公会信息已保存');
+              fetchGuild();
+            } catch { message.error('保存失败'); }
+            finally { setSaving(false); }
+          }}
+        >
+          <Form.Item name="albionGuildId" label="Albion 公会 ID" tooltip="从官网战报网站获取，如 Eeri9pZPQFWGsofMjSUwdg">
+            <Input placeholder="粘贴 Albion 公会 ID（后续版本将支持按名称搜索）" />
+          </Form.Item>
+          <Form.Item name="albionServer" label="Albion 服务器">
+            <Select options={[{ value: 'sgp', label: '亚服 (SGP)' }, { value: 'ams', label: '欧服 (AMS)' }, { value: 'west', label: '美服 (West)' }]} />
+          </Form.Item>
+          <Form.Item name="albionGuildName" label="Albion 公会名称">
+            <Input placeholder="如 PSC" />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>保存 Albion 配置</Button>
+          </Form.Item>
+        </Form>
+      </Card>
+
       {/* 公会信息展示 */}
       {guild && (
         <Card size="small" style={{ background: '#fafafa', marginBottom: 16 }}>
           <Space direction="vertical" size="small">
             <Text><Text strong>公会名称：</Text>{guild.name}</Text>
             <Text><Text strong>KOOK 服务器 ID：</Text>{guild.kookGuildId || '未配置'}</Text>
+            <Text><Text strong>Albion 公会 ID：</Text>{guild.albionGuildId || '未配置'}</Text>
+            <Text><Text strong>Albion 服务器：</Text>{guild.albionServer || '未配置'}</Text>
             <Text><Text strong>创建时间：</Text>{guild.createdAt}</Text>
           </Space>
         </Card>

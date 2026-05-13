@@ -49,6 +49,9 @@ export class UpdateGuildDto {
   @IsOptional() @IsString() kookAdminChannelId?: string;
   @IsOptional() @IsString() kookAdminRoleId?: string;
   @IsOptional() @IsArray() kookListenChannelIds?: string[];
+  @IsOptional() @IsString() albionGuildId?: string;
+  @IsOptional() @IsString() albionServer?: string;
+  @IsOptional() @IsString() albionGuildName?: string;
 }
 
 export class UpdateMemberRoleDto {
