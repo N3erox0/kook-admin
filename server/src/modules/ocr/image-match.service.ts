@@ -2064,30 +2064,31 @@ export class ImageMatchService {
       throw new Error('sharp 依赖未安装');
     }
 
-    // 精确推算格子尺寸和间隙
-    let cellW: number, cellH: number, gapX: number, gapY: number;
+    // 精确推算格子尺寸和间隙（格子必须正方形）
+    let cellSize: number, gapX: number, gapY: number;
 
     if (anchorCell && anchorCell.width > 5 && anchorCell.height > 5) {
-      cellW = anchorCell.width;
-      cellH = anchorCell.height;
-      gapX = cols > 1 ? (outerRect.width - cols * cellW) / (cols - 1) : 0;
-      gapY = rows > 1 ? (outerRect.height - rows * cellH) / (rows - 1) : 0;
-      if (gapX < 0) gapX = 0;
-      if (gapY < 0) gapY = 0;
+      // 格子必须正方形：取较大值
+      cellSize = Math.max(anchorCell.width, anchorCell.height);
+      // 横向间隙由 outerRect.width 反推
+      gapX = cols > 1 ? (outerRect.width - cols * cellSize) / (cols - 1) : 0;
+      // 纵向间隙 = 横向间隙（规则文档要求）
+      gapY = gapX;
+      if (gapX < 0) { gapX = 0; gapY = 0; }
     } else {
       const defaultGapRatio = 0.055;
-      cellW = outerRect.width / (cols + (cols - 1) * defaultGapRatio);
-      cellH = outerRect.height / (rows + (rows - 1) * defaultGapRatio);
-      gapX = cellW * defaultGapRatio;
-      gapY = cellH * defaultGapRatio;
+      cellSize = outerRect.width / (cols + (cols - 1) * defaultGapRatio);
+      gapX = cellSize * defaultGapRatio;
+      gapY = gapX;
     }
 
-    // 起始坐标 = outerRect 左上角（firstCell 在 outerRect 内左上角）
+    // 反推正确的 outerRect 高度（确保 rows 行完整显示）
+    const correctedHeight = rows * cellSize + (rows - 1) * gapY;
     const startX = outerRect.left;
     const startY = outerRect.top;
 
     this.logger.log(
-      `[V2.12 gridParse] ${cols}x${rows}, outer=(${outerRect.left},${outerRect.top},${outerRect.width}x${outerRect.height}), cell=${cellW.toFixed(1)}x${cellH.toFixed(1)}, gap=${gapX.toFixed(1)}x${gapY.toFixed(1)}, start=(${startX},${startY})`,
+      `[V2.12 gridParse] ${cols}x${rows}, outer=(${outerRect.left},${outerRect.top},${outerRect.width}x${outerRect.height}), cellSize=${cellSize.toFixed(1)}, gap=${gapX.toFixed(1)}, correctedH=${correctedHeight.toFixed(1)}`,
     );
 
     // 中心裁剪规则（不对称：y 方向偏上，去左上角等级标记）
@@ -2101,20 +2102,20 @@ export class ImageMatchService {
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        // 浮点计算每格坐标
-        const x = startX + c * (cellW + gapX);
-        const y = startY + r * (cellH + gapY);
+        // 浮点计算每格坐标（正方形格子）
+        const x = startX + c * (cellSize + gapX);
+        const y = startY + r * (cellSize + gapY);
 
         const fullLeft = Math.round(x);
         const fullTop = Math.round(y);
-        const fullW = Math.round(cellW);
-        const fullH = Math.round(cellH);
+        const fullW = Math.round(cellSize);
+        const fullH = Math.round(cellSize);
 
         // 中心主体区域（不对称裁剪）
-        const centerLeft = Math.round(x + cellW * CROP_X_RATIO);
-        const centerTop = Math.round(y + cellH * CROP_Y_RATIO);
-        const centerW = Math.round(cellW * CROP_W_RATIO);
-        const centerH = Math.round(cellH * CROP_H_RATIO);
+        const centerLeft = Math.round(x + cellSize * CROP_X_RATIO);
+        const centerTop = Math.round(y + cellSize * CROP_Y_RATIO);
+        const centerW = Math.round(cellSize * CROP_W_RATIO);
+        const centerH = Math.round(cellSize * CROP_H_RATIO);
 
         if (fullW < 10 || fullH < 10) { index++; continue; }
 

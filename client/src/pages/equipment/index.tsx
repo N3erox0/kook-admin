@@ -353,8 +353,29 @@ export default function EquipmentPage() {
   const CONTAINER_W = 700; // 对齐容器固定宽度
   const CONTAINER_H = 550; // 对齐容器固定高度
   // 大框占容器的百分比（基于规则文档 outerRectRatio 预填，固定位置）
-  // 所有容器统一用容器中央 90% 区域作为大框，用户通过拖拽图片来对齐
-  const OUTER_RECT_PCT = { left: 5, top: 5, width: 90, height: 90 };
+  // 大框根据容器类型的 cols:rows 比例自适应（保证格子是正方形）
+  const getOuterRectPct = (layout: string) => {
+    const { cols, rows } = getLayoutDef(layout);
+    const containerW = CONTAINER_W;
+    const containerH = CONTAINER_H;
+    const maxW = containerW * 0.90;
+    const maxH = containerH * 0.90;
+    // 按 cols:rows 比例，在容器内最大化且居中
+    const gridRatio = cols / rows;
+    let boxW: number, boxH: number;
+    if (maxW / maxH > gridRatio) {
+      // 容器偏宽，以高为准
+      boxH = maxH;
+      boxW = boxH * gridRatio;
+    } else {
+      // 容器偏高，以宽为准
+      boxW = maxW;
+      boxH = boxW / gridRatio;
+    }
+    const left = ((containerW - boxW) / 2 / containerW) * 100;
+    const top = ((containerH - boxH) / 2 / containerH) * 100;
+    return { left, top, width: (boxW / containerW) * 100, height: (boxH / containerH) * 100 };
+  };
 
   // 规则文档中每种容器的 outerRectRatio（用于初始化图片缩放/偏移，使装备区大致落在框内）
   const TEMPLATE_RATIOS: Record<string, { outerRatio: { x: number; y: number; w: number; h: number }; firstCellRatio: { w: number; h: number } }> = {
@@ -382,38 +403,33 @@ export default function EquipmentPage() {
       const imgEl = document.getElementById('grid-preview-img') as HTMLImageElement;
       if (!imgEl) { message.error('图片未加载'); setGridLoading(false); return; }
 
-      // 原图真实尺寸
       const natW = imgEl.naturalWidth;
       const natH = imgEl.naturalHeight;
-      // 图片在容器中的显示尺寸（受 scale 影响）
-      const dispW = natW * imgTransform.scale;
-      const dispH = natH * imgTransform.scale;
 
-      // 大框在容器中的像素位置（固定）
-      const boxLeft = CONTAINER_W * OUTER_RECT_PCT.left / 100;
-      const boxTop = CONTAINER_H * OUTER_RECT_PCT.top / 100;
-      const boxW = CONTAINER_W * OUTER_RECT_PCT.width / 100;
-      const boxH = CONTAINER_H * OUTER_RECT_PCT.height / 100;
+      // 动态计算大框在容器中的像素位置
+      const orp = getOuterRectPct(gridLayout);
+      const boxLeft = CONTAINER_W * orp.left / 100;
+      const boxTop = CONTAINER_H * orp.top / 100;
+      const boxW = CONTAINER_W * orp.width / 100;
+      const boxH = CONTAINER_H * orp.height / 100;
 
-      // 大框在原图中的像素坐标 = (大框容器坐标 - 图片偏移) / scale × (natW / (natW * scale)) 简化
-      const pixelPerContainerPx = natW / dispW; // = 1 / scale
+      // 大框在原图中的像素坐标
+      const pixelPerPx = 1 / imgTransform.scale;
       const outerRect = {
-        left: Math.round((boxLeft - imgTransform.x) * pixelPerContainerPx),
-        top: Math.round((boxTop - imgTransform.y) * pixelPerContainerPx),
-        width: Math.round(boxW * pixelPerContainerPx),
-        height: Math.round(boxH * pixelPerContainerPx),
+        left: Math.round((boxLeft - imgTransform.x) * pixelPerPx),
+        top: Math.round((boxTop - imgTransform.y) * pixelPerPx),
+        width: Math.round(boxW * pixelPerPx),
+        height: Math.round(boxH * pixelPerPx),
       };
 
-      // anchorCell = 规则文档中 firstCellRatio 还原为像素
+      // anchorCell：正方形格子，用规则文档 firstCellRatio 或从 outerRect 推算
       const tmpl = TEMPLATE_RATIOS[gridLayout];
-      const { cols: lCols, rows: lRows } = getLayoutDef(gridLayout);
-      const anchorCell = tmpl ? {
-        width: Math.round(natW * tmpl.firstCellRatio.w),
-        height: Math.round(natH * tmpl.firstCellRatio.h),
-      } : {
-        width: Math.round(outerRect.width / lCols * 0.95),
-        height: Math.round(outerRect.height / lRows * 0.95),
-      };
+      const { cols: lCols } = getLayoutDef(gridLayout);
+      // 格子必须正方形，以宽度为准
+      const cellSizePx = tmpl
+        ? Math.round(natW * tmpl.firstCellRatio.w)
+        : Math.round(outerRect.width / lCols * 0.95);
+      const anchorCell = { width: cellSizePx, height: cellSizePx };
 
       const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, outerRect, anchorCell);
       const newCells = (parseRes?.cells || []).map((c: any) => ({
@@ -850,45 +866,46 @@ export default function EquipmentPage() {
                       pointerEvents: 'none',
                     }}
                   />
-                  {/* 固定遮罩层：大红框 + 网格线 + 第一格蓝框 */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${OUTER_RECT_PCT.left}%`, top: `${OUTER_RECT_PCT.top}%`,
-                      width: `${OUTER_RECT_PCT.width}%`, height: `${OUTER_RECT_PCT.height}%`,
-                      border: '2px solid #ff4d4f',
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    {/* 网格线 */}
-                    {(() => {
-                      const { cols, rows } = getLayoutDef(gridLayout);
-                      const lines: React.ReactNode[] = [];
-                      for (let i = 1; i < cols; i++) {
-                        lines.push(<div key={`v${i}`} style={{ position: 'absolute', left: `${(i / cols) * 100}%`, top: 0, bottom: 0, width: 1, background: 'rgba(255,77,79,0.5)' }} />);
-                      }
-                      for (let i = 1; i < rows; i++) {
-                        lines.push(<div key={`h${i}`} style={{ position: 'absolute', top: `${(i / rows) * 100}%`, left: 0, right: 0, height: 1, background: 'rgba(255,77,79,0.5)' }} />);
-                      }
-                      // 第一格蓝色高亮
-                      lines.push(
-                        <div key="first-cell" style={{
-                          position: 'absolute', left: 0, top: 0,
-                          width: `${100 / cols}%`, height: `${100 / rows}%`,
-                          border: '3px solid #1677ff', background: 'rgba(22,119,255,0.12)',
-                          pointerEvents: 'none', borderRadius: 2,
-                        }} />
-                      );
-                      return lines;
-                    })()}
-                  </div>
-                  {/* 半透明遮罩（框外区域变暗） */}
-                  <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: `${OUTER_RECT_PCT.top}%`, background: 'rgba(0,0,0,0.35)' }} />
-                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${100 - OUTER_RECT_PCT.top - OUTER_RECT_PCT.height}%`, background: 'rgba(0,0,0,0.35)' }} />
-                    <div style={{ position: 'absolute', top: `${OUTER_RECT_PCT.top}%`, left: 0, width: `${OUTER_RECT_PCT.left}%`, height: `${OUTER_RECT_PCT.height}%`, background: 'rgba(0,0,0,0.35)' }} />
-                    <div style={{ position: 'absolute', top: `${OUTER_RECT_PCT.top}%`, right: 0, width: `${100 - OUTER_RECT_PCT.left - OUTER_RECT_PCT.width}%`, height: `${OUTER_RECT_PCT.height}%`, background: 'rgba(0,0,0,0.35)' }} />
-                  </div>
+                  {/* 固定遮罩层：大红框 + 网格线 + 第一格蓝框（动态比例，保证格子正方形） */}
+                  {(() => {
+                    const orp = getOuterRectPct(gridLayout);
+                    const { cols, rows } = getLayoutDef(gridLayout);
+                    return (
+                      <>
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: `${orp.left}%`, top: `${orp.top}%`,
+                            width: `${orp.width}%`, height: `${orp.height}%`,
+                            border: '2px solid #ff4d4f',
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          {/* 网格线（等分，格子正方形因为大框宽高比 = cols:rows） */}
+                          {Array.from({ length: cols - 1 }, (_, i) => (
+                            <div key={`v${i}`} style={{ position: 'absolute', left: `${((i + 1) / cols) * 100}%`, top: 0, bottom: 0, width: 1, background: 'rgba(255,77,79,0.5)' }} />
+                          ))}
+                          {Array.from({ length: rows - 1 }, (_, i) => (
+                            <div key={`h${i}`} style={{ position: 'absolute', top: `${((i + 1) / rows) * 100}%`, left: 0, right: 0, height: 1, background: 'rgba(255,77,79,0.5)' }} />
+                          ))}
+                          {/* 第一格蓝色高亮（正方形） */}
+                          <div style={{
+                            position: 'absolute', left: 0, top: 0,
+                            width: `${100 / cols}%`, height: `${100 / rows}%`,
+                            border: '3px solid #1677ff', background: 'rgba(22,119,255,0.12)',
+                            pointerEvents: 'none', borderRadius: 2,
+                          }} />
+                        </div>
+                        {/* 半透明遮罩（框外区域变暗） */}
+                        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: `${orp.top}%`, background: 'rgba(0,0,0,0.35)' }} />
+                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${100 - orp.top - orp.height}%`, background: 'rgba(0,0,0,0.35)' }} />
+                          <div style={{ position: 'absolute', top: `${orp.top}%`, left: 0, width: `${orp.left}%`, height: `${orp.height}%`, background: 'rgba(0,0,0,0.35)' }} />
+                          <div style={{ position: 'absolute', top: `${orp.top}%`, right: 0, width: `${100 - orp.left - orp.width}%`, height: `${orp.height}%`, background: 'rgba(0,0,0,0.35)' }} />
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                 <div style={{ marginTop: 12 }}>
                   <Space>

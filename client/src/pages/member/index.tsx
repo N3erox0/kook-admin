@@ -149,7 +149,7 @@ export default function MemberPage() {
     { title: 'Albion玩家名', dataIndex: 'playerName', key: 'playerName', width: 170 },
     { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (v: string) => v === 'active' ? <Tag color="green">在会</Tag> : <Tag color="red">离开</Tag> },
     { title: 'KOOK 昵称', dataIndex: 'kookNickname', key: 'kookNickname', width: 160, render: (v: string) => v || <Text type="secondary">未绑定</Text> },
-    { title: '击杀/死亡声望', key: 'fame', width: 160, render: (_: any, r: any) => `${Number(r.killFame || 0).toLocaleString()} / ${Number(r.deathFame || 0).toLocaleString()}` },
+    { title: '在公会天数', key: 'days', width: 100, render: (_: any, record: any) => record.status !== 'active' ? '-' : `${calcDays(record.joinedAt)} 天` },
     { title: '加入时间', dataIndex: 'joinedAt', key: 'joinedAt', width: 110, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
     { title: '离开时间', dataIndex: 'leftAt', key: 'leftAt', width: 110, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
     ...(canManage ? [{ title: '操作', key: 'actions', width: 90, render: (_: any, record: any) => <Button size="small" type="link" icon={<LinkOutlined />} onClick={() => openBindModal(record)}>绑定</Button> }] : []),
