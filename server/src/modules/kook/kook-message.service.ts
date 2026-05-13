@@ -1231,7 +1231,6 @@ export class KookMessageService {
 
     return { date, killTimeUtc, mapName, gameId, guildName, isKillDetail: true };
   }
-  }
 
   /** 提取消息中所有图片URL（支持一条消息多张图） */
   private extractAllImageUrls(d: any): string[] {
