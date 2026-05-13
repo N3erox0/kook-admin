@@ -14,6 +14,20 @@ export interface AlbionGuildMemberDto {
   DeathFame?: number;
 }
 
+/**
+ * 战报装备明细
+ * @slot - 英文槽位名（MainHand/OffHand/Head/Armor/Shoes/Bag/Cape/Mount/Potion/Food）
+ * @albionId - Albion 装备唯一ID（如 T8_SWORD@3）
+ * @count - 数量
+ * @itemQuality - 边框品质 0-5（0无/1普通/2良好/3优秀/4杰出/5不凡），仅展示保留
+ * @catalogId - 匹配到的参考库ID，为null表示未匹配
+ * @equipmentName - 装备名称（优先取参考库名称，否则用 albionId）
+ * @level - 等级（T1-T8）
+ * @enchantLevel - 附魔等级 @0~@4（来自 albionId @N 后缀或参考库 quality 字段）
+ * @category - 部位（武器/副手/头/甲/鞋/披风/坐骑/药水/食物/其他），来自参考库
+ * @gearScore - 装等（level + enchantLevel）
+ * @matchStatus - 匹配状态（matched=已匹配参考库/unmatched=未匹配）
+ */
 export interface KillboardEquipmentItem {
   slot: string;
   albionId: string;
@@ -223,7 +237,10 @@ export class AlbionService {
       const albionId = String(raw.Type);
       const catalog = await this.catalogService
         .findByAlbionId(albionId)
-        .catch(() => null);
+        .catch((err) => {
+          this.logger.warn(`findByAlbionId(${albionId}) 异常: ${err.message}`);
+          return null;
+        });
       const parsed = this.parseAlbionId(albionId);
       items.push({
         slot,
@@ -248,11 +265,28 @@ export class AlbionService {
     level: number | null;
     enchantLevel: number;
   } {
-    const tier = albionId.match(/^T(\d+)/i);
-    const enchant = albionId.match(/@(\d+)/);
+    // 支持格式: T8_SWORD@3 / @3T8_SWORD / T8_SWORD_UI_SKIN@2 / @2T8_SWORD@3
+    const atIndex = albionId.indexOf('@');
+    let tier = 0;
+    let enchant = 0;
+
+    if (atIndex !== -1) {
+      // 先找 @N 部分（从后往前找最后一个 @）
+      const lastAt = albionId.lastIndexOf('@');
+      const atPart = albionId.slice(lastAt + 1);
+      enchant = parseInt(atPart, 10) || 0;
+      // 取 @N 之前的部分来匹配 T数字
+      const beforeAt = albionId.slice(0, lastAt);
+      const tierMatch = beforeAt.match(/T(\d+)/i);
+      tier = tierMatch ? parseInt(tierMatch[1], 10) : 0;
+    } else {
+      const tierMatch = albionId.match(/T(\d+)/i);
+      tier = tierMatch ? parseInt(tierMatch[1], 10) : 0;
+    }
+
     return {
-      level: tier ? Number(tier[1]) : null,
-      enchantLevel: enchant ? Number(enchant[1]) : 0,
+      level: tier || null,
+      enchantLevel: enchant,
     };
   }
 }

@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, Between, MoreThanOrEqual } from 'typeorm';
+import { Repository, Between } from 'typeorm';
 import { GuildMember } from './entities/guild-member.entity';
 import { AlbionGuildMember } from './entities/albion-guild-member.entity';
 import { MemberAlbionBinding } from './entities/member-albion-binding.entity';
@@ -230,6 +230,8 @@ export class MemberService {
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const { entities, raw } = await qb.getRawAndEntities();
+    // getRawAndEntities 返回 raw 中列名格式为 a_player_id，addSelect 别名为 bindXxx
+    // 用 raw 数组索引与 entities 对应（TypeORM 保证两者顺序一致）
     const list = entities.map((item, index) => ({
       ...item,
       kookNickname: raw[index]?.bindKookNickname || null,
@@ -255,12 +257,11 @@ export class MemberService {
   async syncAlbionGuildMembers(guildId: number) {
     const guild = await this.guildRepo.findOne({ where: { id: guildId } });
     if (!guild) throw new NotFoundException('公会不存在');
-    const albionGuildId =
-      guild.albionGuildId ||
-      (guild.name === 'PSC' ? 'Eeri9pZPQFWGsofMjSUwdg' : null);
+    // Bug5 修复：不再硬编码 PSC 公会ID，必须从公会配置读取
+    const albionGuildId = guild.albionGuildId;
     const albionGuildName = guild.albionGuildName || guild.name;
     const albionServer = guild.albionServer || 'sgp';
-    if (!albionGuildId) throw new BadRequestException('请先配置 Albion 公会ID');
+    if (!albionGuildId) throw new BadRequestException('请先在公会设置中配置 Albion 公会ID');
 
     const now = new Date();
     const remoteMembers = await this.albionService.getGuildMembers(
@@ -342,10 +343,13 @@ export class MemberService {
   }
 
   async syncAllAlbionGuildMembers() {
+    // Bug5 修复：不再硬编码 PSC 公会ID，只同步已配置 albionGuildId 的公会
     const guilds = await this.guildRepo.find({ where: { status: 1 } });
+    const guildsToSync = guilds.filter(
+      (g) => g.albionGuildId && g.albionGuildId.trim() !== '',
+    );
     let synced = 0;
-    for (const guild of guilds) {
-      if (!guild.albionGuildId && guild.name !== 'PSC') continue;
+    for (const guild of guildsToSync) {
       try {
         await this.syncAlbionGuildMembers(guild.id);
         synced++;

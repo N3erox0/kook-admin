@@ -270,6 +270,13 @@
 | F-189 | 装备AlbionID与边框品质字段 | completed | 2026-05-13 13:30 | 库存/日志/OCR/旧补装表补齐albion_id和item_quality，item_quality仅展示保留不参与库存统计扣减 |
 | F-190 | 官网图片库筛选热门图 | completed | 2026-05-13 13:30 | SSVIP装备参考库可按albionId查看官网图片库候选图并勾选为热门装备图片 |
 | F-191 | 库存识别分层匹配 | completed | 2026-05-13 13:30 | 网格识别按热门库→现有pHash→官网图片库顺序预填装备，上传区保留三框标线校准 |
+| **V2.11.1** | **Phase 3 质量修复热修复** | | | |
+| HF-001 | catalogService异常日志化 | completed | 2026-05-13 15:33 | findByAlbionId 异常改为 warn 日志，不再静默吞掉 |
+| HF-002 | KillboardEquipmentItem 增加 JSDoc 注释 | completed | 2026-05-13 15:33 | 明确 slot/itemQuality/enchantLevel/category 等字段含义，消除命名混淆 |
+| HF-003 | parseAlbionId 支持复杂格式 | completed | 2026-05-13 15:33 | 支持 T8_SWORD_UI_SKIN@2 等带后缀格式，兼容 T8_SWORD@3 |
+| HF-004 | findAlbionMembers 索引映射确认 | completed | 2026-05-13 15:40 | TypeORM getRawAndEntities 保证 entities 与 raw 索引一致，恢复 index 映射 |
+| HF-005 | 移除 PSC 公会硬编码 | completed | 2026-05-13 15:33 | syncAlbionGuildMembers/syncAllAlbionGuildMembers 改为从公会配置读取 albionGuildId |
+| HF-006 | 清理未使用 import | completed | 2026-05-13 15:40 | member.service.ts 移除未使用的 Like/MoreThanOrEqual import |
 
 
 
