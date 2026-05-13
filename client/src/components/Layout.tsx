@@ -166,7 +166,7 @@ export default function AppLayout() {
           ) : !isSSVIP && isSuperAdmin ? (
             <Upload showUploadList={false} accept="image/*" beforeUpload={handleUploadIcon}>
               <Avatar icon={<CameraOutlined />} size={32} shape="square"
-                style={{ background: '#1890ff', cursor: 'pointer' }} title="点击上传公会图标" />
+                style={{ background: '#1890ff', cursor: 'pointer' }} />
             </Upload>
           ) : (
             <Avatar icon={<AppstoreOutlined />} size={32} shape="square"

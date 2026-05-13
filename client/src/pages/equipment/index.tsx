@@ -406,12 +406,13 @@ export default function EquipmentPage() {
 
       // anchorCell = 规则文档中 firstCellRatio 还原为像素
       const tmpl = TEMPLATE_RATIOS[gridLayout];
+      const { cols: lCols, rows: lRows } = getLayoutDef(gridLayout);
       const anchorCell = tmpl ? {
         width: Math.round(natW * tmpl.firstCellRatio.w),
         height: Math.round(natH * tmpl.firstCellRatio.h),
       } : {
-        width: Math.round(outerRect.width / cols * 0.95),
-        height: Math.round(outerRect.height / rows * 0.95),
+        width: Math.round(outerRect.width / lCols * 0.95),
+        height: Math.round(outerRect.height / lRows * 0.95),
       };
 
       const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, outerRect, anchorCell);
