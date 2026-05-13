@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout as AntLayout, Menu, Dropdown, Avatar, Typography, Space, Tag, message } from 'antd';
+import { Layout as AntLayout, Menu, Dropdown, Avatar, Typography, Space, Tag, message, Upload } from 'antd';
 import {
   DashboardOutlined, TeamOutlined, DatabaseOutlined, AppstoreOutlined,
   SyncOutlined, AlertOutlined, FileTextOutlined, SwapOutlined,
   LogoutOutlined, UserOutlined, KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  SettingOutlined, PlusOutlined, ReloadOutlined,
+  SettingOutlined, PlusOutlined, ReloadOutlined, CameraOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
 import { ROLE_LABELS } from '@/types';
 import { refreshGuildInfo } from '@/api/kook';
 import { getProfile } from '@/api/auth';
+import request from '@/api/request';
 import type { MenuProps } from 'antd';
 
 const { Header, Sider, Content } = AntLayout;
@@ -44,6 +45,7 @@ export default function AppLayout() {
   const currentGuild = guilds.find((g) => g.guildId === currentGuildId);
   // SSVIP 用户始终使用 globalRole，不被公会角色覆盖
   const isSSVIP = user?.globalRole === 'ssvip';
+  const isSuperAdmin = currentGuildRole === 'super_admin';
   const effectiveRole = isSSVIP ? 'ssvip' : (currentGuildRole || user?.globalRole || '');
 
   // V2.9.9: 自动刷新公会图标（如果为空且非SSVIP）
@@ -77,7 +79,6 @@ export default function AppLayout() {
       if (res?.error) {
         message.warning(res.error);
       } else {
-        // 重新拉取用户 profile 更新 guilds
         try {
           const profile: any = await getProfile();
           if (profile?.guilds) setGuilds(profile.guilds);
@@ -89,6 +90,27 @@ export default function AppLayout() {
     } finally {
       setRefreshingIcon(false);
     }
+  };
+
+  /** T-001: 超管上传公会图标 */
+  const handleUploadIcon = async (file: File) => {
+    if (!currentGuildId) return false;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const uploadRes: any = await request.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      if (uploadRes?.url) {
+        await request.put(`/guilds/${currentGuildId}`, { iconUrl: uploadRes.url });
+        try {
+          const profile: any = await getProfile();
+          if (profile?.guilds) setGuilds(profile.guilds);
+        } catch {}
+        message.success('公会图标已上传');
+      }
+    } catch (err: any) {
+      message.error(err?.message || '上传失败');
+    }
+    return false;
   };
 
   const userMenuItems: MenuProps['items'] = [
@@ -141,6 +163,11 @@ export default function AppLayout() {
         }}>
           {!isSSVIP && currentGuild?.guildIcon ? (
             <Avatar src={currentGuild.guildIcon} size={32} shape="square" />
+          ) : !isSSVIP && isSuperAdmin ? (
+            <Upload showUploadList={false} accept="image/*" beforeUpload={handleUploadIcon}>
+              <Avatar icon={<CameraOutlined />} size={32} shape="square"
+                style={{ background: '#1890ff', cursor: 'pointer' }} title="点击上传公会图标" />
+            </Upload>
           ) : (
             <Avatar icon={<AppstoreOutlined />} size={32} shape="square"
               style={{ background: isSSVIP ? '#faad14' : '#1890ff' }} />

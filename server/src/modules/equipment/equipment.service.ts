@@ -345,19 +345,17 @@ export class EquipmentService {
     return { totalQuantity, byCategory: result };
   }
 
-  // ===== V2.9.2 网格识别入库（方案D） =====
+  // ===== V2.12 网格识别入库（固定切图） =====
 
   /**
-   * 解析截图网格：按图标切片 → 返回每格的缩略图+自动识别的数量/品质
-   * 装备名由用户后续手动填写
+   * V2.12: 网格识别 — 前端传入 outerRect + anchorCell + layout
    */
   async gridParse(
     imageUrl: string,
     layout?: string,
-    anchor?: { x: number; y: number; w: number; h: number },
-    boxes?: Array<{ x: number; y: number; w: number; h: number }>,
+    outerRect?: { left: number; top: number; width: number; height: number },
+    anchorCell?: { width: number; height: number },
   ): Promise<any> {
-    // 获取图片 Buffer
     let buffer: Buffer;
     if (imageUrl.startsWith('http')) {
       const res = await fetch(imageUrl);
@@ -365,102 +363,41 @@ export class EquipmentService {
         throw new BadRequestException(`图片下载失败: HTTP ${res.status}`);
       buffer = Buffer.from(await res.arrayBuffer());
     } else {
-      // 相对路径 → 本地文件
       const path = require('path');
       const fs = require('fs/promises');
       const absPath = path.join(process.cwd(), imageUrl.replace(/^\//, ''));
       buffer = await fs.readFile(absPath);
     }
 
-    // V2.10.6: 3框定位法（优先）
-    if (boxes && boxes.length >= 3) {
-      this.logger.log(
-        `[V2.10.6 gridParse] 3框定位: boxes=${JSON.stringify(boxes)}, layout=${layout}`,
-      );
-      return this.imageMatchService.gridParseWith3Boxes(
-        buffer,
-        layout || '5x7',
-        boxes,
-      );
+    const LAYOUT_MAP: Record<string, { cols: number; rows: number }> = {
+      'guild_island_chest_5x7': { cols: 5, rows: 7 },
+      'army_wood_chest_5x7': { cols: 5, rows: 7 },
+      'backpack_large_4x5': { cols: 4, rows: 5 },
+      'backpack_medium_5x7': { cols: 5, rows: 7 },
+      'backpack_small_6x8': { cols: 6, rows: 8 },
+      'egg_chest_5x2': { cols: 5, rows: 2 },
+      '5x7': { cols: 5, rows: 7 },
+      '4x5': { cols: 4, rows: 5 },
+      '6x8': { cols: 6, rows: 8 },
+      '5x2': { cols: 5, rows: 2 },
+    };
+    const gridDef = LAYOUT_MAP[layout || '5x7'] || { cols: 5, rows: 7 };
+    const { cols, rows } = gridDef;
+
+    if (!outerRect || outerRect.width < 20 || outerRect.height < 20) {
+      throw new BadRequestException('请先对齐红色网格框后再提交');
     }
 
-    // V2.10.5: 半自动画框模式 — 有 anchor 时直接用锚点等间距切图
-    if (anchor && anchor.w > 10 && anchor.h > 10) {
-      this.logger.log(
-        `[V2.10.5 gridParse] 半自动画框: anchor=(${anchor.x},${anchor.y},${anchor.w}x${anchor.h}), layout=${layout}`,
-      );
-      const cropRegion = { topPercent: 0, bottomPercent: 0 }; // 不裁剪，直接用 anchor
-      return this.imageMatchService.gridParseWithAnchor(
-        buffer,
-        layout || '5x7',
-        anchor,
-      );
-    }
+    this.logger.log(
+      `[V2.12 gridParse] layout=${layout}, cols=${cols}, rows=${rows}, outerRect=(${outerRect.left},${outerRect.top},${outerRect.width}x${outerRect.height}), anchorCell=${anchorCell ? `${anchorCell.width}x${anchorCell.height}` : 'none'}`,
+    );
 
-    // V2.10: OCR 锚点定位装备区
-    let cropRegion: { topPercent: number; bottomPercent: number } | undefined;
-    if (layout) {
-      try {
-        // 上传图片后用 OCR 识别文字坐标找锚点
-        const { detections } =
-          await this.ocrService.recognizeImageWithCoords(imageUrl);
-        if (detections.length > 0) {
-          const sharp = require('sharp');
-          const meta = await sharp(buffer).metadata();
-          const imgH = meta.height || 1;
-
-          // 箱子类锚点：搜索/等阶/类别
-          const boxAnchors = ['搜索', '等阶', '类别'];
-          // 背包类锚点：百分比数字如 720%、100%
-          const bagAnchorRegex = /\d+%/;
-          // 底部锚点：估计市价/全部移动/整理/堆叠
-          const bottomAnchors = ['估计市价', '全部移动', '整理', '堆叠'];
-
-          let topY = -1; // 装备区起点 y（锚点行底部）
-          let bottomY = -1; // 装备区终点 y（底部锚点行顶部）
-
-          for (const d of detections) {
-            const text = d.text;
-            // 箱子类顶部锚点
-            if (boxAnchors.some((a) => text.includes(a))) {
-              const anchorBottom = d.y + d.height;
-              if (anchorBottom > topY) topY = anchorBottom;
-            }
-            // 背包类顶部锚点
-            if (bagAnchorRegex.test(text) && text.length <= 6) {
-              const anchorBottom = d.y + d.height;
-              if (anchorBottom > topY) topY = anchorBottom;
-            }
-            // 底部锚点
-            if (bottomAnchors.some((a) => text.includes(a))) {
-              if (bottomY < 0 || d.y < bottomY) bottomY = d.y;
-            }
-          }
-
-          if (topY > 0) {
-            const topPercent = (topY + 5) / imgH; // +5px 间距
-            const bottomPercent =
-              bottomY > topY ? (imgH - bottomY + 5) / imgH : 0.05;
-            cropRegion = {
-              topPercent: Math.max(0.05, Math.min(topPercent, 0.5)),
-              bottomPercent: Math.max(0.02, Math.min(bottomPercent, 0.2)),
-            };
-            this.logger.log(
-              `[V2.10 gridParse] OCR锚点定位: topY=${topY}(${(cropRegion.topPercent * 100).toFixed(1)}%), bottomY=${bottomY}(${(cropRegion.bottomPercent * 100).toFixed(1)}%)`,
-            );
-          }
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `[V2.10 gridParse] OCR锚点检测失败，使用默认裁剪: ${err.message}`,
-        );
-      }
-    }
-
-    return this.imageMatchService.gridParseForManualInput(
+    return this.imageMatchService.gridParseByRegion(
       buffer,
-      layout,
-      cropRegion,
+      cols,
+      rows,
+      outerRect,
+      anchorCell,
     );
   }
 

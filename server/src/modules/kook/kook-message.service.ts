@@ -551,7 +551,7 @@ export class KookMessageService {
       const { texts, detections } =
         await this.ocrService.recognizeImageWithCoords(imageUrl);
       const allText = texts.join(' ');
-      const killDetail = this.parseKillDetail(allText, textContent);
+      const killDetail = this.parseKillDetailWithCoords(allText, textContent, detections);
 
       this.logger.log(
         `[${guild.name}] OCR文字: "${allText.slice(0, 200)}", 是否击杀详情=${killDetail.isKillDetail}`,
@@ -1083,29 +1083,35 @@ export class KookMessageService {
 
   /** 解析击杀详情文本 — 提取日期/地图/游戏ID/公会 */
   private parseKillDetail(ocrText: string, msgText: string): KillDetailParsed {
+    return this.parseKillDetailWithCoords(ocrText, msgText, []);
+  }
+
+  /**
+   * T-008: 基于 OCR 坐标定位击杀详情中的玩家名和公会名
+   * 布局规则（基于实际截图）：
+   * - "击杀详情" 文字在弹窗左上角
+   * - 时间行在"击杀详情"正下方
+   * - 左面板：头像下方依次为 玩家名 → 公会名 → IP数字
+   * - "击杀" 文字在弹窗中间，左右分界
+   * - 玩家名 = "击杀详情"下方、"击杀"左侧区域内、第一个英文字符串（非时间/地图/数字）
+   */
+  private parseKillDetailWithCoords(
+    ocrText: string,
+    msgText: string,
+    detections: { text: string; x: number; y: number; width: number; height: number }[],
+  ): KillDetailParsed {
     const combined = `${ocrText} ${msgText}`;
     const isKillDetail = /击杀详情|擊殺詳細資訊|擊殺詳情/i.test(combined);
 
     if (!isKillDetail) {
-      return {
-        date: null,
-        killTimeUtc: null,
-        mapName: null,
-        gameId: null,
-        guildName: null,
-        isKillDetail: false,
-      };
+      return { date: null, killTimeUtc: null, mapName: null, gameId: null, guildName: null, isKillDetail: false };
     }
 
-    // 时间提取：优先识别截图中的 MM/DD/YYYY HH:mm (UTC时间)，其次 YYYY-MM-DD HH:mm
+    // 时间提取（与旧逻辑一致）
     let date: string | null = null;
     let killTimeUtc: string | null = null;
-    const mdYTime = combined.match(
-      /(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\s+(\d{1,2}):(\d{2})/,
-    );
-    const ymdTime = combined.match(
-      /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/,
-    );
+    const mdYTime = combined.match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\s+(\d{1,2}):(\d{2})/);
+    const ymdTime = combined.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/);
     if (mdYTime) {
       const [, mm, dd, yyyy, hh, min] = mdYTime;
       date = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
@@ -1113,104 +1119,118 @@ export class KookMessageService {
     } else if (ymdTime) {
       const [, yyyy, mm, dd, hh, min] = ymdTime;
       date = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
-      if (hh && min)
-        killTimeUtc = `${date}T${hh.padStart(2, '0')}:${min}:00.000Z`;
+      if (hh && min) killTimeUtc = `${date}T${hh.padStart(2, '0')}:${min}:00.000Z`;
     }
 
-    // 地图名提取：优先取时间后面的英文短语（如 Brecillien Weald）
+    // 地图名提取（与旧逻辑一致）
     let mapName: string | null = null;
     const afterTimeMap = combined.match(
-      /(?:\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\s+\d{1,2}:\d{2}(?:\s*\([^)]*\))?\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})/,
+      /(?:\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\s+\d{1,2}:\d{2}(?:\s*\([^)]*\))?\s+(?:于)?([A-Za-z]+(?:\s+[A-Za-z]+){0,3})/,
     );
     if (afterTimeMap) mapName = afterTimeMap[1].trim();
     if (!mapName) {
       const NON_MAP_WORDS = new Set([
-        'UTC',
-        'OCR',
-        'NPC',
-        'HTTP',
-        'HTTPS',
-        'API',
-        'IMG',
-        'PNG',
-        'JPG',
-        'JPEG',
-        'GIF',
-        'URL',
-        'CDN',
-        'BOT',
-        'PSC',
-        'DPS',
-        'AOE',
-        'PVP',
-        'PVE',
-        'GVG',
-        'COOKIEBING',
+        'UTC', 'OCR', 'NPC', 'HTTP', 'HTTPS', 'API', 'IMG', 'PNG', 'JPG',
+        'JPEG', 'GIF', 'URL', 'CDN', 'BOT', 'PSC', 'DPS', 'AOE', 'PVP', 'PVE', 'GVG',
       ]);
-      const mapMatches = combined.matchAll(
-        /\b([A-Za-z]{3,30}(?:\s+[A-Za-z]{3,30})?)\b/g,
-      );
+      const mapMatches = combined.matchAll(/\b([A-Za-z]{3,30}(?:\s+[A-Za-z]{3,30})?)\b/g);
       for (const mm of mapMatches) {
-        if (!NON_MAP_WORDS.has(mm[1].toUpperCase())) {
-          mapName = mm[1];
-          break;
-        }
+        if (!NON_MAP_WORDS.has(mm[1].toUpperCase())) { mapName = mm[1]; break; }
       }
     }
 
-    // 游戏ID提取：截图中死亡玩家姓名就是 Albion Player Name
+    // ======== T-008: 基于 OCR 坐标定位玩家名和公会名 ========
     let gameId: string | null = null;
-    const explicitPatterns = [
-      /游戏ID[：:]\s*(\S+)/i,
-      /ID[：:]\s*(\S+)/i,
-      /玩家[：:]\s*(\S+)/i,
-    ];
-    for (const p of explicitPatterns) {
-      const m = combined.match(p);
-      if (m) {
-        gameId = m[1];
-        break;
-      }
-    }
-
-    // 公会名提取
     let guildName: string | null = null;
 
-    const guildPatterns = [
-      /公会[：:]\s*(\S+)/i,
-      /行会[：:]\s*(\S+)/i,
-      /Guild[：:]\s*(\S+)/i,
-    ];
-    for (const p of guildPatterns) {
-      const m = combined.match(p);
-      if (m) {
-        guildName = m[1];
-        break;
+    if (detections && detections.length > 0) {
+      // 找"击杀详情"锚点
+      const anchorDet = detections.find((d) => /击杀详情|擊殺詳細資訊|擊殺詳情/.test(d.text));
+      // 找"击杀"中轴线（独立的"击杀"文字，位于弹窗中间）
+      const killMidDet = detections.find(
+        (d) => d.text === '击杀' && d.width < 150 && anchorDet && d.y > anchorDet.y + anchorDet.height,
+      );
+
+      if (anchorDet) {
+        // 左面板右边界：取"击杀"中轴线 x 坐标，或弹窗宽度 45%
+        const leftPanelRight = killMidDet ? killMidDet.x : anchorDet.x + anchorDet.width * 3.5 * 0.45;
+        // 上边界：锚点下方（时间行以下）
+        const topBound = anchorDet.y + anchorDet.height * 2.5;
+
+        // 在左面板区域内，按 y 坐标从上到下排序，找玩家名和公会名
+        const leftPanelTexts = detections
+          .filter((d) =>
+            d.x < leftPanelRight &&
+            d.y > topBound &&
+            d.text.trim().length >= 2 &&
+            !/^\d{3,4}$/.test(d.text.trim()) && // 排除 IP 数字
+            !/击杀|详情|援助|模板|声望|市价/.test(d.text) && // 排除 UI 文字
+            !/^\d{1,2}[\/.-]\d{1,2}/.test(d.text) && // 排除日期
+            !/^\d{1,2}:\d{2}/.test(d.text), // 排除时间
+          )
+          .sort((a, b) => a.y - b.y);
+
+        this.logger.log(
+          `[T-008] 左面板候选文字(${leftPanelTexts.length}): ${leftPanelTexts.map((d) => `"${d.text}"@(${d.x},${d.y})`).join(', ')}`,
+        );
+
+        // 玩家名：左面板区域内第一个含英文字母的文字（Albion 玩家名一定含英文）
+        for (const d of leftPanelTexts) {
+          const cleaned = d.text.replace(/[^\w\s]/g, '').trim();
+          if (/[A-Za-z]/.test(cleaned) && cleaned.length >= 2) {
+            gameId = cleaned;
+            break;
+          }
+        }
+
+        // 公会名：紧跟在玩家名下方的文字（通常是短英文/中文公会名如 PSC）
+        if (gameId) {
+          const gameIdDet = leftPanelTexts.find((d) => d.text.replace(/[^\w\s]/g, '').trim() === gameId);
+          if (gameIdDet) {
+            const nextTexts = leftPanelTexts.filter(
+              (d) => d.y > gameIdDet.y + gameIdDet.height * 0.3 && d.y < gameIdDet.y + gameIdDet.height * 3,
+            );
+            for (const d of nextTexts) {
+              const t = d.text.replace(/[^\w\s\u4e00-\u9fff]/g, '').trim();
+              if (t && t !== gameId && !/^\d{3,4}$/.test(t)) {
+                guildName = t;
+                break;
+              }
+            }
+          }
+        }
+
+        this.logger.log(`[T-008] 坐标定位结果: gameId="${gameId}", guildName="${guildName}"`);
+      }
+    }
+
+    // 兜底：如果坐标定位失败，回退到旧的正则匹配
+    if (!gameId) {
+      const explicitPatterns = [/游戏ID[：:]\s*(\S+)/i, /ID[：:]\s*(\S+)/i, /玩家[：:]\s*(\S+)/i];
+      for (const p of explicitPatterns) {
+        const m = combined.match(p);
+        if (m) { gameId = m[1]; break; }
+      }
+    }
+    if (!guildName) {
+      const guildPatterns = [/公会[：:]\s*(\S+)/i, /行会[：:]\s*(\S+)/i, /Guild[：:]\s*(\S+)/i];
+      for (const p of guildPatterns) {
+        const m = combined.match(p);
+        if (m) { guildName = m[1]; break; }
       }
     }
     if (!guildName) {
       const pscMatch = combined.match(/\b([A-Za-z][A-Za-z0-9]{2,30})\s+PSC\b/);
-      if (pscMatch) {
-        gameId = gameId || pscMatch[1];
-        guildName = 'PSC';
-      }
+      if (pscMatch) { gameId = gameId || pscMatch[1]; guildName = 'PSC'; }
     }
     if (!gameId && guildName) {
       const escapedGuild = guildName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const playerBeforeGuild = combined.match(
-        new RegExp(`\\b([A-Za-z][A-Za-z0-9]{2,30})\\s+${escapedGuild}\\b`),
-      );
+      const playerBeforeGuild = combined.match(new RegExp(`\\b([A-Za-z][A-Za-z0-9]{2,30})\\s+${escapedGuild}\\b`));
       if (playerBeforeGuild) gameId = playerBeforeGuild[1];
     }
 
-    return {
-      date,
-      killTimeUtc,
-      mapName,
-      gameId,
-      guildName,
-      isKillDetail: true,
-    };
+    return { date, killTimeUtc, mapName, gameId, guildName, isKillDetail: true };
+  }
   }
 
   /** 提取消息中所有图片URL（支持一条消息多张图） */

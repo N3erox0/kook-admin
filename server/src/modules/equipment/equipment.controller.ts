@@ -38,12 +38,12 @@ export class EquipmentController {
     return this.equipmentService.batchUpsert(guildId, dto.items, user.sub, req.guildMember?.nickname || user.username);
   }
 
-  // V2.9.2 网格识别入库（方案D）
+  // V2.12 网格识别入库（outerRect + anchorCell 精确切图）
   @Post('grid-parse')
   @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
   @OperationLog({ module: 'equipment', action: 'grid_parse' })
-  gridParse(@Param('guildId', ParseIntPipe) _guildId: number, @Body() body: { imageUrl: string; layout?: string; anchor?: { x: number; y: number; w: number; h: number }; boxes?: Array<{ x: number; y: number; w: number; h: number }> }) {
-    return this.equipmentService.gridParse(body.imageUrl, body.layout, body.anchor, body.boxes);
+  gridParse(@Param('guildId', ParseIntPipe) _guildId: number, @Body() body: { imageUrl: string; layout?: string; outerRect?: { left: number; top: number; width: number; height: number }; anchorCell?: { width: number; height: number } }) {
+    return this.equipmentService.gridParse(body.imageUrl, body.layout, body.outerRect, body.anchorCell);
   }
 
   @Post('grid-save')

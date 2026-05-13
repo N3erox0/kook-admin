@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { GuildGuard } from '../../common/guards/guild.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { KookSyncService } from '../kook/kook-sync.service';
+import { MemberService } from '../member/member.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Guild } from '../guild/entities/guild.entity';
@@ -13,6 +14,7 @@ export class DashboardController {
   constructor(
     private readonly dashboardService: DashboardService,
     private readonly kookSyncService: KookSyncService,
+    private readonly memberService: MemberService,
     @InjectRepository(Guild) private guildRepo: Repository<Guild>,
   ) {}
 
@@ -33,7 +35,7 @@ export class DashboardController {
     return this.dashboardService.getOverview(guildId);
   }
 
-  /** 手动触发成员同步 */
+  /** 手动触发成员同步（KOOK + Albion） */
   @Post('guild/:guildId/dashboard/sync-members')
   @UseGuards(JwtAuthGuard, GuildGuard)
   async syncMembers(@Param('guildId', ParseIntPipe) guildId: number) {
@@ -41,14 +43,36 @@ export class DashboardController {
     if (!guild) {
       return { success: false, message: '公会不存在' };
     }
-    if (!guild.kookGuildId || guild.kookGuildId.startsWith('test-')) {
-      return { success: false, message: '公会未配置有效的 KOOK 服务器 ID，请在公会设置中配置' };
+
+    let kookResult: any = null;
+    let albionResult: any = null;
+
+    // 同步 KOOK 成员
+    if (guild.kookGuildId && !guild.kookGuildId.startsWith('test-')) {
+      try {
+        kookResult = await this.kookSyncService.syncGuildMembers(guild);
+      } catch (err: any) {
+        kookResult = { error: err.message || 'KOOK同步失败' };
+      }
     }
-    try {
-      const result = await this.kookSyncService.syncGuildMembers(guild);
-      return { success: true, ...result };
-    } catch (err: any) {
-      return { success: false, message: `同步失败：${err.message || '未知错误'}` };
+
+    // 同步 Albion 成员
+    if (guild.albionGuildId) {
+      try {
+        albionResult = await this.memberService.syncAlbionGuildMembers(guildId);
+      } catch (err: any) {
+        albionResult = { error: err.message || 'Albion同步失败' };
+      }
     }
+
+    return {
+      success: true,
+      added: albionResult?.added || 0,
+      updated: albionResult?.updated || 0,
+      left: albionResult?.left || 0,
+      autoBound: albionResult?.autoBound || 0,
+      kook: kookResult,
+      albion: albionResult,
+    };
   }
 }

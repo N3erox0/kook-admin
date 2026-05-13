@@ -233,10 +233,12 @@ function GuildDashboard() {
     try {
       const res: any = await request.post(`/guild/${guildId}/dashboard/sync-members`);
       if (res?.success) {
-        message.success(`同步完成：新增 ${res.added}，更新 ${res.updated}，离开 ${res.left}`);
+        const kookMsg = res.kook ? `KOOK: +${res.kook.added || 0}/-${res.kook.left || 0}` : 'KOOK: 未配置';
+        const albionMsg = res.albion ? `Albion: +${res.albion.added || 0}/-${res.albion.left || 0} 自动绑定${res.albion.autoBound || 0}` : 'Albion: 未配置';
+        message.success(`同步完成 | ${kookMsg} | ${albionMsg}`);
         fetchData();
       } else {
-        message.warning(res?.message || '同步失败，请检查公会是否已配置 Bot Token');
+        message.warning(res?.message || '同步失败');
       }
     } catch (err: any) {
       const errMsg = err?.message || err?.response?.data?.message || '同步请求失败';
@@ -289,8 +291,9 @@ function GuildDashboard() {
         <Col xs={24} sm={8}>
           <Card hoverable onClick={() => navigate('/admin/members')} style={{ cursor: 'pointer' }}>
             <Statistic
-              title={<Space><TeamOutlined /> 成员总数</Space>}
+              title={<Space><TeamOutlined /> 公会成员总数</Space>}
               value={data.totalActive}
+              suffix={data.kookActive ? <Text type="secondary" style={{ fontSize: 12 }}>KOOK: {data.kookActive}</Text> : null}
               valueStyle={{ color: '#1677ff' }}
             />
           </Card>
@@ -328,11 +331,19 @@ function GuildDashboard() {
           </Space>
         }
         extra={
-          <Space>
-            <ClockCircleOutlined style={{ color: '#999' }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              最近一次统计时间：{data.lastSyncedAt ? dayjs(data.lastSyncedAt).format('YYYY-MM-DD HH:mm:ss') : '尚未同步'}
-            </Text>
+          <Space direction="vertical" size={0}>
+            <Space>
+              <ClockCircleOutlined style={{ color: '#999' }} />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                KOOK同步：{data.lastSyncedAt ? dayjs(data.lastSyncedAt).format('YYYY-MM-DD HH:mm:ss') : '尚未同步'}
+              </Text>
+            </Space>
+            <Space>
+              <ClockCircleOutlined style={{ color: '#999' }} />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Albion同步：{data.albionLastSyncedAt ? dayjs(data.albionLastSyncedAt).format('YYYY-MM-DD HH:mm:ss') : '尚未同步'}
+              </Text>
+            </Space>
           </Space>
         }
       >

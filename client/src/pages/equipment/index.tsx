@@ -82,18 +82,16 @@ export default function EquipmentPage() {
   const [ocrItems, setOcrItems] = useState<any[]>([]);
   const [ocrImageUrl, setOcrImageUrl] = useState('');
 
-  // V2.9.2 网格识别入库（方案D）— V2.9.9.1: 新增 layout 选择
+  // V2.12 网格识别入库（固定遮罩框+图片拖拽缩放对齐）
   const [gridModal, setGridModal] = useState(false);
   const [gridLoading, setGridLoading] = useState(false);
   const [gridImageUrl, setGridImageUrl] = useState('');
-  const [gridLayout, setGridLayout] = useState<string>('5x7');
-  // V2.10.6: 3框定位法
+  const [gridLayout, setGridLayout] = useState<string>('guild_island_chest_5x7');
   const [gridPreviewSrc, setGridPreviewSrc] = useState('');
-  const [gridDrawStep, setGridDrawStep] = useState<0 | 1 | 2 | 3>(0); // 0=未开始,1=画小框1(R1C1),2=画小框2(R1C2),3=画小框3(R2C1)
-  const [gridBoxes, setGridBoxes] = useState<Array<{ x: number; y: number; w: number; h: number }>>([]);
-  const [gridDrawing, setGridDrawing] = useState(false);
-  const [gridDrawStart, setGridDrawStart] = useState<{ x: number; y: number } | null>(null);
-  const [gridCurrentBox, setGridCurrentBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  // 图片变换状态（图片相对于容器的偏移和缩放）
+  const [imgTransform, setImgTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [imgDragging, setImgDragging] = useState(false);
+  const [imgDragStart, setImgDragStart] = useState({ mx: 0, my: 0, ox: 0, oy: 0 });
   const [gridCells, setGridCells] = useState<Array<{
     row: number; col: number; thumbnail: string; quantity: number;
     detectedLevel: number | null; detectedQuality: number | null;
@@ -336,9 +334,8 @@ export default function EquipmentPage() {
   const handleGridUpload = async (file: File) => {
     const localUrl = URL.createObjectURL(file);
     setGridPreviewSrc(localUrl);
-    setGridDrawStep(1); // 开始画第1个小框
-    setGridBoxes([]);
-    setGridCurrentBox(null);
+    // 重置图片变换
+    setImgTransform({ x: 0, y: 0, scale: 1 });
     try {
       const uploadRes: any = await uploadFile(file);
       const imageUrl = uploadRes?.url || uploadRes?.filePath || '';
@@ -350,23 +347,74 @@ export default function EquipmentPage() {
     return false;
   };
 
-  // V2.10.6: 3框定位完成后切图
-  const handleGridCutWithAnchor = async () => {
-    if (!gridImageUrl || gridBoxes.length < 3) { message.warning('请完成3个定位框的绘制'); return; }
+  // V2.12: 确认对齐后提交切图
+  // 固定遮罩框位于容器中央，大小为容器的固定百分比
+  // 从图片的偏移+缩放反算出 outerRect 在原图中的像素坐标
+  const CONTAINER_W = 700; // 对齐容器固定宽度
+  const CONTAINER_H = 550; // 对齐容器固定高度
+  // 大框占容器的百分比（基于规则文档 outerRectRatio 预填，固定位置）
+  // 所有容器统一用容器中央 90% 区域作为大框，用户通过拖拽图片来对齐
+  const OUTER_RECT_PCT = { left: 5, top: 5, width: 90, height: 90 };
+
+  // 规则文档中每种容器的 outerRectRatio（用于初始化图片缩放/偏移，使装备区大致落在框内）
+  const TEMPLATE_RATIOS: Record<string, { outerRatio: { x: number; y: number; w: number; h: number }; firstCellRatio: { w: number; h: number } }> = {
+    'guild_island_chest_5x7': { outerRatio: { x: 0.0524, y: 0.2733, w: 0.8910, h: 0.6655 }, firstCellRatio: { w: 0.1593, h: 0.0895 } },
+    'army_wood_chest_5x7': { outerRatio: { x: 0.0633, y: 0.2190, w: 0.8694, h: 0.6436 }, firstCellRatio: { w: 0.1551, h: 0.0849 } },
+    'backpack_large_4x5': { outerRatio: { x: 0.0899, y: 0.4954, w: 0.8307, h: 0.4051 }, firstCellRatio: { w: 0.1852, h: 0.0810 } },
+    'backpack_medium_5x7': { outerRatio: { x: 0.0360, y: 0.4804, w: 0.8587, h: 0.4377 }, firstCellRatio: { w: 0.1551, h: 0.0629 } },
+    'backpack_small_6x8': { outerRatio: { x: 0.0457, y: 0.4873, w: 0.8553, h: 0.4850 }, firstCellRatio: { w: 0.1294, h: 0.0590 } },
+    'egg_chest_5x2': { outerRatio: { x: 0.0690, y: 0.2400, w: 0.8515, h: 0.1776 }, firstCellRatio: { w: 0.1527, h: 0.0859 } },
+  };
+
+  const getLayoutDef = (layout: string) => {
+    const m: Record<string, { cols: number; rows: number }> = {
+      'guild_island_chest_5x7': { cols: 5, rows: 7 }, 'army_wood_chest_5x7': { cols: 5, rows: 7 },
+      'backpack_large_4x5': { cols: 4, rows: 5 }, 'backpack_medium_5x7': { cols: 5, rows: 7 },
+      'backpack_small_6x8': { cols: 6, rows: 8 }, 'egg_chest_5x2': { cols: 5, rows: 2 },
+    };
+    return m[layout] || { cols: 5, rows: 7 };
+  };
+
+  const handleGridCutByRegion = async () => {
+    if (!gridImageUrl) { message.warning('请先上传截图'); return; }
     setGridLoading(true);
     try {
-      // 缩放比例
       const imgEl = document.getElementById('grid-preview-img') as HTMLImageElement;
-      const scaleX = imgEl ? (imgEl.naturalWidth / imgEl.clientWidth) : 1;
-      const scaleY = imgEl ? (imgEl.naturalHeight / imgEl.clientHeight) : 1;
-      // 将3个框转为实际图片坐标
-      const boxes = gridBoxes.map(b => ({
-        x: Math.round(b.x * scaleX),
-        y: Math.round(b.y * scaleY),
-        w: Math.round(b.w * scaleX),
-        h: Math.round(b.h * scaleY),
-      }));
-      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, undefined, boxes);
+      if (!imgEl) { message.error('图片未加载'); setGridLoading(false); return; }
+
+      // 原图真实尺寸
+      const natW = imgEl.naturalWidth;
+      const natH = imgEl.naturalHeight;
+      // 图片在容器中的显示尺寸（受 scale 影响）
+      const dispW = natW * imgTransform.scale;
+      const dispH = natH * imgTransform.scale;
+
+      // 大框在容器中的像素位置（固定）
+      const boxLeft = CONTAINER_W * OUTER_RECT_PCT.left / 100;
+      const boxTop = CONTAINER_H * OUTER_RECT_PCT.top / 100;
+      const boxW = CONTAINER_W * OUTER_RECT_PCT.width / 100;
+      const boxH = CONTAINER_H * OUTER_RECT_PCT.height / 100;
+
+      // 大框在原图中的像素坐标 = (大框容器坐标 - 图片偏移) / scale × (natW / (natW * scale)) 简化
+      const pixelPerContainerPx = natW / dispW; // = 1 / scale
+      const outerRect = {
+        left: Math.round((boxLeft - imgTransform.x) * pixelPerContainerPx),
+        top: Math.round((boxTop - imgTransform.y) * pixelPerContainerPx),
+        width: Math.round(boxW * pixelPerContainerPx),
+        height: Math.round(boxH * pixelPerContainerPx),
+      };
+
+      // anchorCell = 规则文档中 firstCellRatio 还原为像素
+      const tmpl = TEMPLATE_RATIOS[gridLayout];
+      const anchorCell = tmpl ? {
+        width: Math.round(natW * tmpl.firstCellRatio.w),
+        height: Math.round(natH * tmpl.firstCellRatio.h),
+      } : {
+        width: Math.round(outerRect.width / cols * 0.95),
+        height: Math.round(outerRect.height / rows * 0.95),
+      };
+
+      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, outerRect, anchorCell);
       const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         row: c.row + gridCells.length,
@@ -381,7 +429,6 @@ export default function EquipmentPage() {
         matchedConfidence: c.matchedConfidence || 0,
         matchSource: c.matchSource || '',
       }));
-
       for (const cell of newCells) {
         if (cell.matchedName && cell.matchedConfidence >= 0.55) {
           cell.aliasName = cell.matchedName;
@@ -389,7 +436,7 @@ export default function EquipmentPage() {
       }
       const merged = [...gridCells, ...newCells];
       setGridCells(merged);
-      setGridPreviewSrc(''); // 关闭预览
+      setGridPreviewSrc('');
       if (newCells.length === 0) {
         message.warning('未检测到装备图标');
       } else {
@@ -747,98 +794,109 @@ export default function EquipmentPage() {
                 onChange={(e) => setGridLayout(e.target.value)}
                 style={{ display: 'block', marginTop: 8 }}
               >
-                <Radio value="5x7">公会岛箱子 / 军队木箱 / 背包中（5×7）</Radio>
-                <Radio value="4x5">背包大（4×5）</Radio>
-                <Radio value="6x8">背包小（6×8）</Radio>
-                <Radio value="5x2">蛋箱（5×2）</Radio>
+                <Radio value="guild_island_chest_5x7">公会岛箱子（5×7）</Radio>
+                <Radio value="army_wood_chest_5x7">军队木箱（5×7）</Radio>
+                <Radio value="backpack_large_4x5">背包大（4×5）</Radio>
+                <Radio value="backpack_medium_5x7">背包中（5×7）</Radio>
+                <Radio value="backpack_small_6x8">背包小（6×8）</Radio>
+                <Radio value="egg_chest_5x2">蛋箱（5×2）</Radio>
               </Radio.Group>
             </div>
-            {/* V2.10.6: 3框定位模式 */}
+            {/* V2.12: 固定遮罩框 + 图片拖拽缩放对齐 */}
             {gridPreviewSrc ? (
               <div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-                  {gridDrawStep === 1 && <><b>步骤1/3</b>：画出<b style={{color:'#1677ff'}}>第1行第1格</b>（左上角第一个装备）</>}
-                  {gridDrawStep === 2 && <><b>步骤2/3</b>：画出<b style={{color:'#1677ff'}}>第1行第2格</b>（第一个右边相邻那个）</>}
-                  {gridDrawStep === 3 && <><b>步骤3/3</b>：画出<b style={{color:'#1677ff'}}>第2行第1格</b>（第一格正下方那个）</>}
-                  {gridDrawStep === 0 && gridBoxes.length >= 3 && <><b>定位完成！</b>点击"开始切图识别"</>}
+                  <b>拖动图片</b>使装备区域对齐红色框，<b>滚轮缩放</b>图片大小。红框和网格线位置固定不动。
                 </Text>
+                {/* 对齐容器 */}
                 <div
-                  style={{ position: 'relative', display: 'inline-block', cursor: 'crosshair', border: '1px solid #d9d9d9', borderRadius: 4 }}
+                  style={{
+                    position: 'relative', width: CONTAINER_W, height: CONTAINER_H,
+                    border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden',
+                    cursor: imgDragging ? 'grabbing' : 'grab', userSelect: 'none', background: '#f5f5f5',
+                  }}
                   onMouseDown={(e) => {
-                    if (gridDrawStep === 0) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setGridDrawStart({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-                    setGridDrawing(true);
+                    setImgDragging(true);
+                    setImgDragStart({ mx: e.clientX, my: e.clientY, ox: imgTransform.x, oy: imgTransform.y });
                   }}
                   onMouseMove={(e) => {
-                    if (!gridDrawing || !gridDrawStart) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const curX = e.clientX - rect.left;
-                    const curY = e.clientY - rect.top;
-                    const x = Math.min(gridDrawStart.x, curX);
-                    const y = Math.min(gridDrawStart.y, curY);
-                    const w = Math.abs(curX - gridDrawStart.x);
-                    const h = Math.abs(curY - gridDrawStart.y);
-                    setGridCurrentBox({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+                    if (!imgDragging) return;
+                    setImgTransform((prev) => ({
+                      ...prev,
+                      x: imgDragStart.ox + (e.clientX - imgDragStart.mx),
+                      y: imgDragStart.oy + (e.clientY - imgDragStart.my),
+                    }));
                   }}
-                  onMouseUp={() => {
-                    setGridDrawing(false);
-                    if (gridCurrentBox && gridCurrentBox.w > 10 && gridCurrentBox.h > 10) {
-                      const newBoxes = [...gridBoxes, gridCurrentBox];
-                      setGridBoxes(newBoxes);
-                      setGridCurrentBox(null);
-                      if (newBoxes.length >= 3) {
-                        setGridDrawStep(0);
-                      } else {
-                        setGridDrawStep((gridDrawStep + 1) as 1 | 2 | 3);
-                      }
-                    }
+                  onMouseUp={() => setImgDragging(false)}
+                  onMouseLeave={() => setImgDragging(false)}
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? -0.05 : 0.05;
+                    setImgTransform((prev) => ({ ...prev, scale: Math.max(0.1, Math.min(5, prev.scale + delta)) }));
                   }}
                 >
+                  {/* 图片层（可拖动+缩放） */}
                   <img
                     id="grid-preview-img"
                     src={gridPreviewSrc}
-                    style={{ maxWidth: '100%', maxHeight: 600, display: 'block' }}
                     alt="preview"
+                    draggable={false}
+                    style={{
+                      position: 'absolute',
+                      left: imgTransform.x, top: imgTransform.y,
+                      width: CONTAINER_W * imgTransform.scale,
+                      transformOrigin: '0 0',
+                      pointerEvents: 'none',
+                    }}
                   />
-                  {/* 已画好的框 */}
-                  {gridBoxes.map((box, i) => (
-                    <div key={i} style={{
+                  {/* 固定遮罩层：大红框 + 网格线 + 第一格蓝框 */}
+                  <div
+                    style={{
                       position: 'absolute',
-                      left: box.x, top: box.y, width: box.w, height: box.h,
-                      border: '3px solid #1677ff', background: 'rgba(22,119,255,0.08)',
+                      left: `${OUTER_RECT_PCT.left}%`, top: `${OUTER_RECT_PCT.top}%`,
+                      width: `${OUTER_RECT_PCT.width}%`, height: `${OUTER_RECT_PCT.height}%`,
+                      border: '2px solid #ff4d4f',
                       pointerEvents: 'none',
-                    }}>
-                      <span style={{ position: 'absolute', top: -18, left: 0, fontSize: 11, color: '#1677ff', fontWeight: 'bold' }}>
-                        {i === 0 ? 'R1C1' : i === 1 ? 'R1C2' : 'R2C1'}
-                      </span>
-                    </div>
-                  ))}
-                  {/* 正在画的框 */}
-                  {gridCurrentBox && gridCurrentBox.w > 3 && gridCurrentBox.h > 3 && (
-                    <div style={{
-                      position: 'absolute',
-                      left: gridCurrentBox.x, top: gridCurrentBox.y,
-                      width: gridCurrentBox.w, height: gridCurrentBox.h,
-                      border: '2px dashed #ff4d4f', background: 'rgba(255,77,79,0.06)',
-                      pointerEvents: 'none',
-                    }} />
-                  )}
+                    }}
+                  >
+                    {/* 网格线 */}
+                    {(() => {
+                      const { cols, rows } = getLayoutDef(gridLayout);
+                      const lines: React.ReactNode[] = [];
+                      for (let i = 1; i < cols; i++) {
+                        lines.push(<div key={`v${i}`} style={{ position: 'absolute', left: `${(i / cols) * 100}%`, top: 0, bottom: 0, width: 1, background: 'rgba(255,77,79,0.5)' }} />);
+                      }
+                      for (let i = 1; i < rows; i++) {
+                        lines.push(<div key={`h${i}`} style={{ position: 'absolute', top: `${(i / rows) * 100}%`, left: 0, right: 0, height: 1, background: 'rgba(255,77,79,0.5)' }} />);
+                      }
+                      // 第一格蓝色高亮
+                      lines.push(
+                        <div key="first-cell" style={{
+                          position: 'absolute', left: 0, top: 0,
+                          width: `${100 / cols}%`, height: `${100 / rows}%`,
+                          border: '3px solid #1677ff', background: 'rgba(22,119,255,0.12)',
+                          pointerEvents: 'none', borderRadius: 2,
+                        }} />
+                      );
+                      return lines;
+                    })()}
+                  </div>
+                  {/* 半透明遮罩（框外区域变暗） */}
+                  <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: `${OUTER_RECT_PCT.top}%`, background: 'rgba(0,0,0,0.35)' }} />
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${100 - OUTER_RECT_PCT.top - OUTER_RECT_PCT.height}%`, background: 'rgba(0,0,0,0.35)' }} />
+                    <div style={{ position: 'absolute', top: `${OUTER_RECT_PCT.top}%`, left: 0, width: `${OUTER_RECT_PCT.left}%`, height: `${OUTER_RECT_PCT.height}%`, background: 'rgba(0,0,0,0.35)' }} />
+                    <div style={{ position: 'absolute', top: `${OUTER_RECT_PCT.top}%`, right: 0, width: `${100 - OUTER_RECT_PCT.left - OUTER_RECT_PCT.width}%`, height: `${OUTER_RECT_PCT.height}%`, background: 'rgba(0,0,0,0.35)' }} />
+                  </div>
                 </div>
                 <div style={{ marginTop: 12 }}>
                   <Space>
-                    {gridBoxes.length >= 3 && (
-                      <Button type="primary" loading={gridLoading} onClick={handleGridCutWithAnchor}>
-                        开始切图识别
-                      </Button>
-                    )}
-                    {gridBoxes.length > 0 && (
-                      <Button onClick={() => { setGridBoxes([]); setGridDrawStep(1); setGridCurrentBox(null); }}>全部重画</Button>
-                    )}
-                    {gridBoxes.length > 0 && gridBoxes.length < 3 && (
-                      <Button onClick={() => { setGridBoxes(gridBoxes.slice(0, -1)); setGridDrawStep(gridBoxes.length as 1 | 2 | 3); }}>撤销上一框</Button>
-                    )}
-                    <Text type="secondary">已画 {gridBoxes.length}/3 个定位框</Text>
+                    <Button type="primary" loading={gridLoading} onClick={handleGridCutByRegion}>
+                      确认对齐，开始切图识别
+                    </Button>
+                    <Button onClick={() => setImgTransform({ x: 0, y: 0, scale: 1 })}>重置位置</Button>
+                    <Button onClick={() => setGridPreviewSrc('')}>重新上传</Button>
+                    <Text type="secondary">缩放: {(imgTransform.scale * 100).toFixed(0)}%</Text>
                   </Space>
                 </div>
               </div>
@@ -851,15 +909,14 @@ export default function EquipmentPage() {
             disabled={gridLoading}
           >
             {gridLoading ? (
-              <><Spin /> <Text>识别中...（数量OCR需要几秒）</Text></>
+              <><Spin /> <Text>识别中...</Text></>
             ) : (
               <>
                 <p><AppstoreOutlined style={{ fontSize: 48, color: '#1677ff' }} /></p>
                 <p style={{ fontSize: 16, fontWeight: 500 }}>点击或拖拽上传装备截图</p>
                 <p style={{ fontSize: 12, color: '#999' }}>
-                  上传后请按提示画出第1行第1格、第1行第2格、第2行第1格，让装备格子与标线框对齐；系统按“热门库→现有pHash→官网图片库”预填装备。
+                  上传后拖动红色网格框对齐装备区域，第一格蓝色高亮对齐第一个装备，确认后系统自动切图识别。
                 </p>
-
               </>
             )}
           </Upload.Dragger>

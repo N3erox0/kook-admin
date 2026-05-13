@@ -147,7 +147,6 @@ export default function MemberPage() {
 
   const albionColumns: any[] = [
     { title: 'Albion玩家名', dataIndex: 'playerName', key: 'playerName', width: 170 },
-    { title: 'Player ID', dataIndex: 'playerId', key: 'playerId', width: 220, ellipsis: true },
     { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (v: string) => v === 'active' ? <Tag color="green">在会</Tag> : <Tag color="red">离开</Tag> },
     { title: 'KOOK 昵称', dataIndex: 'kookNickname', key: 'kookNickname', width: 160, render: (v: string) => v || <Text type="secondary">未绑定</Text> },
     { title: '击杀/死亡声望', key: 'fame', width: 160, render: (_: any, r: any) => `${Number(r.killFame || 0).toLocaleString()} / ${Number(r.deathFame || 0).toLocaleString()}` },

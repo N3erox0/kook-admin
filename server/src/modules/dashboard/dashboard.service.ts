@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, Between } from 'typeorm';
 import { GuildMember } from '../member/entities/guild-member.entity';
+import { AlbionGuildMember } from '../member/entities/albion-guild-member.entity';
 import { GuildInventory } from '../equipment/entities/guild-inventory.entity';
 import { GuildResupply } from '../resupply/entities/guild-resupply.entity';
 import { GuildAlertRecord } from '../alert/entities/guild-alert-record.entity';
@@ -15,6 +16,7 @@ import { MemberStatus, ResupplyStatus, InviteCodeStatus, GuildStatus } from '../
 export class DashboardService {
   constructor(
     @InjectRepository(GuildMember) private memberRepo: Repository<GuildMember>,
+    @InjectRepository(AlbionGuildMember) private albionMemberRepo: Repository<AlbionGuildMember>,
     @InjectRepository(GuildInventory) private invRepo: Repository<GuildInventory>,
     @InjectRepository(GuildResupply) private resupplyRepo: Repository<GuildResupply>,
     @InjectRepository(GuildAlertRecord) private alertRepo: Repository<GuildAlertRecord>,
@@ -121,19 +123,21 @@ export class DashboardService {
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
 
-    const totalActive = await this.memberRepo.count({ where: { guildId, status: MemberStatus.ACTIVE } });
+    // T-002: 成员总数按 Albion playerId 统计
+    const totalActive = await this.albionMemberRepo.count({ where: { guildId, status: MemberStatus.ACTIVE } });
 
-    // 新增成员列表（最近24小时加入）
-    const newMembers = await this.memberRepo.find({
+    // T-004: 新增/离开以 Albion player 数据为准
+    const newMembers = await this.albionMemberRepo.find({
       where: { guildId, status: MemberStatus.ACTIVE, joinedAt: MoreThanOrEqual(yesterdayStart) },
       order: { joinedAt: 'DESC' },
     });
-
-    // 离开成员列表（最近24小时离开）
-    const leftMembers = await this.memberRepo.find({
+    const leftMembers = await this.albionMemberRepo.find({
       where: { guildId, status: MemberStatus.LEFT, leftAt: MoreThanOrEqual(yesterdayStart) },
       order: { leftAt: 'DESC' },
     });
+
+    // KOOK 成员统计（辅助显示）
+    const kookActive = await this.memberRepo.count({ where: { guildId, status: MemberStatus.ACTIVE } });
 
     const pendingResupply = await this.resupplyRepo.count({ where: { guildId, status: ResupplyStatus.PENDING } });
     const unresolvedAlerts = await this.alertRepo.count({ where: { guildId, isResolved: 0 } });
@@ -143,34 +147,36 @@ export class DashboardService {
       .where('inv.guildId = :guildId', { guildId })
       .getRawOne();
 
-    // 统计时间 = 上次获取 KOOK 成员的时间
-    const lastSyncedMember = await this.memberRepo.findOne({
+    // T-003: 分别记录 KOOK 和 Albion 最后同步时间
+    const lastKookSynced = await this.memberRepo.findOne({
       where: { guildId },
       order: { lastSyncedAt: 'DESC' },
     });
 
+    const guild = await this.guildRepo.findOne({ where: { id: guildId } });
+
     return {
       totalActive,
+      kookActive,
       dailyNew: newMembers.length,
       dailyLeft: leftMembers.length,
       newMembers: newMembers.map((m) => ({
         id: m.id,
-        nickname: m.nickname,
-        kookUserId: m.kookUserId,
-        kookRoles: m.kookRoles,
+        nickname: m.playerName,
+        playerId: m.playerId,
         joinedAt: m.joinedAt,
       })),
       leftMembers: leftMembers.map((m) => ({
         id: m.id,
-        nickname: m.nickname,
-        kookUserId: m.kookUserId,
-        kookRoles: m.kookRoles,
+        nickname: m.playerName,
+        playerId: m.playerId,
         leftAt: m.leftAt,
       })),
       pendingResupply,
       unresolvedAlerts,
       totalInventory: parseInt(totalInventory?.total || '0'),
-      lastSyncedAt: lastSyncedMember?.lastSyncedAt || null,
+      lastSyncedAt: lastKookSynced?.lastSyncedAt || null,
+      albionLastSyncedAt: guild?.albionMembersLastSyncedAt || null,
     };
   }
 }
