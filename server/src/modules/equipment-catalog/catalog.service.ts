@@ -460,11 +460,13 @@ export class CatalogService {
       }
     }
 
-    // 3. 通用搜索: name + aliases 双字段模糊
+    // 3. 通用搜索: name + aliases 双字段模糊，name 匹配优先排序
     return this.catalogRepo
       .createQueryBuilder('c')
       .where('(c.name LIKE :kw OR c.aliases LIKE :kw)', { kw: `%${raw}%` })
-      .orderBy('c.level', 'ASC')
+      .addSelect(`CASE WHEN c.name LIKE :kw THEN 0 ELSE 1 END`, 'name_priority')
+      .orderBy('name_priority', 'ASC')
+      .addOrderBy('c.level', 'ASC')
       .addOrderBy('c.quality', 'ASC')
       .addOrderBy('c.name', 'ASC')
       .take(limit)

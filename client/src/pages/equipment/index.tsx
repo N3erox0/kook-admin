@@ -377,16 +377,6 @@ export default function EquipmentPage() {
     return { left, top, width: (boxW / containerW) * 100, height: (boxH / containerH) * 100 };
   };
 
-  // 规则文档中每种容器的 outerRectRatio（用于初始化图片缩放/偏移，使装备区大致落在框内）
-  const TEMPLATE_RATIOS: Record<string, { outerRatio: { x: number; y: number; w: number; h: number }; firstCellRatio: { w: number; h: number } }> = {
-    'guild_island_chest_5x7': { outerRatio: { x: 0.0524, y: 0.2733, w: 0.8910, h: 0.6655 }, firstCellRatio: { w: 0.1593, h: 0.0895 } },
-    'army_wood_chest_5x7': { outerRatio: { x: 0.0633, y: 0.2190, w: 0.8694, h: 0.6436 }, firstCellRatio: { w: 0.1551, h: 0.0849 } },
-    'backpack_large_4x5': { outerRatio: { x: 0.0899, y: 0.4954, w: 0.8307, h: 0.4051 }, firstCellRatio: { w: 0.1852, h: 0.0810 } },
-    'backpack_medium_5x7': { outerRatio: { x: 0.0360, y: 0.4804, w: 0.8587, h: 0.4377 }, firstCellRatio: { w: 0.1551, h: 0.0629 } },
-    'backpack_small_6x8': { outerRatio: { x: 0.0457, y: 0.4873, w: 0.8553, h: 0.4850 }, firstCellRatio: { w: 0.1294, h: 0.0590 } },
-    'egg_chest_5x2': { outerRatio: { x: 0.0690, y: 0.2400, w: 0.8515, h: 0.1776 }, firstCellRatio: { w: 0.1527, h: 0.0859 } },
-  };
-
   const getLayoutDef = (layout: string) => {
     const m: Record<string, { cols: number; rows: number }> = {
       'guild_island_chest_5x7': { cols: 5, rows: 7 }, 'army_wood_chest_5x7': { cols: 5, rows: 7 },
@@ -427,16 +417,8 @@ export default function EquipmentPage() {
         height: Math.round(boxH * pxRatio),
       };
 
-      // anchorCell：正方形格子，用规则文档 firstCellRatio 或从 outerRect 推算
-      const tmpl = TEMPLATE_RATIOS[gridLayout];
-      const { cols: lCols } = getLayoutDef(gridLayout);
-      // 格子必须正方形，以宽度为准
-      const cellSizePx = tmpl
-        ? Math.round(natW * tmpl.firstCellRatio.w)
-        : Math.round(outerRect.width / lCols * 0.95);
-      const anchorCell = { width: cellSizePx, height: cellSizePx };
-
-      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, outerRect, anchorCell);
+      // V2.12.1: 不再传 anchorCell，后端中心点定位法从 outerRect + cols + rows 自动推算
+      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, outerRect);
       const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         row: c.row + gridCells.length,
@@ -485,9 +467,9 @@ export default function EquipmentPage() {
     try {
       const res: any = await searchCatalog(keyword.trim());
       const list = Array.isArray(res) ? res : (res?.list || []);
-      const options = list.slice(0, 10).map((c: any) => ({
-        value: c.aliases?.split(',')[0]?.trim() || c.name,
-        label: `${formatEquipName(c)}${c.aliases ? ' - 别称:' + c.aliases : ''}`,
+      const options = list.slice(0, 20).map((c: any) => ({
+        value: c.name,
+        label: `${formatEquipName(c)}${c.aliases ? ' (' + c.aliases.split(',')[0].trim() + ')' : ''}`,
       }));
       setGridCells(prev => {
         const next = [...prev];
@@ -872,10 +854,23 @@ export default function EquipmentPage() {
                       pointerEvents: 'none',
                     }}
                   />
-                  {/* 固定遮罩层：大红框 + 网格线 + 第一格蓝框（动态比例，保证格子正方形） */}
+                  {/* 固定遮罩层：大红框 + 网格线 + 第一格蓝框（中心点定位，考虑间隙） */}
                   {(() => {
                     const orp = getOuterRectPct(gridLayout);
                     const { cols, rows } = getLayoutDef(gridLayout);
+                    // 间隙比例：格子间间隙占整格步长的百分比（~6%）
+                    const GAP_RATIO = 0.06;
+                    // 格子内容占步长的百分比
+                    const CELL_RATIO = 1 - GAP_RATIO;
+                    // 每格步长（含间隙）
+                    const stepXPct = 100 / cols;
+                    const stepYPct = 100 / rows;
+                    // 格子实际大小（去掉间隙）
+                    const cellWPct = stepXPct * CELL_RATIO;
+                    const cellHPct = stepYPct * CELL_RATIO;
+                    // 间隙偏移（格子从步长中间偏移半个间隙）
+                    const offsetXPct = (stepXPct - cellWPct) / 2;
+                    const offsetYPct = (stepYPct - cellHPct) / 2;
                     return (
                       <>
                         <div
@@ -887,17 +882,18 @@ export default function EquipmentPage() {
                             pointerEvents: 'none',
                           }}
                         >
-                          {/* 网格线（等分，格子正方形因为大框宽高比 = cols:rows） */}
+                          {/* 网格线（在间隙中间绘制，而非格子边界） */}
                           {Array.from({ length: cols - 1 }, (_, i) => (
                             <div key={`v${i}`} style={{ position: 'absolute', left: `${((i + 1) / cols) * 100}%`, top: 0, bottom: 0, width: 1, background: 'rgba(255,77,79,0.5)' }} />
                           ))}
                           {Array.from({ length: rows - 1 }, (_, i) => (
                             <div key={`h${i}`} style={{ position: 'absolute', top: `${((i + 1) / rows) * 100}%`, left: 0, right: 0, height: 1, background: 'rgba(255,77,79,0.5)' }} />
                           ))}
-                          {/* 第一格蓝色高亮（正方形） */}
+                          {/* 第一格蓝色高亮（考虑间隙，比网格格子略小） */}
                           <div style={{
-                            position: 'absolute', left: 0, top: 0,
-                            width: `${100 / cols}%`, height: `${100 / rows}%`,
+                            position: 'absolute',
+                            left: `${offsetXPct}%`, top: `${offsetYPct}%`,
+                            width: `${cellWPct}%`, height: `${cellHPct}%`,
                             border: '3px solid #1677ff', background: 'rgba(22,119,255,0.12)',
                             pointerEvents: 'none', borderRadius: 2,
                           }} />
@@ -920,7 +916,21 @@ export default function EquipmentPage() {
                     </Button>
                     <Button onClick={() => setImgTransform({ x: 0, y: 0, scale: 1 })}>重置位置</Button>
                     <Button onClick={() => setGridPreviewSrc('')}>重新上传</Button>
-                    <Text type="secondary">缩放: {(imgTransform.scale * 100).toFixed(0)}%</Text>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Text type="secondary">缩放:</Text>
+                      <InputNumber
+                        size="small"
+                        min={10}
+                        max={500}
+                        step={5}
+                        value={Math.round(imgTransform.scale * 100)}
+                        onChange={(v) => {
+                          if (v !== null) setImgTransform(prev => ({ ...prev, scale: v / 100 }));
+                        }}
+                        style={{ width: 72 }}
+                        suffix="%"
+                      />
+                    </span>
                   </Space>
                 </div>
               </div>

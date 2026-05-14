@@ -2034,12 +2034,19 @@ export class ImageMatchService {
    * 中心裁剪规则：xRatio=0.15, yRatio=0.12, widthRatio=0.70, heightRatio=0.72（不对称，y方向偏上）
    * 返回四档状态：matched / review / unknown / empty
    */
+  /**
+   * V2.12.1 中心点定位法：
+   * 1. 以 outerRect 为整个网格区域（含间隙）
+   * 2. 均匀计算每格中心点 = outerRect 左上角 + (c+0.5)/cols * width, (r+0.5)/rows * height
+   * 3. 从中心点向四周扩展 CELL_CONTENT_RATIO（~88%步长）作为实际切图区域，自动排除间隙
+   * 4. 空格检测后直接丢弃，不返回前端
+   */
   async gridParseByRegion(
     imageBuffer: Buffer,
     cols: number,
     rows: number,
     outerRect: { left: number; top: number; width: number; height: number },
-    anchorCell?: { width: number; height: number },
+    _anchorCell?: { width: number; height: number },
   ): Promise<{
     gridSize: { cols: number; rows: number };
     cells: Array<{
@@ -2064,32 +2071,26 @@ export class ImageMatchService {
       throw new Error('sharp 依赖未安装');
     }
 
-    // 精确推算格子尺寸和间隙（格子必须正方形）
-    let cellSize: number, gapX: number, gapY: number;
+    // 获取原图尺寸用于边界检查
+    const metadata = await sharp(imageBuffer).metadata();
+    const imgW = metadata.width || 0;
+    const imgH = metadata.height || 0;
 
-    if (anchorCell && anchorCell.width > 5 && anchorCell.height > 5) {
-      // 格子必须正方形：取较大值
-      cellSize = Math.max(anchorCell.width, anchorCell.height);
-      // 横向间隙由 outerRect.width 反推
-      gapX = cols > 1 ? (outerRect.width - cols * cellSize) / (cols - 1) : 0;
-      // 纵向间隙 = 横向间隙（规则文档要求）
-      gapY = gapX;
-      if (gapX < 0) { gapX = 0; gapY = 0; }
-    } else {
-      const defaultGapRatio = 0.055;
-      cellSize = outerRect.width / (cols + (cols - 1) * defaultGapRatio);
-      gapX = cellSize * defaultGapRatio;
-      gapY = gapX;
+    // 防御性检查：cols/rows 必须在合理范围
+    if (cols < 1 || cols > 20 || rows < 1 || rows > 20) {
+      this.logger.warn(`[gridParse] 非法网格参数: cols=${cols}, rows=${rows}`);
+      return { gridSize: { cols, rows }, cells: [] };
     }
 
-    // 反推正确的 outerRect 高度（确保 rows 行完整显示）
-    const correctedHeight = rows * cellSize + (rows - 1) * gapY;
-    const startX = outerRect.left;
-    const startY = outerRect.top;
+    // 步长：每格占整个框的 1/cols 宽、1/rows 高
+    const stepX = outerRect.width / cols;
+    const stepY = outerRect.height / rows;
 
-    this.logger.log(
-      `[V2.12 gridParse] ${cols}x${rows}, outer=(${outerRect.left},${outerRect.top},${outerRect.width}x${outerRect.height}), cellSize=${cellSize.toFixed(1)}, gap=${gapX.toFixed(1)}, correctedH=${correctedHeight.toFixed(1)}`,
-    );
+    // 格子内容比例（排除间隙后的有效区域占步长的比例）
+    // 游戏内装备格子间隙约占 5-8%，取 88% 作为格子内容区域
+    const CELL_CONTENT_RATIO = 0.88;
+    // 格子实际切图尺寸（正方形，取宽高步长中较小的，确保不越界）
+    const cellSize = Math.min(stepX, stepY) * CELL_CONTENT_RATIO;
 
     // 中心裁剪规则（不对称：y 方向偏上，去左上角等级标记）
     const CROP_X_RATIO = 0.15;
@@ -2097,98 +2098,150 @@ export class ImageMatchService {
     const CROP_W_RATIO = 0.70;
     const CROP_H_RATIO = 0.72;
 
+    // 空格检测阈值（标准差低于此值视为空）
+    const EMPTY_STDDEV_THRESHOLD = 18;
+
+    this.logger.log(
+      `[V2.12.1 gridParse] ${cols}x${rows}, outer=(${outerRect.left},${outerRect.top},${outerRect.width}x${outerRect.height}), stepX=${stepX.toFixed(1)}, stepY=${stepY.toFixed(1)}, cellSize=${cellSize.toFixed(1)}, imgSize=${imgW}x${imgH}`,
+    );
+
     const cells: any[] = [];
     let index = 0;
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        // 浮点计算每格坐标（正方形格子）
-        const x = startX + c * (cellSize + gapX);
-        const y = startY + r * (cellSize + gapY);
+        // 每格中心点坐标（均匀分布）
+        const centerX = outerRect.left + (c + 0.5) * stepX;
+        const centerY = outerRect.top + (r + 0.5) * stepY;
 
-        const fullLeft = Math.round(x);
-        const fullTop = Math.round(y);
-        const fullW = Math.round(cellSize);
-        const fullH = Math.round(cellSize);
+        // 从中心点向四周扩展，得到格子切图区域
+        const halfSize = cellSize / 2;
+        let fullLeft = Math.round(centerX - halfSize);
+        let fullTop = Math.round(centerY - halfSize);
+        let fullW = Math.round(cellSize);
+        let fullH = Math.round(cellSize);
 
-        // 中心主体区域（不对称裁剪）
-        const centerLeft = Math.round(x + cellSize * CROP_X_RATIO);
-        const centerTop = Math.round(y + cellSize * CROP_Y_RATIO);
-        const centerW = Math.round(cellSize * CROP_W_RATIO);
-        const centerH = Math.round(cellSize * CROP_H_RATIO);
-
+        // 边界安全检查
+        if (fullLeft < 0) fullLeft = 0;
+        if (fullTop < 0) fullTop = 0;
+        if (fullLeft + fullW > imgW) fullW = imgW - fullLeft;
+        if (fullTop + fullH > imgH) fullH = imgH - fullTop;
         if (fullW < 10 || fullH < 10) { index++; continue; }
 
+        // 中心主体区域（不对称裁剪，用于 pHash 匹配）
+        const centerLeft = Math.round(centerX - halfSize + cellSize * CROP_X_RATIO);
+        const centerTop2 = Math.round(centerY - halfSize + cellSize * CROP_Y_RATIO);
+        let centerW = Math.round(cellSize * CROP_W_RATIO);
+        let centerH = Math.round(cellSize * CROP_H_RATIO);
+
+        // 中心区域边界安全
+        const cLeft = Math.max(0, centerLeft);
+        const cTop = Math.max(0, centerTop2);
+        if (cLeft + centerW > imgW) centerW = imgW - cLeft;
+        if (cTop + centerH > imgH) centerH = imgH - cTop;
+
         try {
-          // 检测空格
+          // 空格检测：计算标准差
           const stats = await sharp(imageBuffer)
             .extract({ left: fullLeft, top: fullTop, width: fullW, height: fullH })
             .stats();
-          const avgStdDev = stats.channels.reduce((sum: number, ch: any) => sum + (ch.stdev || 0), 0) / stats.channels.length;
+          const avgStdDev =
+            stats.channels.reduce(
+              (sum: number, ch: any) => sum + (ch.stdev || 0),
+              0,
+            ) / stats.channels.length;
 
-          if (avgStdDev < 15) {
-            cells.push({
-              row: r, col: c, index,
-              thumbnail: '',
-              quantity: 0,
-              detectedLevel: null,
-              detectedQuality: null,
-              matchStatus: 'empty' as const,
-            });
+          if (avgStdDev < EMPTY_STDDEV_THRESHOLD) {
+            // 空格：直接丢弃，不加入 cells
             index++;
             continue;
           }
 
-          // 缩略图（完整格子）
-          const thumbBuf = await sharp(imageBuffer)
+          // 缩略图（完整格子区域）
+          const fullBuf = await sharp(imageBuffer)
             .extract({ left: fullLeft, top: fullTop, width: fullW, height: fullH })
+            .png()
+            .toBuffer();
+          const thumbBuf = await sharp(fullBuf)
             .resize(80, 80, { fit: 'cover' })
             .png()
             .toBuffer();
           const thumbnail = `data:image/png;base64,${thumbBuf.toString('base64')}`;
 
-          // 中心主体（用于 pHash）
+          // 中心主体（用于 pHash 匹配）
           let centerBase64 = '';
           if (centerW > 10 && centerH > 10) {
             const centerBuf = await sharp(imageBuffer)
-              .extract({ left: centerLeft, top: centerTop, width: centerW, height: centerH })
+              .extract({
+                left: cLeft,
+                top: cTop,
+                width: centerW,
+                height: centerH,
+              })
               .resize(64, 64, { fit: 'cover' })
               .png()
               .toBuffer();
             centerBase64 = `data:image/png;base64,${centerBuf.toString('base64')}`;
           }
 
+          // 从右下角 OCR 提取数量（先检测是否有数字特征，避免无效 OCR 请求）
+          let quantity = 1;
+          try {
+            const meta = await sharp(fullBuf).metadata();
+            const fw = meta.width || 80;
+            const fh = meta.height || 80;
+            if (fw >= 48 && fh >= 48) {
+              // 裁右下角 35%×35%，检测亮色像素占比（数字通常为白色）
+              const cropW = Math.round(fw * 0.35);
+              const cropH = Math.round(fh * 0.35);
+              const cornerStats = await sharp(fullBuf)
+                .extract({ left: fw - cropW, top: fh - cropH, width: cropW, height: cropH })
+                .stats();
+              const avgMean = cornerStats.channels.reduce((s: number, ch: any) => s + (ch.mean || 0), 0) / cornerStats.channels.length;
+              const avgStd = cornerStats.channels.reduce((s: number, ch: any) => s + (ch.stdev || 0), 0) / cornerStats.channels.length;
+              // 右下角有亮色区域（数字背景通常是暗圆+白字，标准差 > 30 且均值适中）
+              if (avgStd > 25) {
+                quantity = await this.extractQuantityFromCorner(sharp, fullBuf);
+              }
+            }
+          } catch { /* 提取失败默认1 */ }
+
+          // 从边框颜色检测品质
+          let detectedQuality: number | null = null;
+          try {
+            detectedQuality = await this.detectQualityFromBorder(sharp, fullBuf);
+          } catch { /* 检测失败 */ }
+
           cells.push({
-            row: r, col: c, index,
+            row: r,
+            col: c,
+            index,
             thumbnail,
             centerThumbnail: centerBase64,
-            quantity: 1,
+            quantity,
             detectedLevel: null,
-            detectedQuality: null,
+            detectedQuality,
             matchStatus: 'unknown' as const,
           });
-        } catch {
-          cells.push({
-            row: r, col: c, index,
-            thumbnail: '', quantity: 0,
-            detectedLevel: null, detectedQuality: null,
-            matchStatus: 'empty' as const,
-          });
+        } catch (err) {
+          this.logger.warn(
+            `[V2.12.1 gridParse] 切图异常 row=${r} col=${c}: ${err}`,
+          );
+          // 切图失败：跳过该格
         }
         index++;
       }
     }
 
     this.logger.log(
-      `[V2.12 gridParse] 切图完成: ${cells.filter((c) => c.matchStatus !== 'empty').length}/${cols * rows} 格有效`,
+      `[V2.12.1 gridParse] 切图完成: ${cells.length} 格有效 / ${cols * rows} 格总计（空格已丢弃）`,
     );
 
     // pHash 分层匹配
     await this.prefillGridCellsByLayeredPhash(sharp, cells);
 
-    // 四档状态
+    // 四档状态判定
     for (const cell of cells) {
-      if (cell.matchStatus === 'empty') continue;
       const conf = cell.matchedConfidence || 0;
       if (conf >= 0.70) {
         cell.matchStatus = 'matched';
@@ -2253,13 +2306,18 @@ export class ImageMatchService {
 
       for (const cell of cells) {
         try {
-          const thumbBase64 = cell.thumbnail.replace(
+          // 优先使用 centerThumbnail（已去除边框+角标干扰），回退到 thumbnail
+          const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(
             /^data:image\/\w+;base64,/,
             '',
           );
-          const thumbBuf = Buffer.from(thumbBase64, 'base64');
-          const core = await this.cropCenter(sharp, thumbBuf, 0.7);
-          const cellHash = await this.computePhash(sharp, core);
+          if (!srcBase64) continue;
+          const srcBuf = Buffer.from(srcBase64, 'base64');
+          // centerThumbnail 已是中心裁切，不再二次 cropCenter；thumbnail 需要 cropCenter
+          const coreBuf = cell.centerThumbnail
+            ? srcBuf
+            : await this.cropCenter(sharp, srcBuf, 0.7);
+          const cellHash = await this.computePhash(sharp, coreBuf);
           if (!cellHash) continue;
           const tryMatch = (
             candidates: Array<{
@@ -2316,8 +2374,9 @@ export class ImageMatchService {
             cell.matchedCatalogId = cat.id;
             cell.matchedConfidence = matched.confidence;
             cell.matchSource = matched.source;
-            cell.detectedLevel = cat.level || null;
-            cell.detectedQuality = cat.quality ?? null;
+            // 等级品质：保留图片检测值，仅未检测到时用参考库兜底
+            if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
+            if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
             cell.matchedCategory = cat.category || '';
             cell.matchedGearScore = cat.gearScore || 0;
             cell.albionId = cat.albionId || null;

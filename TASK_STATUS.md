@@ -277,6 +277,21 @@
 | HF-004 | findAlbionMembers 索引映射确认 | completed | 2026-05-13 15:40 | TypeORM getRawAndEntities 保证 entities 与 raw 索引一致，恢复 index 映射 |
 | HF-005 | 移除 PSC 公会硬编码 | completed | 2026-05-13 15:33 | syncAlbionGuildMembers/syncAllAlbionGuildMembers 改为从公会配置读取 albionGuildId |
 | HF-006 | 清理未使用 import | completed | 2026-05-13 15:40 | member.service.ts 移除未使用的 Like/MoreThanOrEqual import |
+| **V2.12** | **公会图标+Albion数据+击杀详情+网格识别** | | | |
+| T-001 | 公会图标上传 | completed | 2026-05-14 | Layout.tsx superAdmin 可上传头像 |
+| T-005 | 成员列表隐藏PlayerId+在公会天数 | completed | 2026-05-14 | member/index.tsx 隐藏ID列，新增天数列 |
+| T-007 | 库存网格识别完整重写 | completed | 2026-05-14 | 6种容器类型，固定红框+图片拖拽缩放对齐 |
+| T-008 | 击杀详情OCR坐标定位 | completed | 2026-05-14 | parseKillDetailWithCoords 锚点定位左面板 |
+| **V2.12.1** | **网格识别精度优化+搜索修复** | | | |
+| F-200 | 前端蓝框比例缩小 | completed | 2026-05-14 18:31 | 蓝框考虑6%间隙，比网格格子缩小~88%，更贴合实际装备图标 |
+| F-201 | 手动输入缩放比例 | completed | 2026-05-14 18:31 | 缩放文字替换为InputNumber输入框(10%~500%，步长5%) |
+| F-202 | 后端中心点定位法切图重写 | completed | 2026-05-14 18:31 | 以outerRect均匀定位每格中心点，向外扩展88%步长切图，自动排除间隙 |
+| F-203 | pHash匹配改用centerThumbnail | completed | 2026-05-14 18:31 | prefillGridCellsByLayeredPhash优先用中心裁切图(去边框角标)，提高匹配准确率 |
+| F-204 | 数量OCR集成+前置过滤 | completed | 2026-05-14 18:31 | gridParseByRegion调用extractQuantityFromCorner提取右下角数量，增加stddev>25前置检测 |
+| F-205 | 品质边框检测集成 | completed | 2026-05-14 18:31 | gridParseByRegion调用detectQualityFromBorder，匹配后保留图片检测值 |
+| F-206 | 搜索结果显示修复 | completed | 2026-05-14 18:31 | value改为c.name(非别称)，结果增至20条，后端name匹配优先排序 |
+| F-207 | cols/rows防御性检查 | completed | 2026-05-14 18:31 | 范围限制1~20，防止异常参数导致大循环 |
+| F-208 | 空格直接丢弃 | completed | 2026-05-14 18:31 | 空格(stddev<18)不加入cells，不返回前端 |
 
 
 
