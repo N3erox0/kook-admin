@@ -10,7 +10,7 @@ USE kook_admin;
 -- 表1: users (status: 0=禁用, 1=启用)
 -- ============================================================
 INSERT INTO `users` (`id`, `username`, `password_hash`, `nickname`, `status`) VALUES
-  (999, 'test_user_999', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '测试用户_启用', 1),
+  (999, 'test_user_999', '$2b$10$h3qTPhe4CxXrUgNUbDcR7.Ll4ntR5nT3ws3cz5KbEOfcOajcID3Cq', '测试用户_999', 1),
   (998, 'test_user_998', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '测试用户_禁用', 0);
 
 -- ============================================================
@@ -24,8 +24,8 @@ INSERT INTO `invite_codes` (`id`, `code`, `max_uses`, `used_count`, `status`, `e
 -- 表3: guilds (status: 0=禁用, 1=启用)
 -- ============================================================
 INSERT INTO `guilds` (`id`, `name`, `icon_url`, `kook_guild_id`, `kook_bot_token`, `owner_user_id`, `status`) VALUES
-  (999, '天山明月', NULL, 'test-guild-999', '', 1, 1),
-  (998, '测试禁用公会', NULL, 'test-guild-998', '', 1, 0);
+  (999, '10087测试工会', NULL, 'test-guild-999', '', 999, 1),
+  (998, '测试禁用公会', NULL, 'test-guild-998', '', 999, 0);
 
 -- ============================================================
 -- 表4: equipment_catalog (无状态字段，插入测试参考装备)
@@ -39,7 +39,7 @@ INSERT INTO `equipment_catalog` (`id`, `name`, `level`, `quality`, `category`, `
 -- 表5: guild_members (status: active / left; role: super_admin / inventory_admin / resupply_staff / normal)
 -- ============================================================
 INSERT INTO `guild_members` (`id`, `guild_id`, `user_id`, `kook_user_id`, `nickname`, `role`, `status`, `joined_at`, `left_at`) VALUES
-  (999, 999, 999, 'kook-test-999', '测试管理员', 'super_admin', 'active', NOW(), NULL),
+  (999, 999, 999, 'local-test-user-999', '测试管理员', 'super_admin', 'active', NOW(), NULL),
   (998, 999, NULL, 'kook-test-998', '测试库存员', 'inventory_admin', 'active', NOW(), NULL),
   (997, 999, NULL, 'kook-test-997', '测试补装员', 'resupply_staff', 'active', NOW(), NULL),
   (996, 999, NULL, 'kook-test-996', '测试普通成员', 'normal', 'active', NOW(), NULL),
