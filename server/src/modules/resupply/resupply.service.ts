@@ -350,14 +350,14 @@ export class ResupplyService {
       data._dedupHash ||
       this.generateDedupHash(data.screenshotUrl, dateStr, data.kookUserId);
 
-    // 去重检查
-    const existing = await this.resupplyRepo.findOne({
-      where: { guildId, dedupHash: hash },
-    });
-    if (existing) {
-      this.logger.warn(`补装去重命中: hash=${hash}, 已有申请ID=${existing.id}`);
-      return { created: false, skipped: true };
-    }
+    // [测试期] 暂时关闭 createKookBatch 二次 MD5 去重
+    // const existing = await this.resupplyRepo.findOne({
+    //   where: { guildId, dedupHash: hash },
+    // });
+    // if (existing) {
+    //   this.logger.warn(`补装去重命中: hash=${hash}, 已有申请ID=${existing.id}`);
+    //   return { created: false, skipped: true };
+    // }
 
     const equipmentIds = data.equipmentCatalogIds.join(',');
     // V2.9.6 F-151: 支持自定义reason（含消息原文备注）
