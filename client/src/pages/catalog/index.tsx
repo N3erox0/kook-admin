@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image, AutoComplete, Checkbox, Spin } from 'antd';
 
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined, StarOutlined, FireOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined, StarOutlined, FireOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog, searchCatalog, getOfficialCatalogImages, selectHotCatalogImages } from '@/api/catalog';
 
 import { uploadFile } from '@/api/upload';
@@ -29,6 +29,7 @@ export default function CatalogPage() {
   const [imageTarget, setImageTarget] = useState<{ id: number; name: string } | null>(null);
   const [images, setImages] = useState<any[]>([]);
   const [albionImporting, setAlbionImporting] = useState(false);
+  const [phashLoading, setPhashLoading] = useState(false);
   const [form] = Form.useForm();
 
   // V2.9.8: 热门截图上传
@@ -255,6 +256,18 @@ export default function CatalogPage() {
   const [batchHotLoading, setBatchHotLoading] = useState(false);
   const [batchHotProgress, setBatchHotProgress] = useState({ current: 0, total: 0 });
 
+  const handleGeneratePhash = async () => {
+    setPhashLoading(true);
+    try {
+      const res: any = await request.post('/catalog/generate-phash');
+      message.success(`图片指纹生成完成：成功 ${res?.success || 0}，失败 ${res?.failed || 0}，共 ${res?.total || 0}`);
+    } catch (err: any) {
+      message.error(err?.message || '生成图片指纹失败');
+    } finally {
+      setPhashLoading(false);
+    }
+  };
+
   const handleBatchHot = async () => {
     if (selectedRowKeys.length === 0) return;
     setBatchHotLoading(true);
@@ -328,6 +341,13 @@ export default function CatalogPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>装备参考库</Title>
+        <Space>
+          <Popconfirm title="将重新为所有装备生成图片指纹(pHash)，耗时约1-3分钟，确认执行？" onConfirm={handleGeneratePhash} okText="开始生成">
+            <Button icon={<ThunderboltOutlined />} loading={phashLoading} type="primary" ghost>
+              {phashLoading ? '生成中...' : '生成图片指纹'}
+            </Button>
+          </Popconfirm>
+        </Space>
         {/* TODO: 2026-07-14 前未使用则删除以下4个按钮（刷新/CSV导入/导入Albion/新增热门装备）—— 隐藏于 2026-05-14 */}
         {false && <Space>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
