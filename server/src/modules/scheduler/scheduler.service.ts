@@ -202,8 +202,8 @@ export class SchedulerService {
 
   /**
    * V2.9.7 F-157: 每天 03:00 — 装备热度统计
-   * 统计每个catalogId在inventory_logs中action=resupply_deduct的总扣减次数
-   * 规则：>1次→2, >100次→3, >1000次→4, >10000次→5
+   * 统计每个catalogId在inventory_logs中action=resupply_deduct的总扣减次数（所有公会合计）
+   * 规则：>=1次→1, >100次→2, >1000次→3, >10000次→4，未出现→0
    */
   @Cron('0 0 3 * * *')
   async refreshEquipmentPopularity() {
@@ -222,32 +222,29 @@ export class SchedulerService {
           .getRawMany();
 
       let updated = 0;
+      const updatedIds: number[] = [];
       for (const row of deductCounts) {
         if (!row.catalogId) continue;
         const count = parseInt(row.cnt, 10) || 0;
-        let popularity = 1;
-        if (count > 10000) popularity = 5;
-        else if (count > 1000) popularity = 4;
-        else if (count > 100) popularity = 3;
-        else if (count > 1) popularity = 2;
+        let popularity = 0;
+        if (count > 10000) popularity = 4;
+        else if (count > 1000) popularity = 3;
+        else if (count > 100) popularity = 2;
+        else if (count >= 1) popularity = 1;
 
-        if (popularity > 1) {
-          await this.catalogRepo.update(row.catalogId, { popularity });
-          updated++;
-        }
+        await this.catalogRepo.update(row.catalogId, { popularity });
+        updatedIds.push(row.catalogId);
+        if (popularity > 0) updated++;
       }
 
-      // 未出现在扣减记录中的装备重置为1
+      // 未出现在扣减记录中的装备重置为0
       await this.catalogRepo
         .createQueryBuilder()
         .update(EquipmentCatalog)
-        .set({ popularity: 1 })
-        .where('popularity > 1')
+        .set({ popularity: 0 })
+        .where('popularity > 0')
         .andWhere('id NOT IN (:...ids)', {
-          ids: deductCounts
-            .filter((r) => r.catalogId)
-            .map((r) => r.catalogId)
-            .concat([0]),
+          ids: updatedIds.concat([0]),
         })
         .execute();
 
