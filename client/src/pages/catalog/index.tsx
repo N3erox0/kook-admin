@@ -328,7 +328,8 @@ export default function CatalogPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>装备参考库</Title>
-        <Space>
+        {/* TODO: 2026-07-14 前未使用则删除以下4个按钮（刷新/CSV导入/导入Albion/新增热门装备）—— 隐藏于 2026-05-14 */}
+        {false && <Space>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
           <Upload accept=".csv" showUploadList={false} beforeUpload={handleCsvFile}>
             <Button icon={<UploadOutlined />}>CSV导入</Button>
