@@ -340,7 +340,7 @@ export default function CatalogPage() {
             </Button>
           </Popconfirm>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => handleEdit(null)}>新增热门装备</Button>
-        </Space>
+        </Space>}
       </div>
 
       {/* 筛选栏 */}
