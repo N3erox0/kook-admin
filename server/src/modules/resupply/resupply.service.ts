@@ -285,6 +285,7 @@ export class ResupplyService {
       reason: dto.reason,
       screenshotUrl: dto.screenshotUrl,
       kookMessageId: dto.kookMessageId,
+      kookMessageTime: dto.kookMessageTime ? new Date(dto.kookMessageTime) : null,
       killDate: dto.killDate,
       mapName: dto.mapName,
       gameId: dto.gameId,
@@ -332,6 +333,7 @@ export class ResupplyService {
         matchStatus?: string;
       }>;
       kookMessageId?: string;
+      kookMessageTime?: string;
       _dedupHash?: string;
       _reason?: string;
       source?: string;
@@ -374,6 +376,7 @@ export class ResupplyService {
       reason,
       screenshotUrl: data.screenshotUrl,
       kookMessageId: data.kookMessageId || null,
+      kookMessageTime: data.kookMessageTime ? new Date(data.kookMessageTime) : null,
       dedupHash: hash,
       resupplyBox: parseResupplyBox(data.kookNickname) || null,
       killDate: data.killDate || null,

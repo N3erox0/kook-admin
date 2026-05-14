@@ -122,6 +122,11 @@ export class KookMessageService {
       `[频道消息] type=${d.type}, target_id=${d.target_id}, author=${authorName}(${authorId}), images=${imageUrls.length}, content=${textContent.slice(0, 150)}`,
     );
 
+    // KOOK msg_timestamp 单位毫秒，可能不存在时退回 webhook payload 中的其他时间字段
+    const kookMsgTimeIso = (d as any).msg_timestamp
+      ? new Date(Number((d as any).msg_timestamp)).toISOString()
+      : undefined;
+
     if (imageUrls.length > 0) {
       // 多图逐张处理
       for (const imgUrl of imageUrls) {
@@ -132,6 +137,7 @@ export class KookMessageService {
           imgUrl,
           textContent,
           d.msg_id,
+          kookMsgTimeIso,
         );
       }
     } else if (this.isOcBrokenMessage(textContent)) {
@@ -141,6 +147,7 @@ export class KookMessageService {
         authorName,
         textContent,
         d.msg_id,
+        kookMsgTimeIso,
       );
     }
 
@@ -545,6 +552,7 @@ export class KookMessageService {
     imageUrl: string,
     textContent: string,
     kookMessageId?: string,
+    kookMessageTime?: string,
   ): Promise<void> {
     try {
       // Step 1: OCR 识别文字+坐标
@@ -647,6 +655,7 @@ export class KookMessageService {
         equipmentCatalogIds: catalogIds,
         equipmentItems,
         kookMessageId,
+        kookMessageTime,
         _dedupHash: contentDedupHash,
         _reason: reason,
         source: 'killboard',
@@ -696,6 +705,7 @@ export class KookMessageService {
     kookNickname: string,
     textContent: string,
     kookMessageId?: string,
+    kookMessageTime?: string,
   ): Promise<void> {
     try {
       this.logger.log(
@@ -852,6 +862,7 @@ export class KookMessageService {
           applyType: 'OC碎',
           reason: textContent,
           kookMessageId,
+          kookMessageTime,
           _dedupHash: dedupHash,
         };
         await this.resupplyService.create(guild.id, createDto);
@@ -1427,6 +1438,13 @@ export class KookMessageService {
               const textContent =
                 typeof msg.content === 'string' ? msg.content : '';
 
+              // 历史消息时间：msg.create_at / msg.msg_timestamp（毫秒）
+              const histMsgTimeIso = (msg as any).create_at
+                ? new Date(Number((msg as any).create_at)).toISOString()
+                : (msg as any).msg_timestamp
+                ? new Date(Number((msg as any).msg_timestamp)).toISOString()
+                : undefined;
+
               if (imageUrls.length > 0) {
                 for (const imgUrl of imageUrls) {
                   await this.processImageMessage(
@@ -1436,6 +1454,7 @@ export class KookMessageService {
                     imgUrl,
                     textContent,
                     msg.id,
+                    histMsgTimeIso,
                   );
                 }
                 processed++;
@@ -1446,6 +1465,7 @@ export class KookMessageService {
                   authorName,
                   textContent,
                   msg.id,
+                  histMsgTimeIso,
                 );
                 processed++;
               } else {

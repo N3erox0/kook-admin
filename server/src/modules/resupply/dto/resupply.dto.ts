@@ -24,6 +24,7 @@ export class CreateResupplyDto {
   @IsOptional() @IsString() mapName?: string;
   @IsOptional() @IsString() gameId?: string;
   @IsOptional() @IsString() resupplyBox?: string;
+  @IsOptional() @IsString() kookMessageTime?: string; // ISO 时间字符串，KOOK消息发送时间
 }
 
 /** F-108: 快捷补装完成（一步到位：更新装备列表 + 直接扣库存 + 标记完成） */
