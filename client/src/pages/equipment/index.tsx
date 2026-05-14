@@ -404,7 +404,11 @@ export default function EquipmentPage() {
       if (!imgEl) { message.error('图片未加载'); setGridLoading(false); return; }
 
       const natW = imgEl.naturalWidth;
-      const natH = imgEl.naturalHeight;
+      // 图片在容器中的渲染宽高（CSS transform: scale 不影响 clientWidth）
+      const renderedW = imgEl.clientWidth;
+      const renderedH = imgEl.clientHeight;
+      // 实际显示尺寸 = rendered × scale
+      const displayScale = imgTransform.scale;
 
       // 动态计算大框在容器中的像素位置
       const orp = getOuterRectPct(gridLayout);
@@ -414,12 +418,13 @@ export default function EquipmentPage() {
       const boxH = CONTAINER_H * orp.height / 100;
 
       // 大框在原图中的像素坐标
-      const pixelPerPx = 1 / imgTransform.scale;
+      // 图片显示位置 = (imgTransform.x, imgTransform.y)，缩放后 1 显示像素 = natW / (renderedW * displayScale) 原图像素
+      const pxRatio = natW / (renderedW * displayScale);
       const outerRect = {
-        left: Math.round((boxLeft - imgTransform.x) * pixelPerPx),
-        top: Math.round((boxTop - imgTransform.y) * pixelPerPx),
-        width: Math.round(boxW * pixelPerPx),
-        height: Math.round(boxH * pixelPerPx),
+        left: Math.round((boxLeft - imgTransform.x) * pxRatio),
+        top: Math.round((boxTop - imgTransform.y) * pxRatio),
+        width: Math.round(boxW * pxRatio),
+        height: Math.round(boxH * pxRatio),
       };
 
       // anchorCell：正方形格子，用规则文档 firstCellRatio 或从 outerRect 推算
@@ -823,14 +828,14 @@ export default function EquipmentPage() {
             {gridPreviewSrc ? (
               <div>
                 <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-                  <b>拖动图片</b>使装备区域对齐红色框，<b>滚轮缩放</b>图片大小。红框和网格线位置固定不动。
+                  <b>拖动图片</b>使装备区域对齐红色框，<b>滚轮缩放</b>图片大小。红框和网格线固定不动，第一格蓝框必须对齐第一个装备。
                 </Text>
                 {/* 对齐容器 */}
                 <div
                   style={{
                     position: 'relative', width: CONTAINER_W, height: CONTAINER_H,
                     border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden',
-                    cursor: imgDragging ? 'grabbing' : 'grab', userSelect: 'none', background: '#f5f5f5',
+                    cursor: imgDragging ? 'grabbing' : 'grab', userSelect: 'none', background: '#1a1a1a',
                   }}
                   onMouseDown={(e) => {
                     setImgDragging(true);
@@ -848,11 +853,11 @@ export default function EquipmentPage() {
                   onMouseLeave={() => setImgDragging(false)}
                   onWheel={(e) => {
                     e.preventDefault();
-                    const delta = e.deltaY > 0 ? -0.05 : 0.05;
+                    const delta = e.deltaY > 0 ? -0.03 : 0.03;
                     setImgTransform((prev) => ({ ...prev, scale: Math.max(0.1, Math.min(5, prev.scale + delta)) }));
                   }}
                 >
-                  {/* 图片层（可拖动+缩放） */}
+                  {/* 图片层（可拖动+缩放，等比显示） */}
                   <img
                     id="grid-preview-img"
                     src={gridPreviewSrc}
@@ -861,8 +866,9 @@ export default function EquipmentPage() {
                     style={{
                       position: 'absolute',
                       left: imgTransform.x, top: imgTransform.y,
-                      width: CONTAINER_W * imgTransform.scale,
+                      transform: `scale(${imgTransform.scale})`,
                       transformOrigin: '0 0',
+                      maxWidth: 'none',
                       pointerEvents: 'none',
                     }}
                   />
