@@ -431,18 +431,17 @@ export class ImageMatchService {
     category: string;
     label: string;
   }> = [
-    // cx, cy 为格子中心相对于装备区的百分比坐标
-    // 每格尺寸约 28%W x 22%H
-    { cx: 0.16, cy: 0.11, category: '其他', label: '包' },
-    { cx: 0.5, cy: 0.11, category: '头', label: '头盔' },
-    { cx: 0.84, cy: 0.11, category: '披风', label: '披风' },
-    { cx: 0.16, cy: 0.37, category: '武器', label: '武器' },
-    { cx: 0.5, cy: 0.37, category: '甲', label: '胸甲' },
-    { cx: 0.84, cy: 0.37, category: '副手', label: '副手' },
-    { cx: 0.16, cy: 0.63, category: '药水', label: '药水' },
-    { cx: 0.5, cy: 0.63, category: '鞋', label: '鞋子' },
-    { cx: 0.84, cy: 0.63, category: '食物', label: '食物' },
-    { cx: 0.5, cy: 0.88, category: '坐骑', label: '坐骑' },
+    // V2.12.4: 5张截图验证后的固值比例（cx,cy 为格子中心相对装备区的百分比）
+    { cx: 0.120, cy: 0.140, category: '其他', label: '包' },
+    { cx: 0.500, cy: 0.095, category: '头', label: '头盔' },
+    { cx: 0.895, cy: 0.105, category: '披风', label: '披风' },
+    { cx: 0.135, cy: 0.415, category: '武器', label: '武器' },
+    { cx: 0.500, cy: 0.400, category: '甲', label: '胸甲' },
+    { cx: 0.895, cy: 0.400, category: '副手', label: '副手' },
+    { cx: 0.135, cy: 0.685, category: '药水', label: '药水' },
+    { cx: 0.500, cy: 0.685, category: '鞋', label: '鞋子' },
+    { cx: 0.895, cy: 0.670, category: '食物', label: '食物' },
+    { cx: 0.500, cy: 0.920, category: '坐骑', label: '坐骑' },
   ];
 
   async matchKillDetailSlots(
