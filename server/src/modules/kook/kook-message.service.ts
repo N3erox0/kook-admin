@@ -1186,25 +1186,27 @@ export class KookMessageService {
         );
 
         // 玩家名：左面板区域内第一个含英文字母的文字（Albion 玩家名一定含英文）
+        // V2.12.3: 固定去掉第一个字符（图标被 OCR 识别为字符混入名字开头）
         for (const d of leftPanelTexts) {
           const cleaned = d.text.replace(/[^\w\s]/g, '').trim();
-          if (/[A-Za-z]/.test(cleaned) && cleaned.length >= 2) {
-            gameId = cleaned;
+          if (/[A-Za-z]/.test(cleaned) && cleaned.length >= 3) {
+            gameId = cleaned.slice(1); // 去掉第一个字符（图标）
             break;
           }
         }
 
         // 公会名：紧跟在玩家名下方的文字（通常是短英文/中文公会名如 PSC）
+        // V2.12.3: 同样去掉第一个字符（公会名前有旗帜/勾图标）
         if (gameId) {
-          const gameIdDet = leftPanelTexts.find((d) => d.text.replace(/[^\w\s]/g, '').trim() === gameId);
+          const gameIdDet = leftPanelTexts.find((d) => d.text.replace(/[^\w\s]/g, '').trim().slice(1) === gameId);
           if (gameIdDet) {
             const nextTexts = leftPanelTexts.filter(
               (d) => d.y > gameIdDet.y + gameIdDet.height * 0.3 && d.y < gameIdDet.y + gameIdDet.height * 3,
             );
             for (const d of nextTexts) {
               const t = d.text.replace(/[^\w\s\u4e00-\u9fff]/g, '').trim();
-              if (t && t !== gameId && !/^\d{3,4}$/.test(t)) {
-                guildName = t;
+              if (t && t.length >= 2 && !/^\d{3,4}$/.test(t)) {
+                guildName = t.slice(1); // V2.12.3: 去掉第一个字符（图标）
                 break;
               }
             }

@@ -101,16 +101,35 @@ export class AlbionService {
     playerName: string,
   ): Promise<any | null> {
     if (!playerName) return null;
-    const data = await this.fetchJson<any>(
-      server,
-      `/search?q=${encodeURIComponent(playerName)}`,
-    );
-    const players = Array.isArray(data?.players) ? data.players : [];
-    const exact = players.find(
-      (p: any) =>
-        String(p.Name || '').toLowerCase() === playerName.toLowerCase(),
-    );
-    return exact || players[0] || null;
+
+    // V2.12.3: 生成 OCR 混淆候选名（O↔0, l↔1↔I）
+    const candidates = this.generateOcrCandidates(playerName);
+
+    for (const name of candidates) {
+      const data = await this.fetchJson<any>(
+        server,
+        `/search?q=${encodeURIComponent(name)}`,
+      );
+      const players = Array.isArray(data?.players) ? data.players : [];
+      const exact = players.find(
+        (p: any) =>
+          String(p.Name || '').toLowerCase() === name.toLowerCase(),
+      );
+      if (exact) return exact;
+      if (players.length > 0 && name === playerName) return players[0];
+    }
+    return null;
+  }
+
+  /** V2.12.3: 生成 OCR 混淆候选名（O↔0），最多 5 个候选 */
+  private generateOcrCandidates(name: string): string[] {
+    const candidates = [name];
+    // O → 0
+    if (/O/.test(name)) candidates.push(name.replace(/O/g, '0'));
+    // 0 → O
+    if (/0/.test(name)) candidates.push(name.replace(/0/g, 'O'));
+    // 去重
+    return [...new Set(candidates)].slice(0, 5);
   }
 
   async getPlayerDeaths(
