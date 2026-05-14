@@ -292,6 +292,11 @@
 | F-206 | 搜索结果显示修复 | completed | 2026-05-14 18:31 | value改为c.name(非别称)，结果增至20条，后端name匹配优先排序 |
 | F-207 | cols/rows防御性检查 | completed | 2026-05-14 18:31 | 范围限制1~20，防止异常参数导致大循环 |
 | F-208 | 空格直接丢弃 | completed | 2026-05-14 18:31 | 空格(stddev<18)不加入cells，不返回前端 |
+| **V2.12.3** | **已有公会账号直登+测试账号修复** | | | |
+| F-209 | 已有公会账号直登数据修复 | completed | 2026-05-14 20:54 | 新增029迁移，确保test_user_999绑定999/10087测试工会super_admin，登录返回guilds后直接进后台 |
+| F-210 | 手动子账号无需绑定真实KOOK | completed | 2026-05-14 20:54 | createSubAccount使用local-{guildId}-{userId}本地占位ID，避免空kook_user_id唯一索引冲突 |
+| F-211 | 测试种子数据同步 | completed | 2026-05-14 20:54 | 004_test_data.sql同步测试账号哈希、公会名/owner、手动成员占位ID |
+| F-212 | 构建依赖与安全审计修复 | completed | 2026-05-14 20:54 | server补充playwright devDependency以通过tsc；README清理示例token查询参数 |
 
 
 

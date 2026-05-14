@@ -315,11 +315,12 @@ export class GuildService {
       });
       const savedUser = await qr.manager.save(user);
 
-      // 创建 guild_member 绑定到公会
+      // 创建 guild_member 绑定到公会。
+      // 手动子账号不绑定真实 KOOK，使用本地唯一占位ID避免 guild_id+kook_user_id 唯一索引冲突。
       const member = qr.manager.create(GuildMember, {
         guildId,
         userId: savedUser.id,
-        kookUserId: '',
+        kookUserId: `local-${guildId}-${savedUser.id}`,
         nickname,
         role,
         status: 'active',
