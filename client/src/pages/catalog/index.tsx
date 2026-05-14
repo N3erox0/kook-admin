@@ -361,6 +361,11 @@ export default function CatalogPage() {
               {[0,1,2,3,4].map(i => <Select.Option key={i} value={i}>{i}</Select.Option>)}
             </Select>
           </Form.Item>
+          <Form.Item name="gearScore">
+            <Select placeholder="装等" allowClear style={{ width: 90 }}>
+              {[4,5,6,7,8,9,10,11,12].map(g => <Select.Option key={g} value={g}>P{g}</Select.Option>)}
+            </Select>
+          </Form.Item>
           <Form.Item><Button type="primary" htmlType="submit">查询</Button></Form.Item>
         </Form>
       </Card>
