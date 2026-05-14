@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, Upload, Image, AutoComplete, Checkbox, Spin } from 'antd';
 
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined, StarOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PictureOutlined, CloudDownloadOutlined, StarOutlined, FireOutlined } from '@ant-design/icons';
 import { getCatalogList, createCatalog, updateCatalog, deleteCatalog, csvImportCatalog, getCatalogImages, addCatalogImage, deleteCatalogImage, setPrimaryCatalogImage, importAlbionCatalog, searchCatalog, getOfficialCatalogImages, selectHotCatalogImages } from '@/api/catalog';
 
 import { uploadFile } from '@/api/upload';
@@ -250,38 +250,75 @@ export default function CatalogPage() {
     } finally { setAlbionImporting(false); }
   };
 
+  // V2.12.2: 批量勾选 + 批量入热门库
+  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+  const [batchHotLoading, setBatchHotLoading] = useState(false);
+  const [batchHotProgress, setBatchHotProgress] = useState({ current: 0, total: 0 });
+
+  const handleBatchHot = async () => {
+    if (selectedRowKeys.length === 0) return;
+    setBatchHotLoading(true);
+    const total = selectedRowKeys.length;
+    setBatchHotProgress({ current: 0, total });
+    let success = 0;
+    let skipped = 0;
+    for (let i = 0; i < total; i++) {
+      const catalogId = selectedRowKeys[i];
+      setBatchHotProgress({ current: i + 1, total });
+      try {
+        const imgs: any = await getOfficialCatalogImages(catalogId);
+        const allFiles = (imgs || []).map((img: any) => img.fileName).filter(Boolean);
+        if (allFiles.length === 0) { skipped++; continue; }
+        await selectHotCatalogImages(catalogId, allFiles);
+        success++;
+      } catch { skipped++; }
+    }
+    message.success(`批量入热门库完成：${success} 件成功，${skipped} 件跳过（无官网图片）`);
+    setBatchHotLoading(false);
+    setSelectedRowKeys([]);
+    fetchList();
+  };
+
   const columns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
-      title: '图标', dataIndex: 'imageUrl', key: 'icon', width: 60,
-      render: (url: string) => url ? <Image src={url} width={32} height={32} style={{ objectFit: 'cover', borderRadius: 4 }} /> : <PictureOutlined style={{ fontSize: 20, color: '#ccc' }} />,
+      title: '装备名称', dataIndex: 'name', key: 'name', width: 150, ellipsis: true,
     },
-    { title: '装备名称', dataIndex: 'name', key: 'name', ellipsis: true },
+    { title: '别称', dataIndex: 'aliases', key: 'aliases', width: 130, ellipsis: true, render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
+    { title: '部位', dataIndex: 'category', key: 'category', width: 80 },
     {
-      title: '等级', dataIndex: 'level', key: 'level', width: 70,
-      render: (v: number) => v,
-    },
-    {
-      title: '品质', dataIndex: 'quality', key: 'quality', width: 70,
-      render: (v: number) => v,
+      title: '等级/品质', key: 'levelQuality', width: 80,
+      render: (_: any, r: EquipmentCatalog) => `${r.level}/${r.quality}`,
     },
     {
-      title: '装等', dataIndex: 'gearScore', key: 'gearScore', width: 70,
+      title: '装等', dataIndex: 'gearScore', key: 'gearScore', width: 60,
       render: (v: number) => v != null && v > 0 ? `P${v}` : '-',
     },
-    { title: '部位', dataIndex: 'category', key: 'category', width: 80 },
-    { title: '别称', dataIndex: 'aliases', key: 'aliases', width: 150, ellipsis: true, render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
     {
-      title: '操作', key: 'actions', width: 180,
+      title: '热度', dataIndex: 'popularity', key: 'popularity', width: 70,
+      render: (v: number) => {
+        const val = v || 1;
+        return <span title={`热度 ${val}/5`}>{val <= 2 ? <span style={{ color: '#999' }}>{val}</span> : val <= 3 ? <span style={{ color: '#faad14' }}><FireOutlined /> {val}</span> : <span style={{ color: '#ff4d4f' }}><FireOutlined /> {val}</span>}</span>;
+      },
+    },
+    {
+      title: 'Albion图', dataIndex: 'imageUrl', key: 'albionImg', width: 75,
+      render: (url: string) => url ? <Image src={url} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 4 }} /> : <span style={{ color: '#ccc', fontSize: 12 }}>无</span>,
+    },
+    {
+      title: '本地缓存', key: 'localImg', width: 80,
+      render: (_: any, r: any) => r.localImagePath ? <Image src={r.localImagePath} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 4 }} /> : <span style={{ color: '#ccc', fontSize: 12 }}>未缓存</span>,
+    },
+    {
+      title: '热门截图', key: 'hotImg', width: 80,
+      render: (_: any, r: any) => r.hotImagePath ? <Image src={r.hotImagePath} width={48} height={48} style={{ objectFit: 'cover', borderRadius: 4 }} /> : <span style={{ color: '#ccc', fontSize: 12 }}>未上传</span>,
+    },
+    {
+      title: '操作', key: 'actions', width: 160,
       render: (_: any, record: EquipmentCatalog) => (
         <Space size="small">
           <Button size="small" type="link" icon={<PictureOutlined />} onClick={() => openImageManager(record)}>图片</Button>
           <Button size="small" type="link" icon={<StarOutlined />} onClick={() => openOfficialPicker(record)}>热门图</Button>
           <Button size="small" type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-
-          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
         </Space>
       ),
     },
@@ -329,8 +366,27 @@ export default function CatalogPage() {
       </Card>
 
       <Card>
+        {selectedRowKeys.length > 0 && (
+          <Space style={{ marginBottom: 12 }}>
+            <Text>已选 {selectedRowKeys.length} 条</Text>
+            <Button
+              type="primary"
+              icon={<StarOutlined />}
+              loading={batchHotLoading}
+              onClick={handleBatchHot}
+            >
+              {batchHotLoading ? `批量入热门库 (${batchHotProgress.current}/${batchHotProgress.total})` : `批量入热门库 (${selectedRowKeys.length}件)`}
+            </Button>
+            <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+          </Space>
+        )}
         <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="middle"
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys as number[]),
+          }}
           pagination={{ current: page, total, pageSize, showSizeChanger: true, pageSizeOptions: ['50', '100'], showTotal: t => `共 ${t} 条`, onChange: (p, ps) => { setPage(p); if (ps !== pageSize) { setPageSize(ps); fetchList(p, filters, ps); } else { fetchList(p); } } }}
+          scroll={{ x: 1100 }}
         />
       </Card>
 
