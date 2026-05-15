@@ -13,11 +13,11 @@ import { join } from 'path';
  * 图片相似度匹配服务
  * 方案：感知哈希 (pHash) — 无需 GPU / 外部依赖
  *
- * 流程：
+ * V2.13 预处理管线：
  * 1. 上传截图 → 按网格切割为单个装备图标子图
- * 2. 每个子图遮盖角标(五角星/等级/数量)→裁切中心60%（去品质边框）→ 缩放为 32x32 灰度 → DCT → 取低频 8x8 → 生成 64bit 哈希
- * 3. 与参考库所有装备的 imagePhash 比较汉明距离
- * 4. 距离 ≤ 阈值（严格模式19≥70%/宽松模式25≥60%）且与次佳差距 ≥ 3 → 匹配成功
+ * 2. preprocessForPhash(mode) → 按模式遮罩角标 → 不对称中心裁剪(15%/12%/70%/72%) → 32x32灰度 → normalize
+ * 3. computePhashFromRaw → DCT → 8x8低频 → 中值二值化 → 64bit hex
+ * 4. 与参考库 imagePhash 比较汉明距离
  */
 @Injectable()
 export class ImageMatchService {
@@ -128,8 +128,9 @@ export class ImageMatchService {
     let discardedByThreshold = 0;
     for (const subBuf of subImages) {
       try {
-        const cropped = await this.cropCenter(sharp, subBuf, 0.6);
-        const hash = await this.computePhash(sharp, cropped);
+        // V2.13: inventory 模式 — 仅遮罩右下角，不对称中心裁剪，normalize
+        const rawPixels = await this.preprocessForPhash(sharp, subBuf, 'inventory');
+        const hash = this.computePhashFromRaw(rawPixels);
 
         // 按装备名分组，同名不同品质取最佳
         const bestByName = new Map<string, { cat: any; distance: number }>();
@@ -302,8 +303,9 @@ export class ImageMatchService {
     if (!buffer || buffer.length === 0) return null;
 
     try {
-      const cropped = await this.cropCenter(sharp, buffer, 0.6);
-      return this.computePhash(sharp, cropped);
+      // V2.13: catalog 模式 — 不遮罩，不对称中心裁剪，normalize
+      const rawPixels = await this.preprocessForPhash(sharp, buffer, 'catalog');
+      return this.computePhashFromRaw(rawPixels);
     } catch (err) {
       this.logger.warn(`生成 pHash 失败 catalogId=${catalogId}: ${err}`);
       return null;
@@ -542,9 +544,9 @@ export class ImageMatchService {
           continue;
         }
 
-        // 计算 pHash
-        const cropped = await this.cropCenter(sharp, cellBuf, 0.6);
-        const hash = await this.computePhash(sharp, cropped);
+        // V2.13: resupply 模式 — 仅遮罩右上角，不对称中心裁剪，normalize
+        const rawPixels = await this.preprocessForPhash(sharp, cellBuf, 'resupply');
+        const hash = this.computePhashFromRaw(rawPixels);
 
         // 只在对应 category 内匹配
         let candidateCatalogs = catalogsByCategory.get(slot.category) || [];
@@ -836,11 +838,119 @@ export class ImageMatchService {
     return results;
   }
 
+  // ===== V2.13: 统一预处理管线 =====
+
+  /** 灰128背景色，用于 flatten 和遮罩，减少与截图背景的灰度差异 */
+  private static readonly GRAY_BG = { r: 128, g: 128, b: 128 };
+
+  /** 旋转后宽矩形裁剪比例（相对于旋转后画布尺寸） */
+  private static readonly ROT_CROP_W = 0.85;  // 宽度85%：保留长条武器全长
+  private static readonly ROT_CROP_H = 0.55;  // 高度55%：去掉上下品质背景+角标残余
+
   /**
-   * 裁切图片中心区域（去品质边框）+ 遮盖四角角标
-   * 先将右上角（附魔五角星）、左上角（罗马数字等级）、右下角（数量数字）填黑，
-   * 再裁切中心区域，确保参考库图（无角标）和用户截图（有角标）pHash一致。
+   * V2.13: 统一预处理管线 — 遮罩→旋转45°→宽矩形裁剪→均衡化
+   * 旋转45°将左低右高的斜放装备扶正，宽矩形裁剪保留武器全长
+   * @param mode 'catalog'(参考库渲染图) | 'inventory'(库存截图) | 'resupply'(补装截图)
+   * @returns 预处理后的 32×32 灰度 raw Buffer，可直接计算 pHash
    */
+  private async preprocessForPhash(
+    sharp: any,
+    buffer: Buffer,
+    mode: 'catalog' | 'inventory' | 'resupply',
+  ): Promise<Buffer> {
+    const meta = await sharp(buffer).metadata();
+    const w = meta.width || 64;
+    const h = meta.height || 64;
+
+    // Step 1: flatten — 统一背景灰128，消除 alpha 通道
+    let processed = await sharp(buffer)
+      .flatten({ background: ImageMatchService.GRAY_BG })
+      .toBuffer();
+
+    // Step 2: 按模式遮罩不同角标（灰128填充，避免 DCT 低频跳变）
+    const composites: any[] = [];
+
+    if (mode === 'inventory') {
+      // 库存模式：仅遮罩右下角25%（堆叠数量数字，渲染图没有）
+      const brW = Math.round(w * 0.25);
+      const brH = Math.round(h * 0.25);
+      const brMask = await sharp({
+        create: { width: brW, height: brH, channels: 3, background: ImageMatchService.GRAY_BG },
+      }).png().toBuffer();
+      composites.push({ input: brMask, left: w - brW, top: h - brH });
+    } else if (mode === 'resupply') {
+      // 补装模式：仅遮罩右上角20%（附魔星标，渲染图没有）
+      const trSize = Math.round(Math.max(w, h) * 0.20);
+      const trMask = await sharp({
+        create: { width: trSize, height: trSize, channels: 3, background: ImageMatchService.GRAY_BG },
+      }).png().toBuffer();
+      composites.push({ input: trMask, left: w - trSize, top: 0 });
+    }
+    // catalog 模式：不遮罩任何角标（渲染图自带左上等级+左下品质，与截图一致）
+
+    if (composites.length > 0) {
+      processed = await sharp(processed).composite(composites).toBuffer();
+    }
+
+    // Step 3: 旋转45°（装备左低右高斜放，旋转后扶正，画布自动扩大√2倍）
+    const rotated = await sharp(processed)
+      .rotate(45, { background: ImageMatchService.GRAY_BG })
+      .toBuffer();
+
+    // Step 4: 宽矩形中心裁剪（旋转后画布尺寸 ≈ 原边长×√2）
+    const rotMeta = await sharp(rotated).metadata();
+    const rw = rotMeta.width || 64;
+    const rh = rotMeta.height || 64;
+    const cropW = Math.round(rw * ImageMatchService.ROT_CROP_W);
+    const cropH = Math.round(rh * ImageMatchService.ROT_CROP_H);
+    const cropLeft = Math.round((rw - cropW) / 2);
+    const cropTop = Math.round((rh - cropH) / 2);
+
+    // Step 5: 裁剪 → 32×32 → 灰度 → normalize(直方图均衡化) → raw
+    return sharp(rotated)
+      .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+      .resize(32, 32, { fit: 'fill' })
+      .grayscale()
+      .normalize()
+      .raw()
+      .toBuffer();
+  }
+
+  /**
+   * V2.13: 从预处理后的 32×32 raw buffer 直接计算 pHash
+   * （preprocessForPhash 已完成 flatten/遮罩/裁剪/resize/灰度/normalize）
+   */
+  private computePhashFromRaw(rawPixels: Buffer): string {
+    const matrix: number[][] = [];
+    for (let y = 0; y < 32; y++) {
+      matrix[y] = [];
+      for (let x = 0; x < 32; x++) {
+        matrix[y][x] = rawPixels[y * 32 + x];
+      }
+    }
+    const dctMatrix = this.dct2d(matrix, 32);
+    const lowFreq: number[] = [];
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        if (y === 0 && x === 0) continue;
+        lowFreq.push(dctMatrix[y][x]);
+      }
+    }
+    const sorted = [...lowFreq].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    let hash = '';
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        if (y === 0 && x === 0) { hash += '0'; continue; }
+        hash += dctMatrix[y][x] > median ? '1' : '0';
+      }
+    }
+    return this.binaryToHex(hash);
+  }
+
+  // ===== V2.13: 保留旧方法向后兼容（deprecated，仅供未迁移的调用点使用） =====
+
+  /** @deprecated V2.13 — 使用 preprocessForPhash + computePhashFromRaw 替代 */
   private async cropCenter(
     sharp: any,
     buffer: Buffer,
@@ -849,10 +959,7 @@ export class ImageMatchService {
     const meta = await sharp(buffer).metadata();
     const w = meta.width || 64;
     const h = meta.height || 64;
-
-    // 先遮盖角标区域（用纯黑色块覆盖）
     const masked = await this.maskCorners(sharp, buffer, w, h);
-
     const cropW = Math.round(w * ratio);
     const cropH = Math.round(h * ratio);
     const left = Math.round((w - cropW) / 2);
@@ -862,12 +969,7 @@ export class ImageMatchService {
       .toBuffer();
   }
 
-  /**
-   * 遮盖装备图标四角的角标区域（用黑色填充）
-   * - 左上角 20%×20%：罗马数字等级
-   * - 右上角 20%×20%：附魔五角星
-   * - 右下角 25%×25%：数量数字
-   */
+  /** @deprecated V2.13 — 使用 preprocessForPhash 替代 */
   private async maskCorners(
     sharp: any,
     buffer: Buffer,
@@ -877,40 +979,15 @@ export class ImageMatchService {
     const cornerSize = Math.round(Math.max(w, h) * 0.2);
     const brCornerW = Math.round(w * 0.25);
     const brCornerH = Math.round(h * 0.25);
-
-    // 创建黑色遮盖块
     const blackTL = await sharp({
-      create: {
-        width: cornerSize,
-        height: cornerSize,
-        channels: 3,
-        background: { r: 0, g: 0, b: 0 },
-      },
-    })
-      .png()
-      .toBuffer();
+      create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    }).png().toBuffer();
     const blackTR = await sharp({
-      create: {
-        width: cornerSize,
-        height: cornerSize,
-        channels: 3,
-        background: { r: 0, g: 0, b: 0 },
-      },
-    })
-      .png()
-      .toBuffer();
+      create: { width: cornerSize, height: cornerSize, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    }).png().toBuffer();
     const blackBR = await sharp({
-      create: {
-        width: brCornerW,
-        height: brCornerH,
-        channels: 3,
-        background: { r: 0, g: 0, b: 0 },
-      },
-    })
-      .png()
-      .toBuffer();
-
-    // V2.9.6.1: flatten先消除alpha通道，确保composite通道一致
+      create: { width: brCornerW, height: brCornerH, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    }).png().toBuffer();
     return sharp(buffer)
       .flatten({ background: { r: 0, g: 0, b: 0 } })
       .composite([
@@ -921,16 +998,13 @@ export class ImageMatchService {
       .toBuffer();
   }
 
-  /**
-   * 计算感知哈希 (pHash)
-   * 步骤：缩放 32x32 → 灰度 → DCT → 取 8x8 低频 → 中值二值化 → 64bit hex
-   */
+  /** @deprecated V2.13 — 使用 preprocessForPhash + computePhashFromRaw 替代 */
   private async computePhash(sharp: any, buffer: Buffer): Promise<string> {
-    // V2.9.6.1: flatten() 消除 alpha 通道差异（参考库PNG透明图 vs 用户截图JPEG）
     const pixels = await sharp(buffer)
-      .flatten({ background: { r: 0, g: 0, b: 0 } })
+      .flatten({ background: { r: 128, g: 128, b: 128 } })
       .resize(32, 32, { fit: 'fill' })
       .grayscale()
+      .normalize()
       .raw()
       .toBuffer();
 
@@ -1286,9 +1360,9 @@ export class ImageMatchService {
           const avgBrightness = stats.channels[0]?.mean || 0;
           if (avgBrightness < 15 || avgBrightness > 240) continue;
 
-          // 计算该格 pHash
-          const cropped = await this.cropCenter(sharp, subBuf, 0.6);
-          const hash = await this.computePhash(sharp, cropped);
+          // V2.13: inventory 模式预处理
+          const rawPixels = await this.preprocessForPhash(sharp, subBuf, 'inventory');
+          const hash = this.computePhashFromRaw(rawPixels);
 
           // 与全库比对 → Top N
           const scored = catalogs
@@ -2015,8 +2089,9 @@ export class ImageMatchService {
       if (!catalog) continue;
       try {
         const buf = await fs.readFile(join(dir, file));
-        const core = await this.cropCenter(sharp, buf, 0.7);
-        const hash = await this.computePhash(sharp, core);
+        // V2.13: catalog 模式预处理 official 图片
+        const rawPixels = await this.preprocessForPhash(sharp, buf, 'catalog');
+        const hash = this.computePhashFromRaw(rawPixels);
         if (hash) result.push({ catalog, hash, source: 'official' });
       } catch {
         /* skip */
@@ -2288,8 +2363,9 @@ export class ImageMatchService {
         try {
           const imgPath = join(process.cwd(), img.imageUrl.replace(/^\//, ''));
           const buf = await fs.readFile(imgPath);
-          const core = await this.cropCenter(sharp, buf, 0.7);
-          const hash = await this.computePhash(sharp, core);
+          // V2.13: inventory 模式预处理 hot 图片
+          const rawPixels = await this.preprocessForPhash(sharp, buf, 'inventory');
+          const hash = this.computePhashFromRaw(rawPixels);
           if (hash) hotCandidates.push({ catalog, hash, source: 'hot' });
         } catch {
           /* skip */
@@ -2313,11 +2389,9 @@ export class ImageMatchService {
           );
           if (!srcBase64) continue;
           const srcBuf = Buffer.from(srcBase64, 'base64');
-          // centerThumbnail 已是中心裁切，不再二次 cropCenter；thumbnail 需要 cropCenter
-          const coreBuf = cell.centerThumbnail
-            ? srcBuf
-            : await this.cropCenter(sharp, srcBuf, 0.7);
-          const cellHash = await this.computePhash(sharp, coreBuf);
+          // V2.13: inventory 模式预处理 — 统一管线（centerThumbnail 和 thumbnail 都走新管线）
+          const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
+          const cellHash = this.computePhashFromRaw(rawPixels);
           if (!cellHash) continue;
           const tryMatch = (
             candidates: Array<{

@@ -394,31 +394,47 @@ export default function EquipmentPage() {
       if (!imgEl) { message.error('图片未加载'); setGridLoading(false); return; }
 
       const natW = imgEl.naturalWidth;
-      // 图片在容器中的渲染宽高（CSS transform: scale 不影响 clientWidth）
+      const natH = imgEl.naturalHeight;
       const renderedW = imgEl.clientWidth;
-      const renderedH = imgEl.clientHeight;
-      // 实际显示尺寸 = rendered × scale
       const displayScale = imgTransform.scale;
 
-      // 动态计算大框在容器中的像素位置
       const orp = getOuterRectPct(gridLayout);
       const boxLeft = CONTAINER_W * orp.left / 100;
       const boxTop = CONTAINER_H * orp.top / 100;
       const boxW = CONTAINER_W * orp.width / 100;
       const boxH = CONTAINER_H * orp.height / 100;
 
-      // 大框在原图中的像素坐标
-      // 图片显示位置 = (imgTransform.x, imgTransform.y)，缩放后 1 显示像素 = natW / (renderedW * displayScale) 原图像素
       const pxRatio = natW / (renderedW * displayScale);
-      const outerRect = {
+      const origOuterRect = {
         left: Math.round((boxLeft - imgTransform.x) * pxRatio),
         top: Math.round((boxTop - imgTransform.y) * pxRatio),
         width: Math.round(boxW * pxRatio),
         height: Math.round(boxH * pxRatio),
       };
 
-      // V2.12.1: 不再传 anchorCell，后端中心点定位法从 outerRect + cols + rows 自动推算
-      const parseRes: any = await gridParseInventory(guildId, gridImageUrl, gridLayout, outerRect);
+      // V2.13: Canvas 预裁剪 — 从原图中裁出装备区域再上传
+      const cropLeft = Math.max(0, Math.min(origOuterRect.left, natW - 1));
+      const cropTop = Math.max(0, Math.min(origOuterRect.top, natH - 1));
+      const cropW = Math.min(origOuterRect.width, natW - cropLeft);
+      const cropH = Math.min(origOuterRect.height, natH - cropTop);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = cropW;
+      canvas.height = cropH;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(imgEl, cropLeft, cropTop, cropW, cropH, 0, 0, cropW, cropH);
+
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b!), 'image/png'),
+      );
+      const croppedFile = new File([blob], 'cropped.png', { type: 'image/png' });
+      const cropUploadRes: any = await uploadFile(croppedFile);
+      const croppedUrl = cropUploadRes?.url || cropUploadRes?.filePath || '';
+
+      // 裁剪后 outerRect 变为整张图（left=0, top=0）
+      const outerRect = { left: 0, top: 0, width: cropW, height: cropH };
+
+      const parseRes: any = await gridParseInventory(guildId, croppedUrl, gridLayout, outerRect);
       const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         row: c.row + gridCells.length,
@@ -858,9 +874,9 @@ export default function EquipmentPage() {
                   {(() => {
                     const orp = getOuterRectPct(gridLayout);
                     const { cols, rows } = getLayoutDef(gridLayout);
-                    // 间隙比例：格子间间隙占整格步长的百分比（~6%）
-                    const GAP_RATIO = 0.06;
-                    // 格子内容占步长的百分比
+                    // 间隙比例：格子间间隙占整格步长的百分比（~12%，与后端 CELL_CONTENT_RATIO=0.88 一致）
+                    const GAP_RATIO = 0.12;
+                    // 格子内容占步长的百分比（与后端 gridParseByRegion 的 CELL_CONTENT_RATIO 保持一致）
                     const CELL_RATIO = 1 - GAP_RATIO;
                     // 每格步长（含间隙）
                     const stepXPct = 100 / cols;
