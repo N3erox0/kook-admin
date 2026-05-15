@@ -2357,11 +2357,12 @@ export class ImageMatchService {
 
       this.logger.log(`[V2.14.5] 热图 ${hotCandidates.length} 条，pHash库 ${phashCandidates.length} 条，开始 ${cells.length} 格匹配`);
 
-      // 混元 Vision API Key
-      const hunyuanApiKey = this.configService.get<string>('HUNYUAN_API_KEY');
-      const useVisionApi = !!hunyuanApiKey;
+      // 混元 Vision API：用腾讯云 SecretId/SecretKey（同OCR）
+      const secretId = this.configService.get<string>('tencent.secretId');
+      const secretKey = this.configService.get<string>('tencent.secretKey');
+      const useVisionApi = !!secretId && !!secretKey;
       if (useVisionApi) {
-        this.logger.log(`[V2.14.5] 混元 Vision API 已配置，将对低置信度格子做 API 精排`);
+        this.logger.log(`[V2.14.5] 腾讯云密钥已配置，将对低置信度格子做混元Vision识别`);
       }
 
       for (const cell of cells) {
@@ -2404,69 +2405,44 @@ export class ImageMatchService {
       const matchedCount = cells.filter((c: any) => c.matchedName).length;
       this.logger.log(`[V2.14.5] pHash匹配完成: ${matchedCount}/${cells.length} 格`);
 
-      // 混元 Vision API 精排：对置信度 < 0.80 的格子，发送截图+Top5候选参考图让API对比
+      // 混元 Vision API 精排：对所有格子，发送截图让混元直接识别装备名，然后匹配参考库
       if (useVisionApi) {
-        const lowConfCells = cells.filter((c: any) => c.matchedName && c.matchedConfidence < 0.80);
-        if (lowConfCells.length > 0) {
-          this.logger.log(`[V2.14.5] ${lowConfCells.length} 格置信度<80%，启动混元Vision精排`);
+        const targetCells = cells.filter((c: any) => c.centerThumbnail || c.thumbnail);
+        if (targetCells.length > 0) {
+          this.logger.log(`[V2.14.5] ${targetCells.length} 格启动混元Vision识别`);
           let refined = 0;
-          for (const cell of lowConfCells) {
+          for (const cell of targetCells) {
             try {
               const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(
                 /^data:image\/\w+;base64,/,
                 '',
               );
               if (!srcBase64) continue;
-              const srcBuf = Buffer.from(srcBase64, 'base64');
 
-              // 取 pHash Top5 候选
-              const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
-              const cellHash = this.computePhashFromRaw(rawPixels);
-              if (!cellHash) continue;
+              const visionResult = await this.callHunyuanVision(secretId, secretKey, srcBase64);
+              if (!visionResult) continue;
 
-              const allCandidates = [...hotCandidates, ...phashCandidates];
-              const top5 = allCandidates
-                .map(c => ({ ...c, distance: this.hammingDistance(cellHash, c.hash) }))
-                .sort((a, b) => a.distance - b.distance)
-                .slice(0, 5);
-
-              // 去重候选（按 catalogId 去重）
-              const seen = new Set<number>();
-              const uniqueCandidates = top5.filter(c => {
-                if (seen.has(c.catalog.id)) return false;
-                seen.add(c.catalog.id);
-                return true;
-              });
-
-              const visionCandidates = uniqueCandidates.map(c => ({
-                name: c.catalog.name,
-                catalogId: c.catalog.id,
-                albionId: c.catalog.albionId || null,
-              }));
-
-              const visionResult = await this.callHunyuanVision(
-                hunyuanApiKey,
-                srcBase64,
-                visionCandidates,
-              );
-
-              if (visionResult) {
-                const matchedCat = uniqueCandidates.find(c => c.catalog.name === visionResult);
-                if (matchedCat) {
-                  const oldName = cell.matchedName;
-                  cell.matchedName = matchedCat.catalog.name;
-                  cell.matchedCatalogId = matchedCat.catalog.id;
-                  cell.matchedConfidence = 0.90;
-                  cell.matchSource = 'vision_api';
-                  refined++;
-                  this.logger.debug(`[V2.14.5] Vision精排: ${oldName} → ${visionResult}`);
-                }
+              // 用混元返回的装备名在参考库中模糊匹配
+              const matchedCat = this.fuzzyMatchCatalog(visionResult, catalogs);
+              if (matchedCat) {
+                const oldName = cell.matchedName;
+                cell.matchedName = matchedCat.name;
+                cell.matchedCatalogId = matchedCat.id;
+                cell.matchedConfidence = 0.90;
+                cell.matchSource = 'vision_api';
+                if (cell.detectedLevel == null) cell.detectedLevel = matchedCat.level || null;
+                if (cell.detectedQuality == null) cell.detectedQuality = matchedCat.quality ?? null;
+                cell.matchedCategory = matchedCat.category || '';
+                cell.matchedGearScore = matchedCat.gearScore || 0;
+                cell.albionId = matchedCat.albionId || null;
+                refined++;
+                this.logger.debug(`[V2.14.5] Vision: ${oldName} → ${matchedCat.name}`);
               }
             } catch (err) {
-              this.logger.warn(`[V2.14.5] Vision精排失败: ${err}`);
+              this.logger.warn(`[V2.14.5] Vision识别失败: ${err}`);
             }
           }
-          this.logger.log(`[V2.14.5] Vision精排完成: ${refined}/${lowConfCells.length} 格被优化`);
+          this.logger.log(`[V2.14.5] Vision识别完成: ${refined}/${targetCells.length} 格匹配成功`);
         }
       }
     } catch (err) {
@@ -2853,137 +2829,164 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.14.5: 调用腾讯混元 Vision API 精排
-   * 发送截图子图 + 候选参考图（热图/官方图/Albion渲染图），让 API 多图对比选最匹配的
+   * V2.14.5: 调用腾讯混元 Vision API 识别装备
+   * 用 TC3 签名（同 OCR），发送截图子图让混元直接识别 Albion Online 装备名
    */
   private async callHunyuanVision(
-    apiKey: string,
+    secretId: string,
+    secretKey: string,
     imageBase64: string,
-    candidates: Array<{ name: string; catalogId: number; albionId?: string | null }>,
   ): Promise<string | null> {
     try {
-      // 收集候选参考图 base64
-      const candidateImages: Array<{ name: string; base64: string | null }> = [];
-      for (const c of candidates) {
-        let imgBase64: string | null = null;
+      const host = 'hunyuan.tencentcloudapi.com';
+      const service = 'hunyuan';
+      const action = 'ChatCompletions';
+      const version = '2023-09-01';
+      const region = 'ap-guangzhou';
 
-        // 优先级1: 热图（本地文件）
-        try {
-          const hotImg = await this.imageRepo.findOne({
-            where: { catalogId: c.catalogId, imageType: 'hot' },
-          });
-          if (hotImg) {
-            const imgPath = join(process.cwd(), hotImg.imageUrl.replace(/^\//, ''));
-            const buf = await fs.readFile(imgPath);
-            imgBase64 = buf.toString('base64');
-          }
-        } catch { /* skip */ }
+      const payload = JSON.stringify({
+        Model: 'hunyuan-vision',
+        Messages: [
+          {
+            Role: 'user',
+            Contents: [
+              {
+                Type: 'text',
+                Text: `你是Albion Online游戏装备识别专家。这张图片是游戏中一件装备的图标截图（可能有彩色品质边框）。
+请识别这是什么装备，返回装备的中文名称。
+只回复装备名称，不要等级、品质、其他说明。
+如果无法识别请回复"未知"。
 
-        // 优先级2: 官方图（本地文件）
-        if (!imgBase64) {
-          try {
-            const officialImg = await this.imageRepo.findOne({
-              where: { catalogId: c.catalogId, imageType: 'official' },
-            });
-            if (officialImg) {
-              const imgPath = join(process.cwd(), officialImg.imageUrl.replace(/^\//, ''));
-              const buf = await fs.readFile(imgPath);
-              imgBase64 = buf.toString('base64');
-            }
-          } catch { /* skip */ }
-        }
-
-        // 优先级3: Albion 渲染 URL（不传 base64，直接传 URL）
-        if (!imgBase64 && c.albionId) {
-          // 用 URL 方式传给 API，不下载
-          candidateImages.push({
-            name: c.name,
-            base64: `URL:https://render.albiononline.com/v1/item/${c.albionId}.png?size=217`,
-          });
-          continue;
-        }
-
-        candidateImages.push({ name: c.name, base64: imgBase64 });
-      }
-
-      // 构建 content 数组：截图子图 + 候选参考图
-      const content: any[] = [];
-
-      // 候选列表文字说明
-      const nameList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
-      content.push({
-        type: 'text',
-        text: `你是Albion Online游戏装备图标识别专家。
-第一张图是游戏截图中裁切出的一个装备图标（可能有品质色边框）。
-后面的图是候选装备的参考图。请对比形状和外观，判断第一张图最像哪个候选。
-只回复数字编号(1-${candidates.length})，不要其他内容。如果都不像回复"0"。
-
-候选列表：
-${nameList}`,
+示例回复格式：长弓`,
+              },
+              {
+                Type: 'image_url',
+                ImageUrl: {
+                  Url: `data:image/png;base64,${imageBase64}`,
+                },
+              },
+            ],
+          },
+        ],
+        TopP: 0.1,
+        Temperature: 0.1,
+        Stream: false,
       });
 
-      // 截图子图
-      content.push({
-        type: 'image_url',
-        image_url: { url: `data:image/png;base64,${imageBase64}` },
-      });
+      const timestamp = Math.floor(Date.now() / 1000);
+      const date = new Date(timestamp * 1000).toISOString().substring(0, 10);
 
-      // 候选参考图
-      for (const ci of candidateImages) {
-        if (!ci.base64) continue;
-        if (ci.base64.startsWith('URL:')) {
-          content.push({
-            type: 'image_url',
-            image_url: { url: ci.base64.substring(4) },
-          });
-        } else {
-          content.push({
-            type: 'image_url',
-            image_url: { url: `data:image/png;base64,${ci.base64}` },
-          });
-        }
-      }
+      // TC3-HMAC-SHA256 签名
+      const hashedPayload = crypto.createHash('sha256').update(payload).digest('hex');
+      const httpRequestMethod = 'POST';
+      const canonicalUri = '/';
+      const canonicalQueryString = '';
+      const canonicalHeaders = `content-type:application/json\nhost:${host}\n`;
+      const signedHeaders = 'content-type;host';
+      const canonicalRequest = `${httpRequestMethod}\n${canonicalUri}\n${canonicalQueryString}\n${canonicalHeaders}\n${signedHeaders}\n${hashedPayload}`;
 
-      const response = await fetch('https://api.hunyuan.cloud.tencent.com/v1/chat/completions', {
+      const credentialScope = `${date}/${service}/tc3_request`;
+      const hashedCanonicalRequest = crypto.createHash('sha256').update(canonicalRequest).digest('hex');
+      const stringToSign = `TC3-HMAC-SHA256\n${timestamp}\n${credentialScope}\n${hashedCanonicalRequest}`;
+
+      const hmac = (key: string | Buffer, data: string) =>
+        crypto.createHmac('sha256', key).update(data).digest();
+      const secretDate = hmac(`TC3${secretKey}`, date);
+      const secretService = hmac(secretDate, service);
+      const secretSigning = hmac(secretService, 'tc3_request');
+      const signature = crypto.createHmac('sha256', secretSigning).update(stringToSign).digest('hex');
+
+      const authorization = `TC3-HMAC-SHA256 Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+      const response = await fetch(`https://${host}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          'Host': host,
+          'Authorization': authorization,
+          'X-TC-Action': action,
+          'X-TC-Version': version,
+          'X-TC-Timestamp': String(timestamp),
+          'X-TC-Region': region,
         },
-        body: JSON.stringify({
-          model: 'hunyuan-vision',
-          messages: [{ role: 'user', content }],
-          max_tokens: 10,
-          temperature: 0.1,
-        }),
+        body: payload,
       });
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
-        this.logger.warn(`[V2.14.5] Vision API 返回 ${response.status}: ${errText.substring(0, 200)}`);
+        this.logger.warn(`[V2.14.5] Vision API HTTP ${response.status}: ${errText.substring(0, 200)}`);
         return null;
       }
 
       const data = await response.json() as any;
-      const reply = (data?.choices?.[0]?.message?.content || '').trim();
-      this.logger.debug(`[V2.14.5] Vision API 回复: "${reply}"`);
 
-      if (!reply || reply === '0') return null;
-
-      // 解析编号
-      const num = parseInt(reply, 10);
-      if (num >= 1 && num <= candidates.length) {
-        return candidates[num - 1].name;
+      // 腾讯云 API 返回格式
+      if (data?.Response?.Error) {
+        this.logger.warn(`[V2.14.5] Vision API 错误: ${data.Response.Error.Code} ${data.Response.Error.Message}`);
+        return null;
       }
 
-      // 尝试名字匹配
-      const exact = candidates.find(c => c.name === reply);
-      if (exact) return exact.name;
-      const partial = candidates.find(c => reply.includes(c.name) || c.name.includes(reply));
-      return partial ? partial.name : null;
+      const reply = data?.Response?.Choices?.[0]?.Message?.Content?.trim();
+      if (!reply || reply === '未知') return null;
+
+      this.logger.debug(`[V2.14.5] Vision API 回复: "${reply}"`);
+      return reply;
     } catch (err) {
-      this.logger.warn(`[V2.14.5] Vision API 调用异常: ${err}`);
+      this.logger.warn(`[V2.14.5] Vision API 异常: ${err}`);
       return null;
     }
+  }
+
+  /**
+   * V2.14.5: 在参考库中模糊匹配混元返回的装备名
+   */
+  private fuzzyMatchCatalog(
+    visionName: string,
+    catalogs: EquipmentCatalog[],
+  ): EquipmentCatalog | null {
+    if (!visionName) return null;
+    const clean = visionName.replace(/["""''()（）\s]/g, '').trim();
+    if (!clean) return null;
+
+    // 精确匹配
+    const exact = catalogs.find(c => c.name === clean);
+    if (exact) return exact;
+
+    // 包含匹配
+    const contains = catalogs.find(c => c.name.includes(clean) || clean.includes(c.name));
+    if (contains) return contains;
+
+    // Levenshtein 编辑距离匹配（阈值 0.7）
+    let bestSim = 0;
+    let bestCat: EquipmentCatalog | null = null;
+    for (const cat of catalogs) {
+      const maxLen = Math.max(clean.length, cat.name.length);
+      if (maxLen === 0) continue;
+      const dist = this.levenshteinDistance(clean, cat.name);
+      const sim = 1 - dist / maxLen;
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestCat = cat;
+      }
+    }
+    return bestSim >= 0.7 ? bestCat : null;
+  }
+
+  /**
+   * Levenshtein 编辑距离
+   */
+  private levenshteinDistance(a: string, b: string): number {
+    const m = a.length, n = b.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+    return dp[m][n];
   }
 }
