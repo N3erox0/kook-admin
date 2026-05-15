@@ -2328,10 +2328,10 @@ export class ImageMatchService {
     cells: any[],
   ): Promise<void> {
     try {
-      // V2.14.5: 只用热图库做 pHash 粗筛 + embedding 精排（避免全库6000+条内存爆炸）
+      // V2.14.5: 热图 pHash 匹配 + 混元 Vision API 精排（不加载本地ViT模型，避免4GB服务器OOM）
       const catalogs = await this.catalogRepo.find({
         where: {},
-        select: ['id', 'name', 'albionId', 'imagePhash', 'imageEmbedding', 'category', 'gearScore', 'level', 'quality'],
+        select: ['id', 'name', 'albionId', 'imagePhash', 'category', 'gearScore', 'level', 'quality'],
       });
 
       // 加载热图并计算 pHash
@@ -2350,15 +2350,19 @@ export class ImageMatchService {
         } catch { /* skip */ }
       }
 
-      // 预解析 catalog embedding（只解析一次，所有格子复用）
-      const embeddingMap = new Map<number, number[]>();
-      for (const cat of catalogs) {
-        if (cat.imageEmbedding) {
-          try { embeddingMap.set(cat.id, JSON.parse(cat.imageEmbedding)); } catch { /* skip */ }
-        }
-      }
+      // 同时加载 pHash 库候选（不含 embedding，节省内存）
+      const phashCandidates = catalogs
+        .filter(c => c.imagePhash)
+        .map(c => ({ catalog: c, hash: c.imagePhash, source: 'phash' }));
 
-      this.logger.log(`[V2.14.5] 热图 ${hotCandidates.length} 条，有embedding ${embeddingMap.size} 条，开始 ${cells.length} 格精排`);
+      this.logger.log(`[V2.14.5] 热图 ${hotCandidates.length} 条，pHash库 ${phashCandidates.length} 条，开始 ${cells.length} 格匹配`);
+
+      // 混元 Vision API Key
+      const hunyuanApiKey = this.configService.get<string>('HUNYUAN_API_KEY');
+      const useVisionApi = !!hunyuanApiKey;
+      if (useVisionApi) {
+        this.logger.log(`[V2.14.5] 混元 Vision API 已配置，将对低置信度格子做 API 精排`);
+      }
 
       for (const cell of cells) {
         try {
@@ -2369,92 +2373,91 @@ export class ImageMatchService {
           if (!srcBase64) continue;
           const srcBuf = Buffer.from(srcBase64, 'base64');
 
-          // Step 1: pHash 粗筛 — 从热图取 Top20
+          // pHash 粗筛：热图(无阈值限制) + pHash库(无阈值限制)，取全局 Top1
           const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
           const cellHash = this.computePhashFromRaw(rawPixels);
           if (!cellHash) continue;
 
-          const phashTop20 = hotCandidates
+          const allCandidates = [...hotCandidates, ...phashCandidates];
+          const ranked = allCandidates
             .map(c => ({ ...c, distance: this.hammingDistance(cellHash, c.hash) }))
-            .sort((a, b) => a.distance - b.distance)
-            .slice(0, 20);
+            .sort((a, b) => a.distance - b.distance);
 
-          if (phashTop20.length === 0) continue;
+          if (ranked.length === 0) continue;
 
-          // Step 2: 提取子图 embedding
-          const meta = await sharp(srcBuf).metadata();
-          const w = meta.width || 64;
-          const h = meta.height || 64;
-          const preprocessed = await sharp(srcBuf)
-            .flatten({ background: ImageMatchService.GRAY_BG })
-            .extract({
-              left: Math.round(w * 0.15),
-              top: Math.round(h * 0.12),
-              width: Math.round(w * 0.70),
-              height: Math.round(h * 0.72),
-            })
-            .resize(224, 224, { fit: 'fill' })
-            .png()
-            .toBuffer();
-
-          let cellEmbedding: number[];
-          try {
-            cellEmbedding = await this.extractEmbedding(preprocessed);
-          } catch {
-            // embedding 提取失败，fallback 到 pHash best
-            const best = phashTop20[0];
-            const cat = best.catalog;
-            cell.matchedName = cat.name;
-            cell.matchedCatalogId = cat.id;
-            cell.matchedConfidence = parseFloat((1 - best.distance / 64).toFixed(2));
-            cell.matchSource = 'hot';
-            if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
-            if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
-            cell.matchedCategory = cat.category || '';
-            cell.matchedGearScore = cat.gearScore || 0;
-            cell.albionId = cat.albionId || null;
-            continue;
-          }
-
-          // Step 3: 余弦相似度精排 — 在 Top20 候选的 catalog 中用 embedding 重排
-          let bestSim = -1;
-          let bestCat: EquipmentCatalog | null = null;
-          for (const candidate of phashTop20) {
-            const catEmb = embeddingMap.get(candidate.catalog.id);
-            if (!catEmb) continue;
-            const sim = this.cosineSimilarity(cellEmbedding, catEmb);
-            if (sim > bestSim) {
-              bestSim = sim;
-              bestCat = candidate.catalog;
-            }
-          }
-
-          // 如果 embedding 精排无结果或相似度太低，fallback 到 pHash best
-          if (!bestCat || bestSim < 0.5) {
-            const best = phashTop20[0];
-            bestCat = best.catalog;
-            bestSim = 1 - best.distance / 64;
-            cell.matchSource = 'hot';
-          } else {
-            cell.matchSource = 'ai';
-          }
-
-          cell.matchedName = bestCat.name;
-          cell.matchedCatalogId = bestCat.id;
-          cell.matchedConfidence = parseFloat(bestSim.toFixed(2));
-          if (cell.detectedLevel == null) cell.detectedLevel = bestCat.level || null;
-          if (cell.detectedQuality == null) cell.detectedQuality = bestCat.quality ?? null;
-          cell.matchedCategory = bestCat.category || '';
-          cell.matchedGearScore = bestCat.gearScore || 0;
-          cell.albionId = bestCat.albionId || null;
+          const best = ranked[0];
+          const cat = best.catalog;
+          cell.matchedName = cat.name;
+          cell.matchedCatalogId = cat.id;
+          cell.matchedConfidence = parseFloat((1 - best.distance / 64).toFixed(2));
+          cell.matchSource = best.source;
+          if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
+          if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
+          cell.matchedCategory = cat.category || '';
+          cell.matchedGearScore = cat.gearScore || 0;
+          cell.albionId = cat.albionId || null;
         } catch {
           /* skip */
         }
       }
+
       const matchedCount = cells.filter((c: any) => c.matchedName).length;
-      this.logger.log(
-        `[V2.14.5] AI embedding 直接匹配: ${matchedCount}/${cells.length} 格匹配成功`,
-      );
+      this.logger.log(`[V2.14.5] pHash匹配完成: ${matchedCount}/${cells.length} 格`);
+
+      // 混元 Vision API 精排：对置信度 < 0.80 的格子，发送截图+Top5候选名让API选
+      if (useVisionApi) {
+        const lowConfCells = cells.filter((c: any) => c.matchedName && c.matchedConfidence < 0.80);
+        if (lowConfCells.length > 0) {
+          this.logger.log(`[V2.14.5] ${lowConfCells.length} 格置信度<80%，启动混元Vision精排`);
+          let refined = 0;
+          for (const cell of lowConfCells) {
+            try {
+              const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(
+                /^data:image\/\w+;base64,/,
+                '',
+              );
+              if (!srcBase64) continue;
+              const srcBuf = Buffer.from(srcBase64, 'base64');
+
+              // 取 pHash Top5 候选名
+              const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
+              const cellHash = this.computePhashFromRaw(rawPixels);
+              if (!cellHash) continue;
+
+              const allCandidates = [...hotCandidates, ...phashCandidates];
+              const top5 = allCandidates
+                .map(c => ({ ...c, distance: this.hammingDistance(cellHash, c.hash) }))
+                .sort((a, b) => a.distance - b.distance)
+                .slice(0, 5);
+
+              // 去重候选名
+              const candidateNames = [...new Set(top5.map(c => c.catalog.name))];
+
+              const visionResult = await this.callHunyuanVision(
+                hunyuanApiKey,
+                srcBase64,
+                candidateNames,
+              );
+
+              if (visionResult && candidateNames.includes(visionResult)) {
+                const matchedCat = top5.find(c => c.catalog.name === visionResult);
+                if (matchedCat) {
+                  const oldName = cell.matchedName;
+                  cell.matchedName = matchedCat.catalog.name;
+                  cell.matchedCatalogId = matchedCat.catalog.id;
+                  cell.matchedConfidence = 0.85; // API 精排给固定置信度
+                  cell.matchSource = 'vision_api';
+                  refined++;
+                  this.logger.debug(`[V2.14.5] Vision精排: ${oldName} → ${visionResult}`);
+                }
+              }
+            } catch (err) {
+              this.logger.warn(`[V2.14.5] Vision精排失败: ${err}`);
+            }
+          }
+          this.logger.log(`[V2.14.5] Vision精排完成: ${refined}/${lowConfCells.length} 格被优化`);
+        }
+      }
     } catch (err) {
       this.logger.warn(`[gridParse] 分层匹配失败: ${err}`);
     }
@@ -2836,5 +2839,69 @@ export class ImageMatchService {
     }
 
     return { catalogId: bestCat.id, name: bestCat.name, similarity: Math.round(bestSim * 100) / 100 };
+  }
+
+  /**
+   * V2.14.5: 调用腾讯混元 Vision API 精排
+   * 发送截图子图 + 候选装备名列表，让 API 选择最匹配的
+   */
+  private async callHunyuanVision(
+    apiKey: string,
+    imageBase64: string,
+    candidateNames: string[],
+  ): Promise<string | null> {
+    try {
+      const prompt = `你是Albion Online游戏装备识别专家。这是一个装备图标的截图。
+请从以下候选装备名中选出最匹配的一个，只回复装备名称，不要其他内容。
+如果都不匹配请回复"无"。
+
+候选列表：
+${candidateNames.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
+
+      const response = await fetch('https://api.hunyuan.cloud.tencent.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'hunyuan-vision',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:image/png;base64,${imageBase64}`,
+                  },
+                },
+              ],
+            },
+          ],
+          max_tokens: 50,
+          temperature: 0.1,
+        }),
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`[V2.14.5] Vision API 返回 ${response.status}`);
+        return null;
+      }
+
+      const data = await response.json() as any;
+      const reply = data?.choices?.[0]?.message?.content?.trim();
+      if (!reply || reply === '无') return null;
+
+      // 在候选名中找精确匹配或包含匹配
+      const exact = candidateNames.find(n => n === reply);
+      if (exact) return exact;
+      const partial = candidateNames.find(n => reply.includes(n) || n.includes(reply));
+      return partial || null;
+    } catch (err) {
+      this.logger.warn(`[V2.14.5] Vision API 调用异常: ${err}`);
+      return null;
+    }
   }
 }
