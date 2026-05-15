@@ -2457,31 +2457,32 @@ export class ImageMatchService {
         `[gridParse] 分层匹配: ${matchedCount}/${cells.length} 格匹配成功（hot→pHash→official）`,
       );
 
-      // V2.14: AI 特征向量精排 — 对低置信度匹配（<80%）尝试用 embedding 重排
+      // V2.14.4: AI 特征向量精排 — 对所有已匹配的格子都用 embedding 重排
+      // pHash 对品质背景色敏感导致大量假阳性，AI 特征向量对形状更敏感
       const hasEmbeddings = catalogs.some(c => c.imageEmbedding);
       if (hasEmbeddings) {
-        const lowConfCells = cells.filter((c: any) => c.matchedName && c.matchedConfidence < 0.80);
-        if (lowConfCells.length > 0) {
-          this.logger.log(`[V2.14] ${lowConfCells.length} 格置信度<80%，尝试AI精排...`);
+        const matchedCells = cells.filter((c: any) => c.matchedName);
+        if (matchedCells.length > 0) {
+          this.logger.log(`[V2.14] 对 ${matchedCells.length} 格执行 AI 精排...`);
           let refined = 0;
-          for (const cell of lowConfCells) {
+          for (const cell of matchedCells) {
             try {
               const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(/^data:image\/\w+;base64,/, '');
               if (!srcBase64) continue;
               const srcBuf = Buffer.from(srcBase64, 'base64');
               const result = await this.matchByEmbedding(srcBuf, 'inventory');
               if (result && result.similarity > cell.matchedConfidence) {
+                const oldName = cell.matchedName;
                 cell.matchedName = result.name;
                 cell.matchedCatalogId = result.catalogId;
                 cell.matchedConfidence = result.similarity;
                 cell.matchSource = 'ai';
                 refined++;
+                this.logger.debug(`[V2.14] AI精排: ${oldName} → ${result.name} (${result.similarity})`);
               }
             } catch { /* skip */ }
           }
-          if (refined > 0) {
-            this.logger.log(`[V2.14] AI精排完成: ${refined}/${lowConfCells.length} 格被优化`);
-          }
+          this.logger.log(`[V2.14] AI精排完成: ${refined}/${matchedCells.length} 格被优化`);
         }
       }
     } catch (err) {
