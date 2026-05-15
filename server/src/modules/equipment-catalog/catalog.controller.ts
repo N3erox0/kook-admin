@@ -237,16 +237,6 @@ export class CatalogController {
     return this.imageMatchService.batchGeneratePhash(true);
   }
 
-  /** V2.14: 批量生成AI特征向量（SSVIP限定，首次较慢需下载模型） */
-  @Post('generate-embeddings')
-  @ApiOperation({ summary: '批量生成AI特征向量(ViT 768维)' })
-  async generateEmbeddings(@CurrentUser() user: any) {
-    if (!user?.globalRole || user.globalRole !== 'ssvip') {
-      throw new BadRequestException('仅SSVIP可执行此操作');
-    }
-    return this.imageMatchService.batchGenerateEmbeddings(true);
-  }
-
   /** V2.9.8: 上传热门装备游戏截图 */
   @Post(':id/hot-image')
   @UseInterceptors(FileInterceptor('file'))
