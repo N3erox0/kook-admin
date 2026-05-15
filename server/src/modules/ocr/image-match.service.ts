@@ -2583,7 +2583,10 @@ export class ImageMatchService {
     ImageMatchService.featureExtractorLoading = true;
     try {
       this.logger.log('[V2.14] 正在加载 ViT 特征提取模型（首次需下载 ~350MB）...');
-      const { pipeline } = await import('@xenova/transformers');
+      // V2.14.1: 用 eval 绕过 TypeScript 编译器将 import() 转成 require()
+      // @xenova/transformers 是 ESM-only 模块，NestJS/CommonJS 环境需要真正的动态 import()
+      const importDynamic = new Function('specifier', 'return import(specifier)');
+      const { pipeline } = await importDynamic('@xenova/transformers');
       ImageMatchService.featureExtractor = await pipeline(
         'image-feature-extraction',
         'Xenova/vit-base-patch16-224',
