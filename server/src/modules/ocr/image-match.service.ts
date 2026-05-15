@@ -2619,27 +2619,29 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.14.3: 从图片 Buffer 提取 768 维特征向量
-   * 用 RawImage 构造避免 data URL 在 Node.js 环境被当成 HTTP URL fetch
+   * V2.14.3: 从 224x224 RGB raw 像素数据提取 768 维特征向量
+   * @param rawData 224*224*3 = 150528 字节的 RGB raw buffer
+   */
+  async extractEmbeddingFromRaw(rawData: Buffer): Promise<number[]> {
+    const extractor = await this.getFeatureExtractor();
+    const importDynamic = new Function('specifier', 'return import(specifier)');
+    const { RawImage } = await importDynamic('@xenova/transformers');
+    const img = new RawImage(new Uint8ClampedArray(rawData), 224, 224, 3);
+    const output = await extractor(img, { pooling: 'mean', normalize: true });
+    return Array.from(output.data as Float32Array);
+  }
+
+  /**
+   * V2.14.3: 从任意图片 Buffer 提取特征向量（自动 resize + raw 转换）
    */
   async extractEmbedding(imageBuffer: Buffer): Promise<number[]> {
-    const extractor = await this.getFeatureExtractor();
     const sharp = require('sharp');
-
-    // 将图片转为 224x224 RGB raw 像素数据
-    const { data, info } = await sharp(imageBuffer)
+    const rawBuf = await sharp(imageBuffer)
       .resize(224, 224, { fit: 'fill' })
       .removeAlpha()
       .raw()
-      .toBuffer({ resolveWithObject: true });
-
-    // 用 @xenova/transformers 的 RawImage 构造
-    const importDynamic = new Function('specifier', 'return import(specifier)');
-    const { RawImage } = await importDynamic('@xenova/transformers');
-    const img = new RawImage(new Uint8ClampedArray(data), info.width, info.height, info.channels);
-
-    const output = await extractor(img, { pooling: 'mean', normalize: true });
-    return Array.from(output.data as Float32Array);
+      .toBuffer();
+    return this.extractEmbeddingFromRaw(rawBuf);
   }
 
   /**
@@ -2658,45 +2660,62 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.14: 为单个参考库装备生成特征向量
+   * V2.14.3: 为单个参考库装备生成特征向量
+   * 只从本地文件读取（hot截图 > 本地缓存 > official图片库），不访问远程URL
    */
   async generateEmbeddingForCatalog(
     catalogId: number,
     imageUrl: string,
     localImagePath?: string | null,
     hotImagePath?: string | null,
+    albionId?: string | null,
   ): Promise<number[] | null> {
     let sharp: any;
     try { sharp = require('sharp'); } catch { return null; }
 
     let buffer: Buffer | null = null;
 
-    // 优先热门截图 > 本地文件 > 远程URL
+    // 1. 优先读热门截图
     if (hotImagePath) {
       try {
         buffer = await fs.readFile(join(process.cwd(), hotImagePath.replace(/^\//, '')));
         if (buffer.length === 0) buffer = null;
       } catch { buffer = null; }
     }
+
+    // 2. 其次读本地缓存文件
     if (!buffer && localImagePath) {
       try {
         buffer = await fs.readFile(join(process.cwd(), localImagePath.replace(/^\//, '')));
         if (buffer.length === 0) buffer = null;
       } catch { buffer = null; }
     }
-    if (!buffer && imageUrl && imageUrl.startsWith('http')) {
-      try {
-        const response = await fetch(imageUrl, {
-          headers: { 'User-Agent': 'kook-admin/1.0' },
-          signal: AbortSignal.timeout(10000),
-        });
-        if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
-      } catch { /* skip */ }
+
+    // 3. 再次读 official 图片库（按 albionId 匹配文件名）
+    if (!buffer && albionId) {
+      const officialDir = this.getOfficialImageDir();
+      // official 文件名格式: {albionId}-Quality={N}.png
+      for (const q of [0, 1, 2, 3, 4]) {
+        try {
+          const filePath = join(officialDir, `${albionId}-Quality=${q}.png`);
+          buffer = await fs.readFile(filePath);
+          if (buffer.length > 0) break;
+          buffer = null;
+        } catch { /* try next quality */ }
+      }
     }
+
+    // V2.14.3: 远程URL已禁用 — 服务器外网不稳定，只用本地文件
+    // if (!buffer && imageUrl && imageUrl.startsWith('http')) {
+    //   try {
+    //     const response = await fetch(imageUrl, { ... });
+    //     if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
+    //   } catch { /* skip */ }
+    // }
+
     if (!buffer) return null;
 
     try {
-      // 预处理：flatten + 不对称中心裁剪 + resize 224×224（ViT 标准输入尺寸）
       const meta = await sharp(buffer).metadata();
       const w = meta.width || 64;
       const h = meta.height || 64;
@@ -2709,10 +2728,11 @@ export class ImageMatchService {
         .flatten({ background: ImageMatchService.GRAY_BG })
         .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
         .resize(224, 224, { fit: 'fill' })
-        .png()
+        .removeAlpha()
+        .raw()
         .toBuffer();
 
-      return await this.extractEmbedding(preprocessed);
+      return await this.extractEmbeddingFromRaw(preprocessed);
     } catch (err) {
       this.logger.warn(`[V2.14] 特征向量生成失败 catalogId=${catalogId}: ${err}`);
       return null;
@@ -2720,49 +2740,53 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.14: 批量为所有参考库装备生成特征向量
+   * V2.14.3: 批量为所有参考库装备生成特征向量
+   * 只处理有本地图片的装备（hot > local > official），跳过只有远程URL的
    */
   async batchGenerateEmbeddings(
     force = false,
-  ): Promise<{ total: number; success: number; failed: number }> {
+  ): Promise<{ total: number; success: number; failed: number; skipped: number }> {
     // 先预加载模型
     await this.getFeatureExtractor();
 
     const catalogs = await this.catalogRepo.find({
       where: {},
-      select: ['id', 'imageUrl', 'localImagePath', 'hotImagePath', 'imageEmbedding'],
+      select: ['id', 'imageUrl', 'localImagePath', 'hotImagePath', 'imageEmbedding', 'albionId'],
     });
 
-    let success = 0, failed = 0;
-    const batchSize = 5; // 特征提取较重，小批量
+    let success = 0, failed = 0, skipped = 0;
 
-    for (let i = 0; i < catalogs.length; i += batchSize) {
-      const batch = catalogs.slice(i, i + batchSize);
-      for (const cat of batch) {
-        if (!force && cat.imageEmbedding) { success++; continue; }
+    for (let i = 0; i < catalogs.length; i++) {
+      const cat = catalogs[i];
+      if (!force && cat.imageEmbedding) { success++; continue; }
 
-        try {
-          const embedding = await this.generateEmbeddingForCatalog(
-            cat.id, cat.imageUrl, cat.localImagePath, cat.hotImagePath,
-          );
-          if (embedding) {
-            await this.catalogRepo.update(cat.id, { imageEmbedding: JSON.stringify(embedding) });
-            success++;
-          } else {
-            failed++;
-          }
-        } catch {
-          failed++;
-        }
+      // 跳过没有任何本地图片的装备
+      if (!cat.hotImagePath && !cat.localImagePath && !cat.albionId) {
+        skipped++;
+        continue;
       }
 
-      if ((i + batchSize) % 50 === 0) {
-        this.logger.log(`[V2.14] 特征向量生成进度: ${i + batchSize}/${catalogs.length}`);
+      try {
+        const embedding = await this.generateEmbeddingForCatalog(
+          cat.id, cat.imageUrl, cat.localImagePath, cat.hotImagePath, cat.albionId,
+        );
+        if (embedding) {
+          await this.catalogRepo.update(cat.id, { imageEmbedding: JSON.stringify(embedding) });
+          success++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+
+      if ((i + 1) % 50 === 0) {
+        this.logger.log(`[V2.14] 特征向量进度: ${i + 1}/${catalogs.length} (成功${success}/失败${failed}/跳过${skipped})`);
       }
     }
 
-    this.logger.log(`[V2.14] 特征向量批量生成完成: success=${success}, failed=${failed}, total=${catalogs.length}`);
-    return { total: catalogs.length, success, failed };
+    this.logger.log(`[V2.14] 特征向量批量生成完成: success=${success}, failed=${failed}, skipped=${skipped}, total=${catalogs.length}`);
+    return { total: catalogs.length, success, failed, skipped };
   }
 
   /**
