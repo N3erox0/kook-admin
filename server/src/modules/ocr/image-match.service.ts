@@ -2404,7 +2404,7 @@ export class ImageMatchService {
       const matchedCount = cells.filter((c: any) => c.matchedName).length;
       this.logger.log(`[V2.14.5] pHash匹配完成: ${matchedCount}/${cells.length} 格`);
 
-      // 混元 Vision API 精排：对置信度 < 0.80 的格子，发送截图+Top5候选名让API选
+      // 混元 Vision API 精排：对置信度 < 0.80 的格子，发送截图+Top5候选参考图让API对比
       if (useVisionApi) {
         const lowConfCells = cells.filter((c: any) => c.matchedName && c.matchedConfidence < 0.80);
         if (lowConfCells.length > 0) {
@@ -2419,7 +2419,7 @@ export class ImageMatchService {
               if (!srcBase64) continue;
               const srcBuf = Buffer.from(srcBase64, 'base64');
 
-              // 取 pHash Top5 候选名
+              // 取 pHash Top5 候选
               const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
               const cellHash = this.computePhashFromRaw(rawPixels);
               if (!cellHash) continue;
@@ -2430,22 +2430,33 @@ export class ImageMatchService {
                 .sort((a, b) => a.distance - b.distance)
                 .slice(0, 5);
 
-              // 去重候选名
-              const candidateNames = [...new Set(top5.map(c => c.catalog.name))];
+              // 去重候选（按 catalogId 去重）
+              const seen = new Set<number>();
+              const uniqueCandidates = top5.filter(c => {
+                if (seen.has(c.catalog.id)) return false;
+                seen.add(c.catalog.id);
+                return true;
+              });
+
+              const visionCandidates = uniqueCandidates.map(c => ({
+                name: c.catalog.name,
+                catalogId: c.catalog.id,
+                albionId: c.catalog.albionId || null,
+              }));
 
               const visionResult = await this.callHunyuanVision(
                 hunyuanApiKey,
                 srcBase64,
-                candidateNames,
+                visionCandidates,
               );
 
-              if (visionResult && candidateNames.includes(visionResult)) {
-                const matchedCat = top5.find(c => c.catalog.name === visionResult);
+              if (visionResult) {
+                const matchedCat = uniqueCandidates.find(c => c.catalog.name === visionResult);
                 if (matchedCat) {
                   const oldName = cell.matchedName;
                   cell.matchedName = matchedCat.catalog.name;
                   cell.matchedCatalogId = matchedCat.catalog.id;
-                  cell.matchedConfidence = 0.85; // API 精排给固定置信度
+                  cell.matchedConfidence = 0.90;
                   cell.matchSource = 'vision_api';
                   refined++;
                   this.logger.debug(`[V2.14.5] Vision精排: ${oldName} → ${visionResult}`);
@@ -2843,20 +2854,95 @@ export class ImageMatchService {
 
   /**
    * V2.14.5: 调用腾讯混元 Vision API 精排
-   * 发送截图子图 + 候选装备名列表，让 API 选择最匹配的
+   * 发送截图子图 + 候选参考图（热图/官方图/Albion渲染图），让 API 多图对比选最匹配的
    */
   private async callHunyuanVision(
     apiKey: string,
     imageBase64: string,
-    candidateNames: string[],
+    candidates: Array<{ name: string; catalogId: number; albionId?: string | null }>,
   ): Promise<string | null> {
     try {
-      const prompt = `你是Albion Online游戏装备识别专家。这是一个装备图标的截图。
-请从以下候选装备名中选出最匹配的一个，只回复装备名称，不要其他内容。
-如果都不匹配请回复"无"。
+      // 收集候选参考图 base64
+      const candidateImages: Array<{ name: string; base64: string | null }> = [];
+      for (const c of candidates) {
+        let imgBase64: string | null = null;
+
+        // 优先级1: 热图（本地文件）
+        try {
+          const hotImg = await this.imageRepo.findOne({
+            where: { catalogId: c.catalogId, imageType: 'hot' },
+          });
+          if (hotImg) {
+            const imgPath = join(process.cwd(), hotImg.imageUrl.replace(/^\//, ''));
+            const buf = await fs.readFile(imgPath);
+            imgBase64 = buf.toString('base64');
+          }
+        } catch { /* skip */ }
+
+        // 优先级2: 官方图（本地文件）
+        if (!imgBase64) {
+          try {
+            const officialImg = await this.imageRepo.findOne({
+              where: { catalogId: c.catalogId, imageType: 'official' },
+            });
+            if (officialImg) {
+              const imgPath = join(process.cwd(), officialImg.imageUrl.replace(/^\//, ''));
+              const buf = await fs.readFile(imgPath);
+              imgBase64 = buf.toString('base64');
+            }
+          } catch { /* skip */ }
+        }
+
+        // 优先级3: Albion 渲染 URL（不传 base64，直接传 URL）
+        if (!imgBase64 && c.albionId) {
+          // 用 URL 方式传给 API，不下载
+          candidateImages.push({
+            name: c.name,
+            base64: `URL:https://render.albiononline.com/v1/item/${c.albionId}.png?size=217`,
+          });
+          continue;
+        }
+
+        candidateImages.push({ name: c.name, base64: imgBase64 });
+      }
+
+      // 构建 content 数组：截图子图 + 候选参考图
+      const content: any[] = [];
+
+      // 候选列表文字说明
+      const nameList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+      content.push({
+        type: 'text',
+        text: `你是Albion Online游戏装备图标识别专家。
+第一张图是游戏截图中裁切出的一个装备图标（可能有品质色边框）。
+后面的图是候选装备的参考图。请对比形状和外观，判断第一张图最像哪个候选。
+只回复数字编号(1-${candidates.length})，不要其他内容。如果都不像回复"0"。
 
 候选列表：
-${candidateNames.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
+${nameList}`,
+      });
+
+      // 截图子图
+      content.push({
+        type: 'image_url',
+        image_url: { url: `data:image/png;base64,${imageBase64}` },
+      });
+
+      // 候选参考图
+      for (const ci of candidateImages) {
+        if (!ci.base64) continue;
+        if (ci.base64.startsWith('URL:')) {
+          content.push({
+            type: 'image_url',
+            image_url: { url: ci.base64.substring(4) },
+          });
+        } else {
+          content.push({
+            type: 'image_url',
+            image_url: { url: `data:image/png;base64,${ci.base64}` },
+          });
+        }
+      }
 
       const response = await fetch('https://api.hunyuan.cloud.tencent.com/v1/chat/completions', {
         method: 'POST',
@@ -2866,39 +2952,35 @@ ${candidateNames.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
         },
         body: JSON.stringify({
           model: 'hunyuan-vision',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:image/png;base64,${imageBase64}`,
-                  },
-                },
-              ],
-            },
-          ],
-          max_tokens: 50,
+          messages: [{ role: 'user', content }],
+          max_tokens: 10,
           temperature: 0.1,
         }),
       });
 
       if (!response.ok) {
-        this.logger.warn(`[V2.14.5] Vision API 返回 ${response.status}`);
+        const errText = await response.text().catch(() => '');
+        this.logger.warn(`[V2.14.5] Vision API 返回 ${response.status}: ${errText.substring(0, 200)}`);
         return null;
       }
 
       const data = await response.json() as any;
-      const reply = data?.choices?.[0]?.message?.content?.trim();
-      if (!reply || reply === '无') return null;
+      const reply = (data?.choices?.[0]?.message?.content || '').trim();
+      this.logger.debug(`[V2.14.5] Vision API 回复: "${reply}"`);
 
-      // 在候选名中找精确匹配或包含匹配
-      const exact = candidateNames.find(n => n === reply);
-      if (exact) return exact;
-      const partial = candidateNames.find(n => reply.includes(n) || n.includes(reply));
-      return partial || null;
+      if (!reply || reply === '0') return null;
+
+      // 解析编号
+      const num = parseInt(reply, 10);
+      if (num >= 1 && num <= candidates.length) {
+        return candidates[num - 1].name;
+      }
+
+      // 尝试名字匹配
+      const exact = candidates.find(c => c.name === reply);
+      if (exact) return exact.name;
+      const partial = candidates.find(c => reply.includes(c.name) || c.name.includes(reply));
+      return partial ? partial.name : null;
     } catch (err) {
       this.logger.warn(`[V2.14.5] Vision API 调用异常: ${err}`);
       return null;
