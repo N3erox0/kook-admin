@@ -2328,23 +2328,37 @@ export class ImageMatchService {
     cells: any[],
   ): Promise<void> {
     try {
-      // V2.14.5: 只加载 catalogs 基础信息（用于补充等级品质等），跳过热图和pHash候选构建
+      // V2.14.5: 只用热图库做 pHash 粗筛 + embedding 精排（避免全库6000+条内存爆炸）
       const catalogs = await this.catalogRepo.find({
         where: {},
-        select: [
-          'id',
-          'name',
-          'albionId',
-          'category',
-          'gearScore',
-          'level',
-          'quality',
-        ],
+        select: ['id', 'name', 'albionId', 'imagePhash', 'imageEmbedding', 'category', 'gearScore', 'level', 'quality'],
       });
 
-      // V2.14.5: 跳过热图分层匹配，所有格子直接走 AI embedding 精排（实验）
-      // 原分层 pHash 匹配（hot→pHash→official）已注释，直接用 embedding 决定结果
-      this.logger.log(`[V2.14.5] 跳过pHash分层匹配，${cells.length} 格直接走 AI embedding 精排`);
+      // 加载热图并计算 pHash
+      const hotImages = await this.imageRepo.find({ where: { imageType: 'hot' } });
+      const catalogById = new Map(catalogs.map(c => [c.id, c]));
+      const hotCandidates: Array<{ catalog: EquipmentCatalog; hash: string; source: string }> = [];
+      for (const img of hotImages) {
+        const catalog = catalogById.get(img.catalogId);
+        if (!catalog) continue;
+        try {
+          const imgPath = join(process.cwd(), img.imageUrl.replace(/^\//, ''));
+          const buf = await fs.readFile(imgPath);
+          const rawPixels = await this.preprocessForPhash(sharp, buf, 'inventory');
+          const hash = this.computePhashFromRaw(rawPixels);
+          if (hash) hotCandidates.push({ catalog, hash, source: 'hot' });
+        } catch { /* skip */ }
+      }
+
+      // 预解析 catalog embedding（只解析一次，所有格子复用）
+      const embeddingMap = new Map<number, number[]>();
+      for (const cat of catalogs) {
+        if (cat.imageEmbedding) {
+          try { embeddingMap.set(cat.id, JSON.parse(cat.imageEmbedding)); } catch { /* skip */ }
+        }
+      }
+
+      this.logger.log(`[V2.14.5] 热图 ${hotCandidates.length} 条，有embedding ${embeddingMap.size} 条，开始 ${cells.length} 格精排`);
 
       for (const cell of cells) {
         try {
@@ -2355,23 +2369,84 @@ export class ImageMatchService {
           if (!srcBase64) continue;
           const srcBuf = Buffer.from(srcBase64, 'base64');
 
-          const result = await this.matchByEmbedding(srcBuf, 'inventory');
-          if (result) {
-            cell.matchedName = result.name;
-            cell.matchedCatalogId = result.catalogId;
-            cell.matchedConfidence = result.similarity;
-            cell.matchSource = 'ai';
+          // Step 1: pHash 粗筛 — 从热图取 Top20
+          const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
+          const cellHash = this.computePhashFromRaw(rawPixels);
+          if (!cellHash) continue;
 
-            // 从参考库补充等级品质等信息
-            const cat = catalogs.find(c => c.id === result.catalogId);
-            if (cat) {
-              if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
-              if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
-              cell.matchedCategory = cat.category || '';
-              cell.matchedGearScore = cat.gearScore || 0;
-              cell.albionId = cat.albionId || null;
+          const phashTop20 = hotCandidates
+            .map(c => ({ ...c, distance: this.hammingDistance(cellHash, c.hash) }))
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 20);
+
+          if (phashTop20.length === 0) continue;
+
+          // Step 2: 提取子图 embedding
+          const meta = await sharp(srcBuf).metadata();
+          const w = meta.width || 64;
+          const h = meta.height || 64;
+          const preprocessed = await sharp(srcBuf)
+            .flatten({ background: ImageMatchService.GRAY_BG })
+            .extract({
+              left: Math.round(w * 0.15),
+              top: Math.round(h * 0.12),
+              width: Math.round(w * 0.70),
+              height: Math.round(h * 0.72),
+            })
+            .resize(224, 224, { fit: 'fill' })
+            .png()
+            .toBuffer();
+
+          let cellEmbedding: number[];
+          try {
+            cellEmbedding = await this.extractEmbedding(preprocessed);
+          } catch {
+            // embedding 提取失败，fallback 到 pHash best
+            const best = phashTop20[0];
+            const cat = best.catalog;
+            cell.matchedName = cat.name;
+            cell.matchedCatalogId = cat.id;
+            cell.matchedConfidence = parseFloat((1 - best.distance / 64).toFixed(2));
+            cell.matchSource = 'hot';
+            if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
+            if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
+            cell.matchedCategory = cat.category || '';
+            cell.matchedGearScore = cat.gearScore || 0;
+            cell.albionId = cat.albionId || null;
+            continue;
+          }
+
+          // Step 3: 余弦相似度精排 — 在 Top20 候选的 catalog 中用 embedding 重排
+          let bestSim = -1;
+          let bestCat: EquipmentCatalog | null = null;
+          for (const candidate of phashTop20) {
+            const catEmb = embeddingMap.get(candidate.catalog.id);
+            if (!catEmb) continue;
+            const sim = this.cosineSimilarity(cellEmbedding, catEmb);
+            if (sim > bestSim) {
+              bestSim = sim;
+              bestCat = candidate.catalog;
             }
           }
+
+          // 如果 embedding 精排无结果或相似度太低，fallback 到 pHash best
+          if (!bestCat || bestSim < 0.5) {
+            const best = phashTop20[0];
+            bestCat = best.catalog;
+            bestSim = 1 - best.distance / 64;
+            cell.matchSource = 'hot';
+          } else {
+            cell.matchSource = 'ai';
+          }
+
+          cell.matchedName = bestCat.name;
+          cell.matchedCatalogId = bestCat.id;
+          cell.matchedConfidence = parseFloat(bestSim.toFixed(2));
+          if (cell.detectedLevel == null) cell.detectedLevel = bestCat.level || null;
+          if (cell.detectedQuality == null) cell.detectedQuality = bestCat.quality ?? null;
+          cell.matchedCategory = bestCat.category || '';
+          cell.matchedGearScore = bestCat.gearScore || 0;
+          cell.albionId = bestCat.albionId || null;
         } catch {
           /* skip */
         }
