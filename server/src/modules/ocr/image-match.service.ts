@@ -2328,125 +2328,49 @@ export class ImageMatchService {
     cells: any[],
   ): Promise<void> {
     try {
+      // V2.14.5: 只加载 catalogs 基础信息（用于补充等级品质等），跳过热图和pHash候选构建
       const catalogs = await this.catalogRepo.find({
         where: {},
         select: [
           'id',
           'name',
           'albionId',
-          'imagePhash',
           'category',
           'gearScore',
           'level',
           'quality',
         ],
       });
-      const hotImages = await this.imageRepo.find({
-        where: { imageType: 'hot' },
-      });
-      const hotCandidates: Array<{
-        catalog: EquipmentCatalog;
-        hash: string;
-        source: string;
-      }> = [];
-      const catalogById = new Map(catalogs.map((c) => [c.id, c]));
-      for (const img of hotImages) {
-        const catalog = catalogById.get(img.catalogId);
-        if (!catalog) continue;
-        try {
-          const imgPath = join(process.cwd(), img.imageUrl.replace(/^\//, ''));
-          const buf = await fs.readFile(imgPath);
-          // V2.13: inventory 模式预处理 hot 图片
-          const rawPixels = await this.preprocessForPhash(sharp, buf, 'inventory');
-          const hash = this.computePhashFromRaw(rawPixels);
-          if (hash) hotCandidates.push({ catalog, hash, source: 'hot' });
-        } catch {
-          /* skip */
-        }
-      }
-      const phashCandidates = catalogs
-        .filter((c) => c.imagePhash)
-        .map((c) => ({ catalog: c, hash: c.imagePhash, source: 'phash' }));
-      let officialCandidates: Array<{
-        catalog: EquipmentCatalog;
-        hash: string;
-        source: string;
-      }> | null = null;
+
+      // V2.14.5: 跳过热图分层匹配，所有格子直接走 AI embedding 精排（实验）
+      // 原分层 pHash 匹配（hot→pHash→official）已注释，直接用 embedding 决定结果
+      this.logger.log(`[V2.14.5] 跳过pHash分层匹配，${cells.length} 格直接走 AI embedding 精排`);
 
       for (const cell of cells) {
         try {
-          // 优先使用 centerThumbnail（已去除边框+角标干扰），回退到 thumbnail
           const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(
             /^data:image\/\w+;base64,/,
             '',
           );
           if (!srcBase64) continue;
           const srcBuf = Buffer.from(srcBase64, 'base64');
-          // V2.13: inventory 模式预处理 — 统一管线（centerThumbnail 和 thumbnail 都走新管线）
-          const rawPixels = await this.preprocessForPhash(sharp, srcBuf, 'inventory');
-          const cellHash = this.computePhashFromRaw(rawPixels);
-          if (!cellHash) continue;
-          const tryMatch = (
-            candidates: Array<{
-              catalog: EquipmentCatalog;
-              hash: string;
-              source: string;
-            }>,
-            threshold: number,
-          ) => {
-            let bestDist = 999;
-            let best: {
-              catalog: EquipmentCatalog;
-              hash: string;
-              source: string;
-            } | null = null;
-            for (const candidate of candidates) {
-              const dist = this.hammingDistance(cellHash, candidate.hash);
-              if (dist < bestDist) {
-                bestDist = dist;
-                best = candidate;
-              }
-            }
-            if (!best || bestDist > threshold) return null;
-            return {
-              ...best,
-              distance: bestDist,
-              confidence: parseFloat((1 - bestDist / 64).toFixed(2)),
-            };
-          };
 
-          let matched = tryMatch(
-            hotCandidates,
-            ImageMatchService.STRICT_HAMMING_THRESHOLD,
-          );
-          if (!matched)
-            matched = tryMatch(
-              phashCandidates,
-              ImageMatchService.LOOSE_HAMMING_THRESHOLD,
-            );
-          if (!matched) {
-            if (!officialCandidates)
-              officialCandidates = await this.buildOfficialFallbackHashes(
-                sharp,
-                3000,
-              );
-            matched = tryMatch(
-              officialCandidates,
-              ImageMatchService.STRICT_HAMMING_THRESHOLD,
-            );
-          }
-          if (matched) {
-            const cat = matched.catalog;
-            cell.matchedName = cat.name;
-            cell.matchedCatalogId = cat.id;
-            cell.matchedConfidence = matched.confidence;
-            cell.matchSource = matched.source;
-            // 等级品质：保留图片检测值，仅未检测到时用参考库兜底
-            if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
-            if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
-            cell.matchedCategory = cat.category || '';
-            cell.matchedGearScore = cat.gearScore || 0;
-            cell.albionId = cat.albionId || null;
+          const result = await this.matchByEmbedding(srcBuf, 'inventory');
+          if (result) {
+            cell.matchedName = result.name;
+            cell.matchedCatalogId = result.catalogId;
+            cell.matchedConfidence = result.similarity;
+            cell.matchSource = 'ai';
+
+            // 从参考库补充等级品质等信息
+            const cat = catalogs.find(c => c.id === result.catalogId);
+            if (cat) {
+              if (cell.detectedLevel == null) cell.detectedLevel = cat.level || null;
+              if (cell.detectedQuality == null) cell.detectedQuality = cat.quality ?? null;
+              cell.matchedCategory = cat.category || '';
+              cell.matchedGearScore = cat.gearScore || 0;
+              cell.albionId = cat.albionId || null;
+            }
           }
         } catch {
           /* skip */
@@ -2454,37 +2378,8 @@ export class ImageMatchService {
       }
       const matchedCount = cells.filter((c: any) => c.matchedName).length;
       this.logger.log(
-        `[gridParse] 分层匹配: ${matchedCount}/${cells.length} 格匹配成功（hot→pHash→official）`,
+        `[V2.14.5] AI embedding 直接匹配: ${matchedCount}/${cells.length} 格匹配成功`,
       );
-
-      // V2.14.4: AI 特征向量精排 — 对所有已匹配的格子都用 embedding 重排
-      // pHash 对品质背景色敏感导致大量假阳性，AI 特征向量对形状更敏感
-      const hasEmbeddings = catalogs.some(c => c.imageEmbedding);
-      if (hasEmbeddings) {
-        const matchedCells = cells.filter((c: any) => c.matchedName);
-        if (matchedCells.length > 0) {
-          this.logger.log(`[V2.14] 对 ${matchedCells.length} 格执行 AI 精排...`);
-          let refined = 0;
-          for (const cell of matchedCells) {
-            try {
-              const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(/^data:image\/\w+;base64,/, '');
-              if (!srcBase64) continue;
-              const srcBuf = Buffer.from(srcBase64, 'base64');
-              const result = await this.matchByEmbedding(srcBuf, 'inventory');
-              if (result && result.similarity > cell.matchedConfidence) {
-                const oldName = cell.matchedName;
-                cell.matchedName = result.name;
-                cell.matchedCatalogId = result.catalogId;
-                cell.matchedConfidence = result.similarity;
-                cell.matchSource = 'ai';
-                refined++;
-                this.logger.debug(`[V2.14] AI精排: ${oldName} → ${result.name} (${result.similarity})`);
-              }
-            } catch { /* skip */ }
-          }
-          this.logger.log(`[V2.14] AI精排完成: ${refined}/${matchedCells.length} 格被优化`);
-        }
-      }
     } catch (err) {
       this.logger.warn(`[gridParse] 分层匹配失败: ${err}`);
     }
