@@ -2619,15 +2619,26 @@ export class ImageMatchService {
   }
 
   /**
-   * V2.14: 从图片 Buffer 提取 768 维特征向量
+   * V2.14.3: 从图片 Buffer 提取 768 维特征向量
+   * 用 RawImage 构造避免 data URL 在 Node.js 环境被当成 HTTP URL fetch
    */
   async extractEmbedding(imageBuffer: Buffer): Promise<number[]> {
     const extractor = await this.getFeatureExtractor();
-    // 将 buffer 转为 base64 data URL 供 transformers 处理
-    const base64 = imageBuffer.toString('base64');
-    const dataUrl = `data:image/png;base64,${base64}`;
-    const output = await extractor(dataUrl, { pooling: 'mean', normalize: true });
-    // output.data 是 Float32Array，转为普通数组
+    const sharp = require('sharp');
+
+    // 将图片转为 224x224 RGB raw 像素数据
+    const { data, info } = await sharp(imageBuffer)
+      .resize(224, 224, { fit: 'fill' })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    // 用 @xenova/transformers 的 RawImage 构造
+    const importDynamic = new Function('specifier', 'return import(specifier)');
+    const { RawImage } = await importDynamic('@xenova/transformers');
+    const img = new RawImage(new Uint8ClampedArray(data), info.width, info.height, info.channels);
+
+    const output = await extractor(img, { pooling: 'mean', normalize: true });
     return Array.from(output.data as Float32Array);
   }
 
