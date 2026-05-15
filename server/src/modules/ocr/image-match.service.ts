@@ -2582,14 +2582,32 @@ export class ImageMatchService {
     }
     ImageMatchService.featureExtractorLoading = true;
     try {
-      this.logger.log('[V2.14] 正在加载 ViT 特征提取模型（首次需下载 ~350MB）...');
-      // V2.14.1: 用 eval 绕过 TypeScript 编译器将 import() 转成 require()
-      // @xenova/transformers 是 ESM-only 模块，NestJS/CommonJS 环境需要真正的动态 import()
+      this.logger.log('[V2.14] 正在加载 ViT 特征提取模型...');
+      // V2.14.2: 强制离线模式 + 指定缓存路径，避免联网下载
+      process.env.TRANSFORMERS_OFFLINE = '1';
+      process.env.HF_HUB_OFFLINE = '1';
+      if (!process.env.TRANSFORMERS_CACHE) {
+        const homedir = require('os').homedir();
+        process.env.TRANSFORMERS_CACHE = join(homedir, '.cache', 'huggingface', 'hub');
+      }
+      this.logger.log(`[V2.14] 缓存路径: ${process.env.TRANSFORMERS_CACHE}, 离线模式: ON`);
+
       const importDynamic = new Function('specifier', 'return import(specifier)');
-      const { pipeline } = await importDynamic('@xenova/transformers');
+      const transformersModule = await importDynamic('@xenova/transformers');
+      // 设置 env 配置确保离线
+      if (transformersModule.env) {
+        transformersModule.env.useBrowserCache = false;
+        transformersModule.env.useCustomCache = false;
+        transformersModule.env.allowLocalModels = true;
+        if (transformersModule.env.localModelPath === undefined) {
+          transformersModule.env.cacheDir = process.env.TRANSFORMERS_CACHE;
+        }
+      }
+      const { pipeline } = transformersModule;
       ImageMatchService.featureExtractor = await pipeline(
         'image-feature-extraction',
         'Xenova/vit-base-patch16-224',
+        { local_files_only: true },
       );
       this.logger.log('[V2.14] ViT 模型加载完成');
       return ImageMatchService.featureExtractor;
