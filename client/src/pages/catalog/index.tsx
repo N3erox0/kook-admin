@@ -30,6 +30,7 @@ export default function CatalogPage() {
   const [images, setImages] = useState<any[]>([]);
   const [albionImporting, setAlbionImporting] = useState(false);
   const [phashLoading, setPhashLoading] = useState(false);
+  const [embeddingLoading, setEmbeddingLoading] = useState(false);
   const [form] = Form.useForm();
 
   // V2.9.8: 热门截图上传
@@ -268,6 +269,18 @@ export default function CatalogPage() {
     }
   };
 
+  const handleGenerateEmbeddings = async () => {
+    setEmbeddingLoading(true);
+    try {
+      const res: any = await request.post('/catalog/generate-embeddings');
+      message.success(`AI特征向量生成完成：成功 ${res?.success || 0}，失败 ${res?.failed || 0}，共 ${res?.total || 0}`);
+    } catch (err: any) {
+      message.error(err?.message || '生成AI特征向量失败（首次需下载模型约350MB）');
+    } finally {
+      setEmbeddingLoading(false);
+    }
+  };
+
   const handleBatchHot = async () => {
     if (selectedRowKeys.length === 0) return;
     setBatchHotLoading(true);
@@ -345,6 +358,11 @@ export default function CatalogPage() {
           <Popconfirm title="将重新为所有装备生成图片指纹(pHash)，耗时约1-3分钟，确认执行？" onConfirm={handleGeneratePhash} okText="开始生成">
             <Button icon={<ThunderboltOutlined />} loading={phashLoading} type="primary" ghost>
               {phashLoading ? '生成中...' : '生成图片指纹'}
+            </Button>
+          </Popconfirm>
+          <Popconfirm title="将为所有装备生成AI特征向量(ViT 768维)，首次需下载模型约350MB，耗时5-15分钟，确认执行？" onConfirm={handleGenerateEmbeddings} okText="开始生成">
+            <Button icon={<ThunderboltOutlined />} loading={embeddingLoading} type="primary">
+              {embeddingLoading ? 'AI生成中...' : '生成AI特征向量'}
             </Button>
           </Popconfirm>
         </Space>

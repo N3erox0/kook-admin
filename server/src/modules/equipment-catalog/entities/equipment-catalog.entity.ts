@@ -46,6 +46,9 @@ export class EquipmentCatalog {
   @Column({ type: 'varchar', length: 500, nullable: true, comment: '描述' })
   description: string;
 
+  @Column({ type: 'text', nullable: true, name: 'image_embedding', comment: 'AI特征向量(768维float数组JSON)' })
+  imageEmbedding: string;
+
   @Column({ type: 'int', default: 0, comment: '装备热度 0~4（所有公会合计补装扣减：0=未出现,1=>=1次,2=>100次,3=>1000次,4=>10000次）' })
   popularity: number;
 

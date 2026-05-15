@@ -2456,6 +2456,34 @@ export class ImageMatchService {
       this.logger.log(
         `[gridParse] 分层匹配: ${matchedCount}/${cells.length} 格匹配成功（hot→pHash→official）`,
       );
+
+      // V2.14: AI 特征向量精排 — 对低置信度匹配（<80%）尝试用 embedding 重排
+      const hasEmbeddings = catalogs.some(c => c.imageEmbedding);
+      if (hasEmbeddings) {
+        const lowConfCells = cells.filter((c: any) => c.matchedName && c.matchedConfidence < 0.80);
+        if (lowConfCells.length > 0) {
+          this.logger.log(`[V2.14] ${lowConfCells.length} 格置信度<80%，尝试AI精排...`);
+          let refined = 0;
+          for (const cell of lowConfCells) {
+            try {
+              const srcBase64 = (cell.centerThumbnail || cell.thumbnail || '').replace(/^data:image\/\w+;base64,/, '');
+              if (!srcBase64) continue;
+              const srcBuf = Buffer.from(srcBase64, 'base64');
+              const result = await this.matchByEmbedding(srcBuf, 'inventory');
+              if (result && result.similarity > cell.matchedConfidence) {
+                cell.matchedName = result.name;
+                cell.matchedCatalogId = result.catalogId;
+                cell.matchedConfidence = result.similarity;
+                cell.matchSource = 'ai';
+                refined++;
+              }
+            } catch { /* skip */ }
+          }
+          if (refined > 0) {
+            this.logger.log(`[V2.14] AI精排完成: ${refined}/${lowConfCells.length} 格被优化`);
+          }
+        }
+      }
     } catch (err) {
       this.logger.warn(`[gridParse] 分层匹配失败: ${err}`);
     }
@@ -2531,5 +2559,255 @@ export class ImageMatchService {
     } catch {
       return null;
     }
+  }
+
+  // ===== V2.14: @xenova/transformers AI 特征向量匹配 =====
+
+  /** 缓存的 pipeline 实例（避免重复加载模型） */
+  private static featureExtractor: any = null;
+  private static featureExtractorLoading = false;
+
+  /**
+   * 获取或初始化特征提取 pipeline（首次调用会下载模型 ~350MB）
+   */
+  private async getFeatureExtractor(): Promise<any> {
+    if (ImageMatchService.featureExtractor) return ImageMatchService.featureExtractor;
+    if (ImageMatchService.featureExtractorLoading) {
+      // 等待其他请求完成加载
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        if (ImageMatchService.featureExtractor) return ImageMatchService.featureExtractor;
+      }
+      throw new Error('特征提取模型加载超时');
+    }
+    ImageMatchService.featureExtractorLoading = true;
+    try {
+      this.logger.log('[V2.14] 正在加载 ViT 特征提取模型（首次需下载 ~350MB）...');
+      const { pipeline } = await import('@xenova/transformers');
+      ImageMatchService.featureExtractor = await pipeline(
+        'image-feature-extraction',
+        'Xenova/vit-base-patch16-224',
+      );
+      this.logger.log('[V2.14] ViT 模型加载完成');
+      return ImageMatchService.featureExtractor;
+    } catch (err) {
+      ImageMatchService.featureExtractorLoading = false;
+      this.logger.error(`[V2.14] 模型加载失败: ${err}`);
+      throw err;
+    }
+  }
+
+  /**
+   * V2.14: 从图片 Buffer 提取 768 维特征向量
+   */
+  async extractEmbedding(imageBuffer: Buffer): Promise<number[]> {
+    const extractor = await this.getFeatureExtractor();
+    // 将 buffer 转为 base64 data URL 供 transformers 处理
+    const base64 = imageBuffer.toString('base64');
+    const dataUrl = `data:image/png;base64,${base64}`;
+    const output = await extractor(dataUrl, { pooling: 'mean', normalize: true });
+    // output.data 是 Float32Array，转为普通数组
+    return Array.from(output.data as Float32Array);
+  }
+
+  /**
+   * V2.14: 余弦相似度计算
+   */
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+    let dot = 0, normA = 0, normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
+  /**
+   * V2.14: 为单个参考库装备生成特征向量
+   */
+  async generateEmbeddingForCatalog(
+    catalogId: number,
+    imageUrl: string,
+    localImagePath?: string | null,
+    hotImagePath?: string | null,
+  ): Promise<number[] | null> {
+    let sharp: any;
+    try { sharp = require('sharp'); } catch { return null; }
+
+    let buffer: Buffer | null = null;
+
+    // 优先热门截图 > 本地文件 > 远程URL
+    if (hotImagePath) {
+      try {
+        buffer = await fs.readFile(join(process.cwd(), hotImagePath.replace(/^\//, '')));
+        if (buffer.length === 0) buffer = null;
+      } catch { buffer = null; }
+    }
+    if (!buffer && localImagePath) {
+      try {
+        buffer = await fs.readFile(join(process.cwd(), localImagePath.replace(/^\//, '')));
+        if (buffer.length === 0) buffer = null;
+      } catch { buffer = null; }
+    }
+    if (!buffer && imageUrl && imageUrl.startsWith('http')) {
+      try {
+        const response = await fetch(imageUrl, {
+          headers: { 'User-Agent': 'kook-admin/1.0' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
+      } catch { /* skip */ }
+    }
+    if (!buffer) return null;
+
+    try {
+      // 预处理：flatten + 不对称中心裁剪 + resize 224×224（ViT 标准输入尺寸）
+      const meta = await sharp(buffer).metadata();
+      const w = meta.width || 64;
+      const h = meta.height || 64;
+      const cropLeft = Math.round(w * 0.15);
+      const cropTop = Math.round(h * 0.12);
+      const cropW = Math.round(w * 0.70);
+      const cropH = Math.round(h * 0.72);
+
+      const preprocessed = await sharp(buffer)
+        .flatten({ background: ImageMatchService.GRAY_BG })
+        .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+        .resize(224, 224, { fit: 'fill' })
+        .png()
+        .toBuffer();
+
+      return await this.extractEmbedding(preprocessed);
+    } catch (err) {
+      this.logger.warn(`[V2.14] 特征向量生成失败 catalogId=${catalogId}: ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * V2.14: 批量为所有参考库装备生成特征向量
+   */
+  async batchGenerateEmbeddings(
+    force = false,
+  ): Promise<{ total: number; success: number; failed: number }> {
+    // 先预加载模型
+    await this.getFeatureExtractor();
+
+    const catalogs = await this.catalogRepo.find({
+      where: {},
+      select: ['id', 'imageUrl', 'localImagePath', 'hotImagePath', 'imageEmbedding'],
+    });
+
+    let success = 0, failed = 0;
+    const batchSize = 5; // 特征提取较重，小批量
+
+    for (let i = 0; i < catalogs.length; i += batchSize) {
+      const batch = catalogs.slice(i, i + batchSize);
+      for (const cat of batch) {
+        if (!force && cat.imageEmbedding) { success++; continue; }
+
+        try {
+          const embedding = await this.generateEmbeddingForCatalog(
+            cat.id, cat.imageUrl, cat.localImagePath, cat.hotImagePath,
+          );
+          if (embedding) {
+            await this.catalogRepo.update(cat.id, { imageEmbedding: JSON.stringify(embedding) });
+            success++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
+      }
+
+      if ((i + batchSize) % 50 === 0) {
+        this.logger.log(`[V2.14] 特征向量生成进度: ${i + batchSize}/${catalogs.length}`);
+      }
+    }
+
+    this.logger.log(`[V2.14] 特征向量批量生成完成: success=${success}, failed=${failed}, total=${catalogs.length}`);
+    return { total: catalogs.length, success, failed };
+  }
+
+  /**
+   * V2.14: 用特征向量匹配装备（对截图子图）
+   * pHash 粗筛 Top20 → 特征向量精排 → Top1
+   */
+  async matchByEmbedding(
+    subImageBuffer: Buffer,
+    mode: 'inventory' | 'resupply' = 'inventory',
+  ): Promise<{ catalogId: number; name: string; similarity: number } | null> {
+    let sharp: any;
+    try { sharp = require('sharp'); } catch { return null; }
+
+    // Step 1: pHash 粗筛 — 取 Top20
+    const rawPixels = await this.preprocessForPhash(sharp, subImageBuffer, mode);
+    const cellHash = this.computePhashFromRaw(rawPixels);
+
+    const catalogs = await this.catalogRepo.find({
+      where: {},
+      select: ['id', 'name', 'imagePhash', 'imageEmbedding', 'level', 'quality', 'category', 'gearScore'],
+    });
+
+    const phashCandidates = catalogs
+      .filter(c => c.imagePhash)
+      .map(c => ({ cat: c, distance: this.hammingDistance(cellHash, c.imagePhash) }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 20);
+
+    if (phashCandidates.length === 0) return null;
+
+    // Step 2: 对子图生成特征向量
+    const meta = await sharp(subImageBuffer).metadata();
+    const w = meta.width || 64;
+    const h = meta.height || 64;
+    const cropLeft = Math.round(w * 0.15);
+    const cropTop = Math.round(h * 0.12);
+    const cropW = Math.round(w * 0.70);
+    const cropH = Math.round(h * 0.72);
+
+    const preprocessed = await sharp(subImageBuffer)
+      .flatten({ background: ImageMatchService.GRAY_BG })
+      .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+      .resize(224, 224, { fit: 'fill' })
+      .png()
+      .toBuffer();
+
+    let cellEmbedding: number[];
+    try {
+      cellEmbedding = await this.extractEmbedding(preprocessed);
+    } catch {
+      // 特征提取失败，fallback 到 pHash best
+      const best = phashCandidates[0];
+      return { catalogId: best.cat.id, name: best.cat.name, similarity: 1 - best.distance / 64 };
+    }
+
+    // Step 3: 余弦相似度精排
+    let bestSim = -1;
+    let bestCat: any = null;
+
+    for (const { cat } of phashCandidates) {
+      if (!cat.imageEmbedding) continue;
+      try {
+        const catEmbedding = JSON.parse(cat.imageEmbedding) as number[];
+        const sim = this.cosineSimilarity(cellEmbedding, catEmbedding);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestCat = cat;
+        }
+      } catch { /* skip */ }
+    }
+
+    if (!bestCat || bestSim < 0.5) {
+      // fallback 到 pHash best
+      const best = phashCandidates[0];
+      return { catalogId: best.cat.id, name: best.cat.name, similarity: 1 - best.distance / 64 };
+    }
+
+    return { catalogId: bestCat.id, name: bestCat.name, similarity: Math.round(bestSim * 100) / 100 };
   }
 }
