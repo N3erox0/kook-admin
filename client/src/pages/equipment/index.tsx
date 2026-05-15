@@ -100,6 +100,8 @@ export default function EquipmentPage() {
   }>>([]);
   const [gridSaving, setGridSaving] = useState(false);
   const [gridOnlyUnfilled, setGridOnlyUnfilled] = useState(false);
+  const [gridSelectedKeys, setGridSelectedKeys] = useState<string[]>([]);
+  const [gridBatchLocation, setGridBatchLocation] = useState('');
 
   const fetchList = async (p = page, f = filters) => {
     if (!guildId) return;
@@ -177,22 +179,33 @@ export default function EquipmentPage() {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      // 去掉 BOM
       const cleanText = text.replace(/^\uFEFF/, '');
       const lines = cleanText.split(/\r?\n/).filter(l => l.trim());
       if (lines.length < 2) { message.error('文件至少需要表头和一行数据'); return; }
       const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
 
-      // 自动检测格式：
+      // V2.13.1: 支持3种格式
+      // 简化格式: 装备名,数量,位置 (3列) — 装备名如"44堕神法杖"，自动解析
       // V2.9.1+ 新格式: 别称,等级,品质,装等,数量,位置 (6列)
       // 旧格式: 装备名称,等级,品质,数量,位置 (5列)
+      const isSimpleFormat = headers.length === 3;
       const isNewFormat = headers.length >= 6 && (headers[0].includes('别称') || headers[0].includes('名称'));
       const isOldFormat = headers.length === 5;
 
       const rows = lines.slice(1).map((line, idx) => {
         const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
-        if (isNewFormat) {
-          // 别称,等级,品质,装等,数量,位置
+        if (isSimpleFormat) {
+          // V2.13.1 简化格式: 装备名,数量,位置
+          return {
+            key: idx,
+            name: cols[0] || '',
+            level: 0,
+            quality: 0,
+            gearScore: 0,
+            quantity: parseInt(cols[1]) || 1,
+            location: cols[2] || '公会仓库',
+          };
+        } else if (isNewFormat) {
           return {
             key: idx,
             name: cols[0] || '',
@@ -203,7 +216,6 @@ export default function EquipmentPage() {
             location: cols[5] || '公会仓库',
           };
         } else if (isOldFormat) {
-          // 装备名称,等级,品质,数量,位置
           return {
             key: idx,
             name: cols[0] || '',
@@ -214,15 +226,15 @@ export default function EquipmentPage() {
             location: cols[4] || '公会仓库',
           };
         }
-        // 兜底
+        // 兜底：按简化格式处理
         return {
           key: idx,
           name: cols[0] || '',
-          level: parseInt(cols[1]) || 1,
-          quality: parseInt(cols[2]) || 0,
+          level: 0,
+          quality: 0,
           gearScore: 0,
-          quantity: parseInt(cols[3]) || 1,
-          location: cols[4] || '公会仓库',
+          quantity: parseInt(cols[1]) || 1,
+          location: cols[2] || '公会仓库',
         };
       }).filter(r => r.name);
       setExcelData(rows);
@@ -477,13 +489,29 @@ export default function EquipmentPage() {
     });
   };
 
-  // 别名自动补全：调用参考库搜索（V2.9.5: 后端已支持别称+P格式）
+  // 别名自动补全：调用参考库搜索（V2.13.1: 解析数字前缀，中文名匹配排前）
   const handleGridAliasSearch = async (index: number, keyword: string) => {
     if (!keyword || keyword.length < 1) return;
     try {
-      const res: any = await searchCatalog(keyword.trim());
+      // 解析数字前缀：如 "80长弓" → 提取中文部分 "长弓" 用于搜索
+      const trimmed = keyword.trim();
+      const chineseMatch = trimmed.match(/[\u4e00-\u9fa5]+/);
+      const searchKey = chineseMatch ? chineseMatch[0] : trimmed;
+
+      const res: any = await searchCatalog(searchKey);
       const list = Array.isArray(res) ? res : (res?.list || []);
-      const options = list.slice(0, 20).map((c: any) => ({
+
+      // V2.13.1: 按名称相关度排序 — 名称包含搜索词的排最前
+      const sorted = [...list].sort((a: any, b: any) => {
+        const aName = (a.name || '').toLowerCase();
+        const bName = (b.name || '').toLowerCase();
+        const key = searchKey.toLowerCase();
+        const aExact = aName === key ? 0 : aName.includes(key) ? 1 : 2;
+        const bExact = bName === key ? 0 : bName.includes(key) ? 1 : 2;
+        return aExact - bExact;
+      });
+
+      const options = sorted.slice(0, 20).map((c: any) => ({
         value: c.name,
         label: `${formatEquipName(c)}${c.aliases ? ' (' + c.aliases.split(',')[0].trim() + ')' : ''}`,
       }));
@@ -638,12 +666,7 @@ export default function EquipmentPage() {
           <Dropdown
             menu={{
               items: [
-                {
-                  key: 'ocr',
-                  icon: <ScanOutlined />,
-                  label: 'OCR全自动识别',
-                  onClick: () => { setOcrModal(true); setOcrStep('upload'); setOcrItems([]); setOcrBatchId(null); },
-                },
+                // V2.13.1: OCR全自动识别已移除（被网格识别入库替代）— 相关 ocrModal/ocrStep 状态和 OCR Modal 待后续清理
                 {
                   key: 'csv-upload',
                   icon: <UploadOutlined />,
@@ -657,21 +680,17 @@ export default function EquipmentPage() {
                   key: 'csv-template',
                   icon: <DownloadOutlined />,
                   label: '下载CSV模板',
-                  onClick: async () => {
-                    try {
-                      const res = await request.get('/catalog/csv-template', { responseType: 'blob' });
-                      const blob = res as unknown as Blob;
-                      const url = window.URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = '库存导入模板.csv';
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      window.URL.revokeObjectURL(url);
-                    } catch {
-                      message.error('下载模板失败');
-                    }
+                  onClick: () => {
+                    const csvContent = '\uFEFF装备名,数量,位置\n44堕神法杖,20,Gpass地堡\n80长弓,10,公会仓库\n62挣脱鞋,5,蓝城仓库\n';
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '库存导入模板.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
                   },
                 },
               ] as MenuProps['items'],
@@ -761,7 +780,7 @@ export default function EquipmentPage() {
       <Modal title="Excel/CSV 导入预览" open={excelModal} onCancel={() => setExcelModal(false)} width={900}
         footer={<Space><Button onClick={() => setExcelModal(false)}>取消</Button><Button type="primary" loading={excelImporting} onClick={handleExcelImport}>确认导入 ({excelData.length} 条)</Button></Space>}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-          模板格式: 别称,等级,品质,装等,数量,位置（兼容旧格式: 装备名称,等级,品质,数量,位置）
+          推荐格式: 装备名,数量,位置（如: 44堕神法杖,20,Gpass地堡）。兼容旧格式: 别称,等级,品质,装等,数量,位置
         </Text>
         <Table size="small" dataSource={excelData} rowKey="key" pagination={{ pageSize: 10 }}
           columns={[
@@ -991,11 +1010,39 @@ export default function EquipmentPage() {
                 重新上传
               </Button>
             </Space>
+            {/* V2.13.1: 批量设置位置 */}
+            {gridSelectedKeys.length > 0 && (
+              <Space style={{ marginTop: 8 }}>
+                <Text type="secondary">已选 {gridSelectedKeys.length} 条</Text>
+                <Input
+                  size="small"
+                  placeholder="输入位置"
+                  value={gridBatchLocation}
+                  style={{ width: 150 }}
+                  onChange={(e) => setGridBatchLocation(e.target.value)}
+                />
+                <Button size="small" type="primary" disabled={!gridBatchLocation.trim()} onClick={() => {
+                  setGridCells(prev => prev.map(c => {
+                    if (gridSelectedKeys.includes(`${c.row}-${c.col}`)) {
+                      return { ...c, location: gridBatchLocation.trim() };
+                    }
+                    return c;
+                  }));
+                  message.success(`已批量设置 ${gridSelectedKeys.length} 条位置`);
+                  setGridSelectedKeys([]);
+                  setGridBatchLocation('');
+                }}>批量设置位置</Button>
+              </Space>
+            )}
             <Table
               size="small"
               rowKey={(r) => `${r.row}-${r.col}`}
               dataSource={gridOnlyUnfilled ? gridCells.filter(c => !c.aliasName?.trim()) : gridCells}
               pagination={{ pageSize: 15, showSizeChanger: false }}
+              rowSelection={{
+                selectedRowKeys: gridSelectedKeys,
+                onChange: (keys) => setGridSelectedKeys(keys as string[]),
+              }}
               columns={[
                 {
                   title: '#', width: 40,
@@ -1028,14 +1075,6 @@ export default function EquipmentPage() {
 
                       </div>
                     );
-                  },
-                },
-                {
-                  title: '等级/品质', width: 80,
-                  render: (_: any, row: any) => {
-                    const lv = row.detectedLevel ?? row.level ?? '-';
-                    const q = row.detectedQuality ?? row.quality ?? '-';
-                    return <Text style={{ fontSize: 12 }}>{lv}/{q}</Text>;
                   },
                 },
                 {
@@ -1103,19 +1142,32 @@ export default function EquipmentPage() {
       </Modal>
       <Drawer title={`变动日志 - ${logTarget?.catalog?.name || ''}`} open={logDrawer} onClose={() => setLogDrawer(false)} width={450}>
         {logsLoading ? <Text type="secondary">加载中...</Text> : (
-          <Timeline items={logs.map((log: any) => ({
-            color: log.delta > 0 ? 'green' : log.delta < 0 ? 'red' : 'gray',
-            children: (
-              <div key={log.id}>
-                <Text strong>{log.action}</Text>
-                <Text> {log.beforeQuantity} → {log.afterQuantity}</Text>
-                <Text type={log.delta > 0 ? 'success' : 'danger'}> ({log.delta > 0 ? '+' : ''}{log.delta})</Text>
-                <br />
-                <Text type="secondary" style={{ fontSize: 12 }}>{log.operatorName || '系统'} · {dayjs(log.createdAt).format('MM-DD HH:mm')}</Text>
-                {log.remark && <><br /><Text type="secondary" style={{ fontSize: 12 }}>{log.remark}</Text></>}
-              </div>
-            ),
-          }))} />
+          <Timeline items={logs.map((log: any) => {
+            const actionMap: Record<string, string> = {
+              manual_add: '手动录入',
+              manual_edit: '手动修改',
+              csv_import: '表格上传',
+              ocr_import: '网格识别添加',
+              resupply_deduct: '死亡补装扣减',
+              oc_deduct: 'OC碎扣减',
+              delete: '删除',
+            };
+            const actionLabel = actionMap[log.action] || log.action;
+            const isAdd = log.delta > 0;
+            return {
+              color: isAdd ? 'green' : log.delta < 0 ? 'red' : 'gray',
+              children: (
+                <div key={log.id}>
+                  <Text strong>{actionLabel}</Text>
+                  <Text type={isAdd ? 'success' : 'danger'}> {isAdd ? '+' : ''}{log.delta}</Text>
+                  <Text type="secondary"> （{log.beforeQuantity} → {log.afterQuantity}）</Text>
+                  <br />
+                  <Text type="secondary" style={{ fontSize: 12 }}>{log.operatorName || '系统'} · {dayjs(log.createdAt).format('YYYY-MM-DD HH:mm')}</Text>
+                  {log.remark && <><br /><Text type="secondary" style={{ fontSize: 12 }}>{log.remark}</Text></>}
+                </div>
+              ),
+            };
+          })} />
         )}
         {logs.length === 0 && !logsLoading && <Text type="secondary">暂无变动记录</Text>}
       </Drawer>
