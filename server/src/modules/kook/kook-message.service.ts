@@ -620,6 +620,39 @@ export class KookMessageService {
         matchReason = 'OCR未识别到死亡玩家姓名';
       }
 
+      // V2.12.4: 战报未匹配时，用固定10格切图+pHash匹配兜底
+      if (matchStatus !== 'matched' && catalogIds.length === 0) {
+        try {
+          this.logger.log(`[${guild.name}] 战报未匹配，尝试固定10格切图识别...`);
+          const leftPanelBuf = await this.cropLeftPanelFromKillDetail(imageUrl, detections);
+          if (leftPanelBuf) {
+            const slotResults = await this.imageMatchService.matchKillDetailSlots(leftPanelBuf);
+            if (slotResults.length > 0) {
+              equipmentItems = slotResults.map((item: any) => ({
+                catalogId: item.catalogId,
+                albionId: null,
+                equipmentName: item.catalogName,
+                slot: item.slotCategory || item.category,
+                level: item.level,
+                enchantLevel: 0,
+                itemQuality: item.quality,
+                quantity: item.quantity || 1,
+                source: 'phash_grid',
+                matchStatus: item.confidence >= 0.70 ? 'matched' : 'review',
+              }));
+              catalogIds = slotResults
+                .filter((item: any) => item.catalogId && item.confidence >= 0.55)
+                .map((item: any) => item.catalogId);
+              matchStatus = 'phash_grid';
+              matchReason = `固定切图识别 ${slotResults.length}/10 格`;
+              this.logger.log(`[${guild.name}] 固定切图识别成功: ${slotResults.length} 件装备`);
+            }
+          }
+        } catch (err: any) {
+          this.logger.warn(`[${guild.name}] 固定切图识别失败: ${err.message}`);
+        }
+      }
+
       // [测试期] 暂时关闭击杀详情内容级 MD5 去重，让同一张图也能重复生成补装
       const contentDedupHash = crypto
         .createHash('md5')
@@ -1243,6 +1276,80 @@ export class KookMessageService {
     }
 
     return { date, killTimeUtc, mapName, gameId, guildName, isKillDetail: true };
+  }
+
+  /**
+   * V2.12.4: 从击杀详情截图中裁切左面板装备区域
+   * 基于 OCR 坐标定位"击杀详情"锚点和"击杀"中轴线，推算左面板装备区
+   * 装备区 = 玩家信息下方 → "另存为模板"上方，左边界→"击杀"中轴线
+   */
+  private async cropLeftPanelFromKillDetail(
+    imageUrl: string,
+    detections: { text: string; x: number; y: number; width: number; height: number }[],
+  ): Promise<Buffer | null> {
+    let sharp: any;
+    try { sharp = require('sharp'); } catch { return null; }
+
+    // 下载图片
+    let buffer: Buffer;
+    if (imageUrl.startsWith('http')) {
+      const res = await fetch(imageUrl);
+      if (!res.ok) return null;
+      buffer = Buffer.from(await res.arrayBuffer());
+    } else {
+      const path = require('path');
+      const fs = require('fs/promises');
+      const absPath = path.join(process.cwd(), imageUrl.replace(/^\//, ''));
+      buffer = await fs.readFile(absPath);
+    }
+
+    const metadata = await sharp(buffer).metadata();
+    const imgW = metadata.width || 0;
+    const imgH = metadata.height || 0;
+    if (!imgW || !imgH) return null;
+
+    // 找"击杀详情"锚点
+    const anchorDet = (detections || []).find((d) => /击杀详情|擊殺詳細資訊|擊殺詳情/.test(d.text));
+    // 找"击杀"中轴线
+    const killMidDet = (detections || []).find(
+      (d) => d.text === '击杀' && d.width < imgW * 0.2 && anchorDet && d.y > anchorDet.y + anchorDet.height,
+    );
+
+    // 左面板边界推算
+    let left: number, top: number, width: number, height: number;
+
+    if (anchorDet && killMidDet) {
+      // 精确模式：有锚点+中轴线
+      left = 0;
+      top = Math.round(anchorDet.y + anchorDet.height * 3); // 玩家信息下方
+      width = Math.round(killMidDet.x - killMidDet.width * 0.3); // "击杀"文字左侧
+      height = imgH - top - Math.round(imgH * 0.08); // 底部留白
+    } else if (anchorDet) {
+      // 半精确模式：只有锚点，按45%宽度估算
+      left = 0;
+      top = Math.round(anchorDet.y + anchorDet.height * 3);
+      width = Math.round(imgW * 0.45);
+      height = imgH - top - Math.round(imgH * 0.08);
+    } else {
+      // 兜底模式：固定比例裁切左半部分中下区域
+      left = 0;
+      top = Math.round(imgH * 0.25);
+      width = Math.round(imgW * 0.45);
+      height = Math.round(imgH * 0.65);
+    }
+
+    // 边界安全
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (left + width > imgW) width = imgW - left;
+    if (top + height > imgH) height = imgH - top;
+    if (width < 50 || height < 50) return null;
+
+    this.logger.log(`[V2.12.4] 左面板裁切: (${left},${top}) ${width}x${height} from ${imgW}x${imgH}`);
+
+    return sharp(buffer)
+      .extract({ left, top, width, height })
+      .toBuffer();
   }
 
   /** 提取消息中所有图片URL（支持一条消息多张图） */
