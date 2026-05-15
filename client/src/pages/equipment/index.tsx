@@ -893,9 +893,9 @@ export default function EquipmentPage() {
                   {(() => {
                     const orp = getOuterRectPct(gridLayout);
                     const { cols, rows } = getLayoutDef(gridLayout);
-                    // 间隙比例：格子间间隙占整格步长的百分比（~12%，与后端 CELL_CONTENT_RATIO=0.88 一致）
-                    const GAP_RATIO = 0.12;
-                    // 格子内容占步长的百分比（与后端 gridParseByRegion 的 CELL_CONTENT_RATIO 保持一致）
+                    // 间隙比例：蓝框视觉参考（游戏内装备间隙很小约3-4%）
+                    const GAP_RATIO = 0.04;
+                    // 格子内容占步长的百分比（蓝框仅作视觉对齐参考，实际切图由后端 CELL_CONTENT_RATIO=0.88 控制）
                     const CELL_RATIO = 1 - GAP_RATIO;
                     // 每格步长（含间隙）
                     const stepXPct = 100 / cols;

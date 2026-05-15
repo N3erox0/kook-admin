@@ -842,13 +842,15 @@ export class ImageMatchService {
   /** 灰128背景色，用于 flatten 和遮罩，减少与截图背景的灰度差异 */
   private static readonly GRAY_BG = { r: 128, g: 128, b: 128 };
 
-  /** 旋转后宽矩形裁剪比例（相对于旋转后画布尺寸） */
-  private static readonly ROT_CROP_W = 0.85;  // 宽度85%：保留长条武器全长
-  private static readonly ROT_CROP_H = 0.55;  // 高度55%：去掉上下品质背景+角标残余
+  /** 不对称中心裁剪参数（偏上裁剪，避开底部数量区和顶部边框） */
+  private static readonly CROP_X = 0.15;   // 左侧去15%
+  private static readonly CROP_Y = 0.12;   // 顶部去12%
+  private static readonly CROP_W = 0.70;   // 保留宽度70%
+  private static readonly CROP_H = 0.72;   // 保留高度72%
 
   /**
-   * V2.13: 统一预处理管线 — 遮罩→旋转45°→宽矩形裁剪→均衡化
-   * 旋转45°将左低右高的斜放装备扶正，宽矩形裁剪保留武器全长
+   * V2.13.2: 统一预处理管线 — 遮罩→不对称中心裁剪→均衡化（不旋转）
+   * 旋转45°在实测中对识别精度提升不明显且引入额外形变，回退为纯裁剪方案
    * @param mode 'catalog'(参考库渲染图) | 'inventory'(库存截图) | 'resupply'(补装截图)
    * @returns 预处理后的 32×32 灰度 raw Buffer，可直接计算 pHash
    */
@@ -891,22 +893,14 @@ export class ImageMatchService {
       processed = await sharp(processed).composite(composites).toBuffer();
     }
 
-    // Step 3: 旋转45°（装备左低右高斜放，旋转后扶正，画布自动扩大√2倍）
-    const rotated = await sharp(processed)
-      .rotate(45, { background: ImageMatchService.GRAY_BG })
-      .toBuffer();
+    // Step 3: 不对称中心裁剪（偏上裁剪，去边框+角标残余）
+    const cropLeft = Math.round(w * ImageMatchService.CROP_X);
+    const cropTop = Math.round(h * ImageMatchService.CROP_Y);
+    const cropW = Math.round(w * ImageMatchService.CROP_W);
+    const cropH = Math.round(h * ImageMatchService.CROP_H);
 
-    // Step 4: 宽矩形中心裁剪（旋转后画布尺寸 ≈ 原边长×√2）
-    const rotMeta = await sharp(rotated).metadata();
-    const rw = rotMeta.width || 64;
-    const rh = rotMeta.height || 64;
-    const cropW = Math.round(rw * ImageMatchService.ROT_CROP_W);
-    const cropH = Math.round(rh * ImageMatchService.ROT_CROP_H);
-    const cropLeft = Math.round((rw - cropW) / 2);
-    const cropTop = Math.round((rh - cropH) / 2);
-
-    // Step 5: 裁剪 → 32×32 → 灰度 → normalize(直方图均衡化) → raw
-    return sharp(rotated)
+    // Step 4: 裁剪 → 32×32 → 灰度 → normalize(直方图均衡化) → raw
+    return sharp(processed)
       .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
       .resize(32, 32, { fit: 'fill' })
       .grayscale()
