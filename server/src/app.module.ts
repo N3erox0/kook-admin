@@ -30,6 +30,7 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { InventoryLogModule } from './modules/inventory-log/inventory-log.module';
+import { AlbionModule } from './modules/albion/albion.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { InventoryLogModule } from './modules/inventory-log/inventory-log.module
     LogModule,
     KookModule,
     OcrModule,
+    AlbionModule,
     SchedulerModule,
     DashboardModule,
     UploadModule,
