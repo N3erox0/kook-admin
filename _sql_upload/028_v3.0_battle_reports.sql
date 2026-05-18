@@ -21,6 +21,27 @@ CREATE TABLE IF NOT EXISTS `battle_reports` (
   KEY `IDX_battle_reports_guild_member` (`guild_id`, `member_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='战报记录（Albion Killboard）';
 
--- guilds 表新增 albion_guild_id 和 albion_server 字段（如果不存在）
-ALTER TABLE `guilds` ADD COLUMN IF NOT EXISTS `albion_guild_id` varchar(100) DEFAULT NULL COMMENT 'Albion 公会ID（用于拉取战报）';
-ALTER TABLE `guilds` ADD COLUMN IF NOT EXISTS `albion_server` varchar(20) DEFAULT 'sgp' COMMENT 'Albion 服务器（sgp/ams/west）';
+-- guilds 表新增 albion_guild_id 和 albion_server 字段（忽略已存在的错误）
+-- 如果字段已存在会报错但不影响，可忽略
+SET @dbname = DATABASE();
+SET @tablename = 'guilds';
+
+-- 检查并添加 albion_guild_id
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'albion_guild_id') > 0,
+  'SELECT 1',
+  "ALTER TABLE guilds ADD COLUMN `albion_guild_id` varchar(100) DEFAULT NULL COMMENT 'Albion 公会ID（用于拉取战报）'"
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- 检查并添加 albion_server
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'albion_server') > 0,
+  'SELECT 1',
+  "ALTER TABLE guilds ADD COLUMN `albion_server` varchar(20) DEFAULT 'sgp' COMMENT 'Albion 服务器（sgp/ams/west）'"
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
