@@ -50,6 +50,12 @@ export default function EquipmentPage() {
   const [batchLocationModal, setBatchLocationModal] = useState(false);
   const [batchLocation, setBatchLocation] = useState('');
 
+  // 行内录入（V3.0.2: 替代 Modal 弹窗）
+  const [inlineAdding, setInlineAdding] = useState(false);
+  const [inlineQuantity, setInlineQuantity] = useState<number>(1);
+  const [inlineLocation, setInlineLocation] = useState<string>('公会仓库');
+  const [inlineSaving, setInlineSaving] = useState(false);
+
   // 行内数量修改（防抖）
   const handleInlineQuantityChange = async (id: number, val: number) => {
     try {
@@ -656,7 +662,7 @@ export default function EquipmentPage() {
         <Title level={4} style={{ margin: 0 }}>装备库存</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setInlineAdding(true)}>录入库存</Button>
           <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
             <Button icon={<UploadOutlined />}>CSV导入</Button>
           </Upload>
@@ -703,6 +709,37 @@ export default function EquipmentPage() {
       </Card>
 
       <Card>
+        {/* V3.0.2: 行内录入（替代 Modal） */}
+        {inlineAdding && (
+          <div style={{ padding: '12px 0', marginBottom: 12, borderBottom: '1px solid #f0f0f0', background: '#fafffe' }}>
+            <Space wrap>
+              <AutoComplete
+                style={{ width: 280 }}
+                options={catalogOptions}
+                onSearch={handleCatalogSearch}
+                onSelect={handleCatalogSelect}
+                placeholder="搜索装备名称"
+                allowClear
+              />
+              <InputNumber min={0} value={inlineQuantity} onChange={v => setInlineQuantity(v || 1)} placeholder="数量" style={{ width: 100 }} />
+              <Input value={inlineLocation} onChange={e => setInlineLocation(e.target.value)} placeholder="位置" style={{ width: 140 }} />
+              <Button type="primary" loading={inlineSaving} onClick={async () => {
+                if (!selectedCatalogId) { message.error('请从下拉列表选择装备'); return; }
+                setInlineSaving(true);
+                try {
+                  await upsertInventory(guildId, { catalogId: selectedCatalogId, quantity: inlineQuantity, location: inlineLocation });
+                  message.success('录入成功');
+                  setSelectedCatalogId(null);
+                  setInlineQuantity(1);
+                  setInlineLocation('公会仓库');
+                  setCatalogOptions([]);
+                  fetchList();
+                } catch {} finally { setInlineSaving(false); }
+              }}>保存</Button>
+              <Button onClick={() => { setInlineAdding(false); setSelectedCatalogId(null); setCatalogOptions([]); }}>取消</Button>
+            </Space>
+          </div>
+        )}
         {selectedRowKeys.length > 0 && (
           <Space style={{ marginBottom: 12 }}>
             <Text>已选 {selectedRowKeys.length} 条</Text>
