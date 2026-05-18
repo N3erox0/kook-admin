@@ -224,30 +224,15 @@ export default function GuildSettingsPage() {
       <Card title="Albion 公会绑定" style={{ marginBottom: 16 }}
         extra={<Button size="small" type="primary" onClick={() => setAlbionSearchModal(true)}>快速绑定</Button>}
       >
-        <Form layout="vertical" initialValues={{ albionGuildId: guild?.albionGuildId || '', albionServer: guild?.albionServer || 'sgp', albionGuildName: guild?.albionGuildName || '' }}
-          onFinish={async (values: any) => {
-            setSaving(true);
-            try {
-              await updateGuild(guildId, values);
-              message.success('Albion 公会信息已保存');
-              fetchGuild();
-            } catch { message.error('保存失败'); }
-            finally { setSaving(false); }
-          }}
-        >
-          <Form.Item name="albionGuildId" label="Albion 公会 ID" tooltip="点击右上角快速绑定可按公会名搜索">
-            <Input placeholder="点击右上角快速绑定按钮搜索" />
-          </Form.Item>
-          <Form.Item name="albionServer" label="Albion 服务器">
-            <Select options={[{ value: 'sgp', label: '亚服 (SGP)' }, { value: 'ams', label: '欧服 (AMS)' }, { value: 'west', label: '美服 (West)' }]} />
-          </Form.Item>
-          <Form.Item name="albionGuildName" label="Albion 公会名称">
-            <Input placeholder="如 PSC" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>保存 Albion 配置</Button>
-          </Form.Item>
-        </Form>
+        {guild?.albionGuildId ? (
+          <Space direction="vertical">
+            <Text><Text strong>已绑定公会：</Text>{guild.albionGuildName || guild.albionGuildId}</Text>
+            <Text><Text strong>服务器：</Text>{guild.albionServer === 'sgp' ? '亚服' : guild.albionServer === 'ams' ? '欧服' : '美服'}</Text>
+            <Text type="secondary">公会ID：{guild.albionGuildId}</Text>
+          </Space>
+        ) : (
+          <Text type="secondary">未绑定 Albion 公会，点击右上角"快速绑定"按名称搜索绑定</Text>
+        )}
       </Card>
 
       {/* Albion 快速绑定弹窗 */}

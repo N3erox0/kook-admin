@@ -160,7 +160,18 @@ export class KookController {
   @Get('roles')
   @UseGuards(JwtAuthGuard)
   async getRoles(@Query('guild_id') guildId?: string) {
-    return this.kookService.getGuildRoleList(guildId);
+    try {
+      if (guildId) {
+        const guild = await this.syncService.findGuildByKookId(guildId);
+        if (guild?.kookBotToken) {
+          return this.kookService.getGuildRoleList(guildId, guild.kookBotToken);
+        }
+      }
+      return this.kookService.getGuildRoleList(guildId);
+    } catch (err: any) {
+      this.logger.warn(`获取角色列表失败: ${err.message}`);
+      return [];
+    }
   }
 
   /** 给消息添加表情回应（仅管理员） */
