@@ -636,19 +636,19 @@ export class KookMessageService {
         }
       }
 
-      // [测试期] 暂时关闭击杀详情内容级 MD5 去重，让同一张图也能重复生成补装
+      // V3.0.2: 基于 KOOK 消息ID 去重（同一条消息不重复生成补装）
       const contentDedupHash = crypto
         .createHash('md5')
-        .update(`${imageUrl}|${dateStr}|${killDetail.gameId || kookUserId}|${Date.now()}`)
+        .update(`${imageUrl}|${dateStr}|${killDetail.gameId || kookUserId}|${kookMessageId || ''}`)
         .digest('hex');
-      // const existingContent = await this.resupplyService.findByDedupHash(
-      //   guild.id,
-      //   contentDedupHash,
-      // );
-      // if (existingContent) {
-      //   this.logger.log(`[${guild.name}] 内容级去重命中，跳过`);
-      //   return;
-      // }
+      const existingContent = await this.resupplyService.findByDedupHash(
+        guild.id,
+        contentDedupHash,
+      );
+      if (existingContent) {
+        this.logger.log(`[${guild.name}] 击杀详情去重命中(msgId=${kookMessageId})，跳过`);
+        return;
+      }
 
       const metaReason = `击杀详情 | OCR时间:${killDetail.killTimeUtc || killDetail.date || '未知'} | 地图:${killDetail.mapName || '未知'} | 游戏ID:${killDetail.gameId || '未知'} | 公会:${killDetail.guildName || '未知'} | 官网战报:${matchStatus}${matchReason ? `(${matchReason})` : ''}`;
       const isJsonContent =
@@ -817,21 +817,21 @@ export class KookMessageService {
         `[${guild.name}] OC碎匹配结果: ${matchedIds.length}件匹配[${matchedNames.join(',')}], ${unmatchedSegments.length}件未匹配[${unmatchedSegments.join(',')}]`,
       );
 
-      // [测试期] 暂时关闭 OC碎文字消息 MD5 去重
+      // V3.0.2: 基于 KOOK 消息ID 去重（同一条消息不重复生成补装）
       const dedupHash = require('crypto')
         .createHash('md5')
         .update(
-          `${textContent}|${new Date().toISOString().slice(0, 10)}|${kookUserId}|${Date.now()}`,
+          `${textContent}|${new Date().toISOString().slice(0, 10)}|${kookUserId}|${kookMessageId || ''}`,
         )
         .digest('hex');
-      // const existingDedup = await this.resupplyService.findByDedupHash(
-      //   guild.id,
-      //   dedupHash,
-      // );
-      // if (existingDedup) {
-      //   this.logger.log(`[${guild.name}] OC碎去重命中，跳过: ${kookNickname}`);
-      //   return;
-      // }
+      const existingDedup = await this.resupplyService.findByDedupHash(
+        guild.id,
+        dedupHash,
+      );
+      if (existingDedup) {
+        this.logger.log(`[${guild.name}] OC碎去重命中，跳过: ${kookNickname}`);
+        return;
+      }
 
       // 有未匹配词段 → 整条进待识别工作区（不创建补装申请）
       if (unmatchedSegments.length > 0) {
