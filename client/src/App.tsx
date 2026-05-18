@@ -23,6 +23,7 @@ import AlertPage from '@/pages/alert';
 import LogPage from '@/pages/log';
 import InviteCodePage from '@/pages/invite-codes';
 import GuildSettingsPage from '@/pages/guild/GuildSettings';
+import BattleReportPage from '@/pages/battleReport';
 
 function GuildRoute({ children }: { children: React.ReactNode }) {
   const { currentGuildId } = useGuildStore();
@@ -81,6 +82,7 @@ export default function App() {
               <Route path="catalog" element={<CatalogPage />} />
               <Route path="equipment" element={<EquipmentPage />} />
               <Route path="resupply" element={<ResupplyPage />} />
+              <Route path="battle-reports" element={<BattleReportPage />} />
               {/* F-107: 旧独立路由重定向到补装管理的待识别Tab */}
               <Route path="kook-pending" element={<Navigate to="/admin/resupply?tab=pending" replace />} />
               <Route path="alerts" element={<AlertPage />} />

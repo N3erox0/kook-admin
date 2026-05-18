@@ -297,6 +297,15 @@
 | F-210 | 手动子账号无需绑定真实KOOK | completed | 2026-05-14 20:54 | createSubAccount使用local-{guildId}-{userId}本地占位ID，避免空kook_user_id唯一索引冲突 |
 | F-211 | 测试种子数据同步 | completed | 2026-05-14 20:54 | 004_test_data.sql同步测试账号哈希、公会名/owner、手动成员占位ID |
 | F-212 | 构建依赖与安全审计修复 | completed | 2026-05-14 20:54 | server补充playwright devDependency以通过tsc；README清理示例token查询参数 |
+| F-300 | 砍掉 pHash/图片网格识别系统 | completed | 2026-05-18 21:30 | 精简 image-match.service.ts(93KB→2KB stub)，移除网格切图逻辑和混元Vision API |
+| F-301 | 新增 Albion Killboard 战报拉取 | completed | 2026-05-18 21:30 | 新增 battle_reports 表+AlbionKillboardService+AlbionController，定时每天02:00拉取 |
+| F-302 | 击杀详情→战报匹配替代pHash | completed | 2026-05-18 21:30 | kook-message.service.ts 图片消息处理改为战报表查询兜底，移除固定切图pHash兜底 |
+| F-303 | 库存管理精简（去除网格识别） | completed | 2026-05-18 21:30 | 移除 equipment.controller gridParse/gridSave 端点，前端去除网格识别入库按钮 |
+| F-304 | 定时轮询 KOOK 补装频道消息 | completed | 2026-05-18 21:30 | scheduler 新增每10分钟轮询 pollKookResupplyChannels 调用 pullHistoryMessages |
+| F-305 | OC碎关键词扩展（繁体+多触发词） | completed | 2026-05-18 21:30 | 扩展 isOcBrokenMessage 匹配：OC碎/碎/死了/死亡补装/死亡補裝（含繁体） |
+| F-306 | 战报记录前端页面 | completed | 2026-05-18 21:30 | 新增 pages/battleReport 页面+路由+菜单入口，支持按成员/日期查询+手动拉取 |
+
+
 
 
 

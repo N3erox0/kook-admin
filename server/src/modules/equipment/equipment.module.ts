@@ -7,14 +7,12 @@ import { EquipmentCatalog } from '../equipment-catalog/entities/equipment-catalo
 import { GuildMember } from '../member/entities/guild-member.entity';
 import { User } from '../user/entities/user.entity';
 import { InventoryLogModule } from '../inventory-log/inventory-log.module';
-import { OcrModule } from '../ocr/ocr.module';
 import { EquipmentCatalogModule } from '../equipment-catalog/catalog.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([GuildInventory, EquipmentCatalog, GuildMember, User]),
     InventoryLogModule,
-    forwardRef(() => OcrModule),
     forwardRef(() => EquipmentCatalogModule),
   ],
   controllers: [EquipmentController],

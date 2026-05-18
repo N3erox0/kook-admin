@@ -9,6 +9,7 @@ import { KookModule } from '../kook/kook.module';
 import { AlertModule } from '../alert/alert.module';
 import { ResupplyModule } from '../resupply/resupply.module';
 import { MemberModule } from '../member/member.module';
+import { AlbionModule } from '../albion/albion.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { MemberModule } from '../member/member.module';
     AlertModule,
     ResupplyModule,
     MemberModule,
+    AlbionModule,
   ],
 
   providers: [SchedulerService],

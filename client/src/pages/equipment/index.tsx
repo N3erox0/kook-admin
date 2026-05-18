@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin, Dropdown, MenuProps, Radio } from 'antd';
 import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined, DownloadOutlined, AppstoreOutlined, MoreOutlined } from '@ant-design/icons';
-import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs, gridParseInventory, gridSaveInventory } from '@/api/equipment';
+import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
 import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
 import { uploadFile } from '@/api/upload';
@@ -446,7 +446,7 @@ export default function EquipmentPage() {
       // 裁剪后 outerRect 变为整张图（left=0, top=0）
       const outerRect = { left: 0, top: 0, width: cropW, height: cropH };
 
-      const parseRes: any = await gridParseInventory(guildId, croppedUrl, gridLayout, outerRect);
+      const parseRes: any = { cells: [] }; // V3.0: 网格识别已移除
       const newCells = (parseRes?.cells || []).map((c: any) => ({
         ...c,
         row: c.row + gridCells.length,
@@ -557,7 +557,7 @@ export default function EquipmentPage() {
 
     setGridSaving(true);
     try {
-      const res: any = await gridSaveInventory(guildId, items);
+      const res: any = { success: 0, failed: 0, failures: [] }; // V3.0: 网格识别已移除
       if (res?.success > 0) {
         message.success(`入库成功 ${res.success} 条${res.failed > 0 ? `，失败 ${res.failed} 条` : ''}`);
       }
@@ -656,12 +656,6 @@ export default function EquipmentPage() {
         <Title level={4} style={{ margin: 0 }}>装备库存</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
-          <Button type="primary" icon={<AppstoreOutlined />} onClick={() => {
-            setGridModal(true);
-            setGridCells([]);
-            setGridImageUrl('');
-            setGridLayout('5x7');
-          }}>网格识别入库</Button>
           <Button icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
           <Dropdown
             menu={{

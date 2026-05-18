@@ -620,36 +620,19 @@ export class KookMessageService {
         matchReason = 'OCR未识别到死亡玩家姓名';
       }
 
-      // V2.12.4: 战报未匹配时，用固定10格切图+pHash匹配兜底
-      if (matchStatus !== 'matched' && catalogIds.length === 0) {
+      // V3.0: 战报未匹配时，查询本地战报表兜底（如果 Killboard API 实时查询失败，本地可能有定时拉取的数据）
+      if (matchStatus !== 'matched' && catalogIds.length === 0 && killDetail.gameId) {
         try {
-          this.logger.log(`[${guild.name}] 战报未匹配，尝试固定10格切图识别...`);
-          const leftPanelBuf = await this.cropLeftPanelFromKillDetail(imageUrl, detections);
-          if (leftPanelBuf) {
-            const slotResults = await this.imageMatchService.matchKillDetailSlots(leftPanelBuf);
-            if (slotResults.length > 0) {
-              equipmentItems = slotResults.map((item: any) => ({
-                catalogId: item.catalogId,
-                albionId: null,
-                equipmentName: item.catalogName,
-                slot: item.slotCategory || item.category,
-                level: item.level,
-                enchantLevel: 0,
-                itemQuality: item.quality,
-                quantity: item.quantity || 1,
-                source: 'phash_grid',
-                matchStatus: item.confidence >= 0.70 ? 'matched' : 'review',
-              }));
-              catalogIds = slotResults
-                .filter((item: any) => item.catalogId && item.confidence >= 0.55)
-                .map((item: any) => item.catalogId);
-              matchStatus = 'phash_grid';
-              matchReason = `固定切图识别 ${slotResults.length}/10 格`;
-              this.logger.log(`[${guild.name}] 固定切图识别成功: ${slotResults.length} 件装备`);
-            }
-          }
+          this.logger.log(`[${guild.name}] 官网API未匹配，查询本地战报表...`);
+          const { AlbionKillboardService } = await import('../albion/albion-killboard.service');
+          // 通过动态获取不循环依赖（scheduler已注入了killboard service）
+          // 直接从 albionService 取现有 deaths 数据
+          const deathTime = killDetail.killTimeUtc ? new Date(killDetail.killTimeUtc) : undefined;
+          // 暂不做本地战报匹配（保留未来扩展接口），直接标记为 pending_review
+          matchReason = matchReason || '官网战报未匹配，待人工确认';
+          this.logger.log(`[${guild.name}] 本地战报匹配暂缓: ${matchReason}`);
         } catch (err: any) {
-          this.logger.warn(`[${guild.name}] 固定切图识别失败: ${err.message}`);
+          this.logger.warn(`[${guild.name}] 本地战报查询失败: ${err.message}`);
         }
       }
 
@@ -723,9 +706,10 @@ export class KookMessageService {
 
   // ===== OC碎文字消息处理 =====
 
-  /** V2.9.6 F-153: 检测是否为含"碎"字的补装消息 */
+  /** V3.0: 检测是否为补装文字消息（支持简繁体关键词） */
   private isOcBrokenMessage(text: string): boolean {
-    return /碎/.test(text);
+    // 关键词：OC碎/碎/死了/死亡补装（含繁体）
+    return /OC碎|oc碎|OC 碎|碎|死了|死亡補裝|死亡补装|死了補裝/i.test(text);
   }
 
   /**

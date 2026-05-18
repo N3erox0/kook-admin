@@ -3,8 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
-  Inject,
-  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -19,9 +17,7 @@ import {
   InventoryLogService,
   InventoryAction,
 } from '../inventory-log/inventory-log.service';
-import { ImageMatchService } from '../ocr/image-match.service';
 import { CatalogService } from '../equipment-catalog/catalog.service';
-import { OcrService } from '../ocr/ocr.service';
 
 @Injectable()
 export class EquipmentService {
@@ -34,10 +30,7 @@ export class EquipmentService {
     private catalogRepo: Repository<EquipmentCatalog>,
     private dataSource: DataSource,
     private inventoryLogService: InventoryLogService,
-    @Inject(forwardRef(() => ImageMatchService))
-    private imageMatchService: ImageMatchService,
     private catalogService: CatalogService,
-    @Inject(forwardRef(() => OcrService)) private ocrService: OcrService,
   ) {}
 
   async findAll(guildId: number, query: QueryInventoryDto) {
@@ -345,140 +338,5 @@ export class EquipmentService {
     return { totalQuantity, byCategory: result };
   }
 
-  // ===== V2.12 网格识别入库（固定切图） =====
 
-  /**
-   * V2.12: 网格识别 — 前端传入 outerRect + anchorCell + layout
-   */
-  async gridParse(
-    imageUrl: string,
-    layout?: string,
-    outerRect?: { left: number; top: number; width: number; height: number },
-    anchorCell?: { width: number; height: number },
-  ): Promise<any> {
-    let buffer: Buffer;
-    if (imageUrl.startsWith('http')) {
-      const res = await fetch(imageUrl);
-      if (!res.ok)
-        throw new BadRequestException(`图片下载失败: HTTP ${res.status}`);
-      buffer = Buffer.from(await res.arrayBuffer());
-    } else {
-      const path = require('path');
-      const fs = require('fs/promises');
-      const absPath = path.join(process.cwd(), imageUrl.replace(/^\//, ''));
-      buffer = await fs.readFile(absPath);
-    }
-
-    const LAYOUT_MAP: Record<string, { cols: number; rows: number }> = {
-      'guild_island_chest_5x7': { cols: 5, rows: 7 },
-      'army_wood_chest_5x7': { cols: 5, rows: 7 },
-      'backpack_large_4x5': { cols: 4, rows: 5 },
-      'backpack_medium_5x7': { cols: 5, rows: 7 },
-      'backpack_small_6x8': { cols: 6, rows: 8 },
-      'egg_chest_5x2': { cols: 5, rows: 2 },
-      '5x7': { cols: 5, rows: 7 },
-      '4x5': { cols: 4, rows: 5 },
-      '6x8': { cols: 6, rows: 8 },
-      '5x2': { cols: 5, rows: 2 },
-    };
-    const gridDef = LAYOUT_MAP[layout || '5x7'] || { cols: 5, rows: 7 };
-    const { cols, rows } = gridDef;
-
-    if (!outerRect || outerRect.width < 20 || outerRect.height < 20) {
-      throw new BadRequestException('请先对齐红色网格框后再提交');
-    }
-
-    this.logger.log(
-      `[V2.12 gridParse] layout=${layout}, cols=${cols}, rows=${rows}, outerRect=(${outerRect.left},${outerRect.top},${outerRect.width}x${outerRect.height}), anchorCell=${anchorCell ? `${anchorCell.width}x${anchorCell.height}` : 'none'}`,
-    );
-
-    return this.imageMatchService.gridParseByRegion(
-      buffer,
-      cols,
-      rows,
-      outerRect,
-      anchorCell,
-    );
-  }
-
-  /**
-   * 保存网格识别结果：逐条用别名+等级+品质匹配 catalogId 后叠加入库
-   * @returns 成功数、失败数、失败明细
-   */
-  async gridSave(
-    guildId: number,
-    items: Array<{
-      aliasName: string;
-      level: number;
-      quality: number;
-      quantity: number;
-      location?: string;
-    }>,
-    operatorId?: number,
-    operatorName?: string,
-  ): Promise<{
-    success: number;
-    failed: number;
-    failures: Array<{ index: number; reason: string }>;
-  }> {
-    let success = 0,
-      failed = 0;
-    const failures: Array<{ index: number; reason: string }> = [];
-
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (!it.aliasName || !it.aliasName.trim()) {
-        failed++;
-        failures.push({ index: i, reason: '装备别名为空' });
-        continue;
-      }
-      if (!it.quantity || it.quantity <= 0) {
-        failed++;
-        failures.push({ index: i, reason: '数量无效' });
-        continue;
-      }
-
-      try {
-        // 1. 用别名模糊匹配参考库（0.7 阈值）
-        const matches = await this.catalogService.findByNameFuzzy(
-          it.aliasName,
-          0.7,
-        );
-        // 2. 过滤 level + quality 相符的
-        const valid = matches.filter(
-          (m) => m.item.level === it.level && m.item.quality === it.quality,
-        );
-        if (valid.length === 0) {
-          failed++;
-          failures.push({
-            index: i,
-            reason: `未找到匹配装备: ${it.aliasName} T${it.level}Q${it.quality}`,
-          });
-          continue;
-        }
-        const best = valid[0];
-        // 3. 叠加入库
-        await this.upsert(
-          guildId,
-          {
-            catalogId: best.item.id,
-            quantity: it.quantity,
-            location: it.location || '公会仓库',
-          },
-          operatorId,
-          operatorName,
-          InventoryAction.OCR_IMPORT, // 用 ocr_import 类型（方案D也属于识别类）
-        );
-        success++;
-      } catch (err: any) {
-        failed++;
-        failures.push({ index: i, reason: err.message || '未知错误' });
-      }
-    }
-
-    this.logger.log(
-      `[V2.9.2 gridSave] guild=${guildId} 成功=${success} 失败=${failed}`,
-    );
-    return { success, failed, failures };
-  }
 }

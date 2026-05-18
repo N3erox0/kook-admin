@@ -6,9 +6,11 @@ import { Guild } from '../guild/entities/guild.entity';
 import { KookSyncService } from '../kook/kook-sync.service';
 import { KookNotifyService } from '../kook/kook-notify.service';
 import { KookService } from '../kook/kook.service';
+import { KookMessageService } from '../kook/kook-message.service';
 import { AlertService } from '../alert/alert.service';
 import { ResupplyService } from '../resupply/resupply.service';
 import { MemberService } from '../member/member.service';
+import { AlbionKillboardService } from '../albion/albion-killboard.service';
 import { ScheduledTask } from './entities/scheduled-task.entity';
 
 import { InventoryLog } from '../inventory-log/entities/inventory-log.entity';
@@ -30,9 +32,11 @@ export class SchedulerService {
     private kookSyncService: KookSyncService,
     private kookNotifyService: KookNotifyService,
     private kookService: KookService,
+    private kookMessageService: KookMessageService,
     private alertService: AlertService,
     private resupplyService: ResupplyService,
     private memberService: MemberService,
+    private albionKillboardService: AlbionKillboardService,
   ) {}
 
   /** 每天 07:00 — Albion 官网公会成员同步 */
@@ -262,6 +266,56 @@ export class SchedulerService {
         `失败: ${err}`,
       );
     }
+  }
+
+  /** V3.0: 每天 02:00 — 拉取 Albion Killboard 战报（所有公会死亡记录） */
+  @Cron('0 0 2 * * *')
+  async pullAllGuildBattleReports() {
+    this.logger.log('定时任务：开始拉取所有公会 Albion 战报（02:00）');
+    const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });
+    const startTime = Date.now();
+    let totalNew = 0;
+
+    for (const guild of guilds) {
+      try {
+        const result = await this.albionKillboardService.pullGuildDeaths(guild.id);
+        totalNew += result.newRecords;
+      } catch (err) {
+        this.logger.error(`[${guild.name}] 战报拉取失败: ${err}`);
+      }
+    }
+
+    await this.recordTask(
+      'battle_report_pull',
+      Date.now() - startTime,
+      `已拉取 ${totalNew} 条新战报`,
+    );
+  }
+
+  /** V3.0: 每 10 分钟 — 轮询 KOOK 补装频道消息 */
+  @Cron('0 */10 * * * *')
+  async pollKookResupplyChannels() {
+    this.logger.log('定时任务：轮询 KOOK 补装频道消息');
+    const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });
+    const startTime = Date.now();
+    let totalProcessed = 0;
+
+    for (const guild of guilds) {
+      if (!guild.kookBotToken || !guild.kookListenChannelIds || guild.kookListenChannelIds.length === 0) continue;
+
+      try {
+        const result = await this.kookMessageService.pullHistoryMessages(guild.id);
+        totalProcessed += result.processed || 0;
+      } catch (err) {
+        this.logger.error(`[${guild.name}] 频道轮询失败: ${err}`);
+      }
+    }
+
+    await this.recordTask(
+      'kook_channel_poll',
+      Date.now() - startTime,
+      `已处理 ${totalProcessed} 条消息`,
+    );
   }
 
   private async recordTask(name: string, durationMs: number, result: string) {

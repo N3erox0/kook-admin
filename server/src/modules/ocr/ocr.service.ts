@@ -58,26 +58,23 @@ export class OcrService {
     try {
       let enriched: ParsedEquipment[] = [];
 
-      // 优先尝试图片相似度匹配
+      // 优先尝试图片相似度匹配（V3.0: 已废弃，matchFromScreenshot 返回空数组）
       try {
-        const imageBuffer = await this.fetchImageBuffer(batch.imageUrl);
-        if (imageBuffer) {
-          const matches = await this.imageMatchService.matchFromScreenshot(imageBuffer, { strict: true });
-          if (matches.length > 0) {
-            enriched = matches.map(m => ({
-              name: m.catalogName,
-              catalogId: m.catalogId,
-              catalogName: m.catalogName,
-              level: m.level,
-              quality: m.quality,
-              category: m.category,
-              gearScore: m.gearScore,
-              quantity: m.quantity || 1,
-              confidence: m.confidence,
-              matchScore: m.confidence,
-            }));
-            this.logger.log(`图片相似度匹配成功: ${matches.length} 件装备`);
-          }
+        const matches = await this.imageMatchService.matchFromScreenshot(batch.imageUrl, { strict: true });
+        if (matches.length > 0) {
+          enriched = matches.map(m => ({
+            name: m.catalogName,
+            catalogId: m.catalogId,
+            catalogName: m.catalogName,
+            level: m.level,
+            quality: m.quality,
+            category: m.category,
+            gearScore: m.gearScore,
+            quantity: m.quantity || 1,
+            confidence: m.confidence,
+            matchScore: m.confidence,
+          }));
+          this.logger.log(`图片相似度匹配成功: ${matches.length} 件装备`);
         }
       } catch (imgErr: any) {
         this.logger.warn(`图片相似度匹配失败，fallback 文字 OCR: ${imgErr.message}`);

@@ -1,8 +1,47 @@
 # KOOK 公会管理系统 — 版本更新记录
 
-> 截止版本：V2.12.3（2026-05-14）
+> 截止版本：V3.0（2026-05-18）
 > 仓库：https://github.com/N3erox0/kook-admin
-> 最新 commit：`6eebe3b`
+> 最新 commit：待推送
+
+---
+
+# V3.0 — 系统精简重构（2026-05-18）
+
+## 核心变更：大幅降低系统使用难度和复杂度
+
+### 砍掉的功能
+- **pHash 图片网格识别系统**：`image-match.service.ts` 从 93KB 精简为 2KB 空实现 stub
+- **混元 Vision API 调用**：不再使用 AI 视觉识别
+- **网格切图入库**：前端移除"网格识别入库"按钮和相关 UI
+- **装备库存 OCR 复杂流程**：去掉网格类型选择（5×7/4×5/6×8等）、图片拖拽缩放对齐等
+
+### 新增功能
+- **Albion Killboard 战报拉取**（`AlbionKillboardService`）
+  - 每天 02:00 自动拉取公会所有成员死亡记录
+  - 支持手动一键拉取
+  - 存储到 `battle_reports` 表：成员名/时间/地图/击杀者/装备列表/声望
+  - 通过 `albionEventId` 唯一索引去重
+- **战报记录前端页面**
+  - 按成员名/日期范围查询
+  - 展示装备列表、匹配状态
+- **定时轮询 KOOK 频道消息**
+  - 每 10 分钟自动拉取监听频道新消息
+  - 替代 Webhook 实时推送的被动模式，降低配置复杂度
+- **OC碎关键词扩展**：新增繁体支持（死亡補裝/死了/OC碎等）
+
+### 重构的流程
+- **击杀详情图处理**：OCR识别"击杀详情"→提取玩家名+时间+地图→查询战报表获取装备（替代 pHash 图标识别）
+- **库存管理**：仅保留表格(CSV)导入 + 手动录入增减，每笔操作记录变动日志
+
+### 数据库变更
+- 新增 `battle_reports` 表（迁移文件：`028_v3.0_battle_reports.sql`）
+- `guilds` 表新增 `albion_guild_id`、`albion_server` 字段（IF NOT EXISTS）
+
+### 文件统计
+- 修改：~15 文件
+- 新增：5 文件（entity/service/controller/api/page）
+- 净减：~90KB（image-match.service.ts 大幅缩减）
 
 ---
 
