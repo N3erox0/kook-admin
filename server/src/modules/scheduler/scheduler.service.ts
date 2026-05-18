@@ -292,8 +292,8 @@ export class SchedulerService {
     );
   }
 
-  /** V3.0: 每 10 分钟 — 轮询 KOOK 补装频道消息 */
-  @Cron('0 */10 * * * *')
+  /** V3.0.2: 每天4次 — 轮询 KOOK 补装频道消息（08:00/12:00/18:00/23:00） */
+  @Cron('0 0 8,12,18,23 * * *')
   async pollKookResupplyChannels() {
     this.logger.log('定时任务：轮询 KOOK 补装频道消息');
     const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });

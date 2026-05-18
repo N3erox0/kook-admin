@@ -656,43 +656,22 @@ export default function EquipmentPage() {
         <Title level={4} style={{ margin: 0 }}>装备库存</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
-          <Button icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
-          <Dropdown
-            menu={{
-              items: [
-                // V2.13.1: OCR全自动识别已移除（被网格识别入库替代）— 相关 ocrModal/ocrStep 状态和 OCR Modal 待后续清理
-                {
-                  key: 'csv-upload',
-                  icon: <UploadOutlined />,
-                  label: (
-                    <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
-                      <span>Excel/CSV导入</span>
-                    </Upload>
-                  ),
-                },
-                {
-                  key: 'csv-template',
-                  icon: <DownloadOutlined />,
-                  label: '下载CSV模板',
-                  onClick: () => {
-                    const csvContent = '\uFEFF装备名,数量,位置\n44堕神法杖,20,Gpass地堡\n80长弓,10,公会仓库\n62挣脱鞋,5,蓝城仓库\n';
-                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = '库存导入模板.csv';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                  },
-                },
-              ] as MenuProps['items'],
-            }}
-            trigger={['click']}
-          >
-            <Button icon={<MoreOutlined />}>更多导入</Button>
-          </Dropdown>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setUpsertModal(true); setSelectedCatalogId(null); upsertForm.resetFields(); }}>录入库存</Button>
+          <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
+            <Button icon={<UploadOutlined />}>CSV导入</Button>
+          </Upload>
+          <Button icon={<DownloadOutlined />} onClick={() => {
+            const csvContent = '\uFEFF装备名,数量,位置\n44堕神法杖,20,Gpass地堡\n80长弓,10,公会仓库\n62挣脱鞋,5,蓝城仓库\n';
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '库存导入模板.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+          }}>下载模板</Button>
         </Space>
       </div>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Typography, Form, Button, Checkbox, Space, Select, message, Spin, List, Tag, Modal, Input } from 'antd';
+import { Card, Typography, Form, Button, Checkbox, Space, Select, message, Spin, List, Tag, Modal, Input, Table } from 'antd';
 import { SaveOutlined, ReloadOutlined, WifiOutlined, UserAddOutlined, CopyOutlined } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
 import { getGuild, updateGuild, createSubAccount } from '@/api/guild';
@@ -19,6 +19,12 @@ export default function GuildSettingsPage() {
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [form] = Form.useForm();
+
+  // Albion 快速绑定
+  const [albionSearchModal, setAlbionSearchModal] = useState(false);
+  const [albionSearchServer, setAlbionSearchServer] = useState<string>('sgp');
+  const [albionSearching, setAlbionSearching] = useState(false);
+  const [albionSearchResults, setAlbionSearchResults] = useState<any[]>([]);
 
   // F-102C: 一键创建子账号
   const [subAccountModal, setSubAccountModal] = useState(false);
@@ -215,7 +221,9 @@ export default function GuildSettingsPage() {
       </Card>
 
       {/* Albion 公会绑定 */}
-      <Card title="Albion 公会绑定" style={{ marginBottom: 16 }}>
+      <Card title="Albion 公会绑定" style={{ marginBottom: 16 }}
+        extra={<Button size="small" type="primary" onClick={() => setAlbionSearchModal(true)}>快速绑定</Button>}
+      >
         <Form layout="vertical" initialValues={{ albionGuildId: guild?.albionGuildId || '', albionServer: guild?.albionServer || 'sgp', albionGuildName: guild?.albionGuildName || '' }}
           onFinish={async (values: any) => {
             setSaving(true);
@@ -227,8 +235,8 @@ export default function GuildSettingsPage() {
             finally { setSaving(false); }
           }}
         >
-          <Form.Item name="albionGuildId" label="Albion 公会 ID" tooltip="从官网战报网站获取，如 Eeri9pZPQFWGsofMjSUwdg">
-            <Input placeholder="粘贴 Albion 公会 ID（后续版本将支持按名称搜索）" />
+          <Form.Item name="albionGuildId" label="Albion 公会 ID" tooltip="点击右上角快速绑定可按公会名搜索">
+            <Input placeholder="点击右上角快速绑定按钮搜索" />
           </Form.Item>
           <Form.Item name="albionServer" label="Albion 服务器">
             <Select options={[{ value: 'sgp', label: '亚服 (SGP)' }, { value: 'ams', label: '欧服 (AMS)' }, { value: 'west', label: '美服 (West)' }]} />
@@ -241,6 +249,64 @@ export default function GuildSettingsPage() {
           </Form.Item>
         </Form>
       </Card>
+
+      {/* Albion 快速绑定弹窗 */}
+      <Modal
+        title="搜索 Albion 公会"
+        open={albionSearchModal}
+        onCancel={() => setAlbionSearchModal(false)}
+        footer={null}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Select
+            value={albionSearchServer}
+            onChange={setAlbionSearchServer}
+            options={[{ value: 'sgp', label: '亚服 (SGP)' }, { value: 'ams', label: '欧服 (AMS)' }, { value: 'west', label: '美服 (West)' }]}
+            style={{ width: '100%' }}
+          />
+          <Input.Search
+            placeholder="输入公会名称搜索"
+            enterButton="搜索"
+            loading={albionSearching}
+            onSearch={async (val) => {
+              if (!val || val.trim().length < 2) { message.warning('请输入至少2个字符'); return; }
+              setAlbionSearching(true);
+              try {
+                const res: any = await request.get(`/guild/${guildId}/battle-reports/search-guild`, { params: { name: val.trim(), server: albionSearchServer } });
+                setAlbionSearchResults(res?.guilds || []);
+                if (res?.error) message.warning(res.error);
+                if (!res?.guilds?.length) message.info('未找到匹配公会');
+              } catch { message.error('搜索失败'); }
+              finally { setAlbionSearching(false); }
+            }}
+          />
+          {albionSearchResults.length > 0 && (
+            <Table
+              size="small"
+              dataSource={albionSearchResults}
+              rowKey="id"
+              pagination={false}
+              columns={[
+                { title: '公会名', dataIndex: 'name' },
+                { title: '联盟', dataIndex: 'allianceName', render: (v: string) => v || '-' },
+                { title: '成员数', dataIndex: 'memberCount', width: 70 },
+                { title: '操作', width: 80, render: (_: any, record: any) => (
+                  <Button size="small" type="link" onClick={async () => {
+                    try {
+                      await updateGuild(guildId, { albionGuildId: record.id, albionServer: albionSearchServer, albionGuildName: record.name });
+                      message.success(`已绑定公会: ${record.name}`);
+                      setAlbionSearchModal(false);
+                      setAlbionSearchResults([]);
+                      fetchGuild();
+                    } catch { message.error('绑定失败'); }
+                  }}>绑定</Button>
+                )},
+              ]}
+            />
+          )}
+        </Space>
+      </Modal>
 
       {/* 公会信息展示 */}
       {guild && (
