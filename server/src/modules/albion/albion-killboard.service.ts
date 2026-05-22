@@ -44,40 +44,57 @@ export class AlbionKillboardService {
           totalPulled += deaths.length;
 
           for (const event of deaths) {
-            // 去重：检查 albionEventId 是否已存在
-            const exists = await this.battleReportRepo.findOne({
-              where: { albionEventId: event.EventId },
-            });
-            if (exists) continue;
+            try {
+              // 去重：检查 albionEventId 是否已存在
+              const exists = await this.battleReportRepo.findOne({
+                where: { albionEventId: event.EventId },
+              });
+              if (exists) continue;
 
-            // 提取装备列表
-            const items = await this.albionService.extractEquipmentItems(event);
+              // 提取装备列表
+              let items: any[] = [];
+              try {
+                items = await this.albionService.extractEquipmentItems(event);
+              } catch {
+                // 装备提取失败时直接从 Victim.Equipment 取原始数据
+                const victim = event.Victim || {};
+                const slots = ['MainHand','OffHand','Head','Armor','Shoes','Bag','Cape','Mount','Potion','Food'];
+                for (const slot of slots) {
+                  const item = (victim.Equipment || {})[slot];
+                  if (item && item.Type) {
+                    items.push({ slot, albionId: item.Type, equipmentName: item.Type, level: item.Tier || null, enchantLevel: item.EnchantmentLevel || 0, itemQuality: item.Quality || 0, catalogId: null });
+                  }
+                }
+              }
 
-            const report = this.battleReportRepo.create({
-              guildId,
-              memberName: member.Name,
-              albionPlayerId: member.Id,
-              albionEventId: event.EventId,
-              battleId: event.BattleId || null,
-              deathTime: new Date(event.TimeStamp),
-              deathMap: event.Location || event.GameMapName || null,
-              killerName: event.Killer?.Name || null,
-              killerGuild: event.Killer?.GuildName || null,
-              equipmentList: items.map(i => ({
-                slot: i.slot,
-                albionId: i.albionId,
-                name: i.equipmentName,
-                level: i.level,
-                enchantLevel: i.enchantLevel,
-                quality: i.itemQuality,
-                catalogId: i.catalogId,
-              })),
-              totalKillFame: event.TotalVictimKillFame || 0,
-              rawEvent: event,
-            });
+              const report = this.battleReportRepo.create({
+                guildId,
+                memberName: member.Name,
+                albionPlayerId: member.Id,
+                albionEventId: event.EventId,
+                battleId: event.BattleId || null,
+                deathTime: new Date(event.TimeStamp),
+                deathMap: event.Location || event.GameMapName || null,
+                killerName: event.Killer?.Name || null,
+                killerGuild: event.Killer?.GuildName || null,
+                equipmentList: items.map(i => ({
+                  slot: i.slot,
+                  albionId: i.albionId,
+                  name: i.equipmentName,
+                  level: i.level,
+                  enchantLevel: i.enchantLevel,
+                  quality: i.itemQuality,
+                  catalogId: i.catalogId,
+                })),
+                totalKillFame: event.TotalVictimKillFame || 0,
+                rawEvent: event,
+              });
 
-            await this.battleReportRepo.save(report);
-            newRecords++;
+              await this.battleReportRepo.save(report);
+              newRecords++;
+            } catch (eventErr) {
+              this.logger.warn(`  事件 ${event.EventId} 写入失败: ${eventErr.message}`);
+            }
           }
 
           // 避免 API 速率限制，每个成员间隔 500ms
