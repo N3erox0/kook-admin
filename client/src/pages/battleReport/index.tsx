@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Input, DatePicker, Typography, message, Tag, Tooltip } from 'antd';
+import { Card, Table, Button, Space, Input, DatePicker, Typography, message, Tag } from 'antd';
 import { ReloadOutlined, SearchOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { getBattleReports, pullBattleReports } from '@/api/battleReport';
 import { useGuildStore } from '@/stores/guild.store';
@@ -57,54 +57,38 @@ export default function BattleReportPage() {
     {
       title: '死亡时间',
       dataIndex: 'deathTime',
-      width: 160,
+      width: 130,
       render: (v: string) => v ? dayjs(v).format('MM-DD HH:mm') : '-',
     },
     {
-      title: '地图',
-      dataIndex: 'deathMap',
-      width: 150,
+      title: '击杀公会',
+      dataIndex: 'killerGuild',
+      width: 140,
       ellipsis: true,
-    },
-    {
-      title: '击杀者',
-      dataIndex: 'killerName',
-      width: 120,
-      render: (v: string, r: any) => (
-        <Tooltip title={r.killerGuild ? `[${r.killerGuild}]` : ''}>
-          <span>{v || '-'}</span>
-        </Tooltip>
-      ),
+      render: (v: string) => v || <Text type="secondary">-</Text>,
     },
     {
       title: '装备数',
       dataIndex: 'equipmentList',
-      width: 80,
+      width: 70,
       render: (v: any[]) => v?.length || 0,
     },
     {
       title: '装备列表',
       dataIndex: 'equipmentList',
-      ellipsis: true,
       render: (items: any[]) => {
         if (!items || items.length === 0) return <Text type="secondary">无</Text>;
         return (
           <Space size={[4, 4]} wrap>
-            {items.slice(0, 5).map((item, i) => (
+            {items.slice(0, 6).map((item, i) => (
               <Tag key={i} color={item.catalogId ? 'blue' : 'default'}>
-                {item.name || item.albionId}
+                {item.name && item.name !== item.albionId ? item.name : (item.albionId || '未知')}
               </Tag>
             ))}
-            {items.length > 5 && <Tag>+{items.length - 5}</Tag>}
+            {items.length > 6 && <Tag>+{items.length - 6}</Tag>}
           </Space>
         );
       },
-    },
-    {
-      title: '声望',
-      dataIndex: 'totalKillFame',
-      width: 80,
-      render: (v: number) => v?.toLocaleString() || '0',
     },
     {
       title: '已补装',
