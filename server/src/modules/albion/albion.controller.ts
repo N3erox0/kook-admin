@@ -70,8 +70,12 @@ export class AlbionController {
 
   @Post('pull')
   @GuildRoles(GuildRole.SUPER_ADMIN, GuildRole.INVENTORY_ADMIN)
-  @ApiOperation({ summary: '手动拉取公会战报' })
+  @ApiOperation({ summary: '手动拉取公会战报（异步，立即返回）' })
   pullDeaths(@Param('guildId', ParseIntPipe) guildId: number) {
-    return this.killboardService.pullGuildDeaths(guildId);
+    // 异步执行，不等待完成（避免 nginx 60s 超时）
+    this.killboardService.pullGuildDeaths(guildId).catch(err => {
+      console.error(`[战报拉取] 公会${guildId}拉取失败:`, err.message);
+    });
+    return { message: '战报拉取已启动，请稍后刷新查看结果（约需3-5分钟）', status: 'started' };
   }
 }

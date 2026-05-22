@@ -40,9 +40,8 @@ export default function BattleReportPage() {
   const handlePull = async () => {
     setPulling(true);
     try {
-      const res: any = await pullBattleReports(guildId);
-      message.success(`拉取完成：新增 ${res?.newRecords || 0} 条战报`);
-      fetchList();
+      await pullBattleReports(guildId);
+      message.success('战报拉取已启动，请3-5分钟后刷新查看');
     } catch {
       message.error('拉取失败，请检查 Albion 公会ID 配置');
     } finally { setPulling(false); }
