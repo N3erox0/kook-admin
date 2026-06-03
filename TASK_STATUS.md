@@ -357,6 +357,11 @@
 | F-352 | sync-members 外层 try/catch + logger.error | completed | 2026-06-03 | 异常包装 200 业务错，方便定位 500 |
 | F-353 | 公会创建流程移除"管理员角色 ID"提示 | completed | 2026-06-03 | 改在公会设置页配置 |
 | F-354 | CSV 简化格式前缀自动解析 + 失败列表 UI | completed | 2026-06-03 | "80长弓"→长弓 L8Q0；匹配失败装备保留在 Modal 内可截图 |
+| F-355 | V3.3.1 死亡补装7部位中英文双向映射 | completed | 2026-06-04 | 修复 Albion英文slot 不匹配中文category 导致 0 件命中 |
+| F-356 | V3.3.1 OC碎兼容"了"字 | completed | 2026-06-04 | OC碎了【...】也走新规则【】路径 |
+| F-357 | V3.3.1 待识别 batch 保存原始KOOK消息 | completed | 2026-06-04 | 复用 errorMessage 字段500字截断 |
+| F-358 | V3.3.1 待识别 Modal 显示原始消息绿色区块 | completed | 2026-06-04 | 申请人区块下方新增绿色框展示原文 |
+
 
 
 

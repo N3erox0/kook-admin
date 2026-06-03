@@ -392,6 +392,28 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
               <Form.Item label="申请人昵称（可修改）" style={{ marginBottom: 8 }}>
                 <Input value={editKookNickname} onChange={(e) => setEditKookNickname(e.target.value)} placeholder="如 玩家A 3-16" />
               </Form.Item>
+              {/* V3.3.1 F-358: 显示原始 KOOK 消息（保存在 batch.errorMessage 字段） */}
+              {(detail.batch?.errorMessage || detail.errorMessage) && (
+                <div style={{
+                  background: '#f6ffed',
+                  border: '1px solid #b7eb8f',
+                  borderRadius: 4,
+                  padding: 10,
+                  marginBottom: 8,
+                }}>
+                  <Text strong style={{ color: '#389e0d', fontSize: 12 }}>📩 原始 KOOK 消息：</Text>
+                  <div style={{
+                    marginTop: 4,
+                    color: '#262626',
+                    fontFamily: 'Menlo, Consolas, monospace',
+                    fontSize: 12,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                  }}>
+                    {detail.batch?.errorMessage || detail.errorMessage}
+                  </div>
+                </div>
+              )}
             </Space>
 
             <div style={{ display: 'flex', gap: 16 }}>

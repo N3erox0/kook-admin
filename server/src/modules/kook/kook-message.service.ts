@@ -854,6 +854,28 @@ export class KookMessageService {
         '坐骑',
       ]);
 
+      // V3.3.1 F-355: Albion 英文 slot → 中文部位 映射
+      // 战报 equipmentList 的 slot 字段是 Albion 原生英文（MainHand/Head/Cape/Mount...）
+      // 而 SEVEN_CATEGORIES 是中文。如果不映射，过滤后必然 0 件。
+      // 注意：Bag/Potion/Food 三个槽位故意不映射（药水/食物/背包不进补装）
+      const SLOT_EN_TO_CN: Record<string, string> = {
+        MainHand: '武器',
+        OffHand: '副手',
+        Head: '头',
+        Armor: '甲',
+        Body: '甲',
+        Shoes: '鞋',
+        Cape: '披风',
+        Mount: '坐骑',
+      };
+      const mapSlotToCategory = (it: any): string | null => {
+        // 优先用 category（已经是中文）
+        if (it?.category && SEVEN_CATEGORIES.has(it.category)) return it.category;
+        // 否则用 slot（英文）映射
+        if (it?.slot && SLOT_EN_TO_CN[it.slot]) return SLOT_EN_TO_CN[it.slot];
+        return null;
+      };
+
       // V3.3.0 去重：消息ID + 用户 + 日期
       const dateStr = (parsed.killTimeUtc || new Date().toISOString()).slice(
         0,
@@ -914,6 +936,7 @@ export class KookMessageService {
             kookUserId,
             kookNickname,
             lowConfItems as any,
+            textContent, // V3.3.1 F-357: 原始 KOOK 消息存入 batch.errorMessage 字段
           );
           this.logger.log(
             `[${guild.name}] [V3.3.0死亡补装] 进待识别工作区: ${pendingReason}`,
@@ -962,16 +985,21 @@ export class KookMessageService {
       const rawEquipList: any[] = Array.isArray(battleReport.equipmentList)
         ? battleReport.equipmentList
         : [];
-      const sevenItems = rawEquipList.filter((it: any) => {
-        const cat = it?.slot || it?.category;
-        return cat && SEVEN_CATEGORIES.has(cat);
-      });
+      // V3.3.1 F-355: 用中英文双向映射，避免 0 件命中
+      const sevenItems = rawEquipList
+        .map((it: any) => ({ ...it, _cat: mapSlotToCategory(it) }))
+        .filter((it: any) => !!it._cat);
+
+      // V3.3.1 诊断日志：让管理员能看清战报里到底是什么 slot
+      this.logger.log(
+        `[${guild.name}] [V3.3.0死亡补装] 战报装备明细: 总${rawEquipList.length}件 / 7部位匹配${sevenItems.length}件 / slots=[${rawEquipList.map((it: any) => `${it.slot || '?'}(${it.category || '无cat'})`).join(', ')}]`,
+      );
 
       const equipmentItems = sevenItems.map((it: any) => ({
         catalogId: it.catalogId || null,
         albionId: it.albionId || '',
         equipmentName: it.name || it.equipmentName || it.albionId || '未知',
-        slot: it.slot || it.category || null,
+        slot: it._cat, // 中文部位（武器/副手/...）
         level: it.level ?? null,
         enchantLevel: it.enchantLevel ?? null,
         itemQuality: it.quality ?? it.itemQuality ?? 0,
@@ -1111,7 +1139,7 @@ export class KookMessageService {
         try {
           await this.ocrService.createKookBatch(
             guild.id,
-            null,
+            screenshotUrls || null, // V3.3.1: 透传截图URL
             kookUserId,
             kookNickname,
             [
@@ -1127,6 +1155,7 @@ export class KookMessageService {
                 matchScore: 0,
               },
             ] as any,
+            textContent, // V3.3.1 F-357: 原始消息
           );
         } catch (err) {
           this.logger.error(`OC碎空段存入待识别失败: ${err}`);
@@ -1220,10 +1249,11 @@ export class KookMessageService {
           });
           await this.ocrService.createKookBatch(
             guild.id,
-            null,
+            screenshotUrls || null, // V3.3.1: 透传截图URL
             kookUserId,
             kookNickname,
             items as any,
+            textContent, // V3.3.1 F-357: 原始消息
           );
           this.logger.log(
             `[${guild.name}] OC碎有未匹配词段，整条存入待识别工作区`,

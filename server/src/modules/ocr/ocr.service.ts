@@ -235,8 +235,19 @@ export class OcrService {
     return { saved };
   }
 
-  /** R-004: 创建 KOOK 来源的 OCR 批次（低置信度装备进入待识别工作区） */
-  async createKookBatch(guildId: number, imageUrl: string | null, kookUserId: string, kookNickname: string, lowConfItems: any[]): Promise<OcrRecognitionBatch> {
+  /** R-004: 创建 KOOK 来源的 OCR 批次（低置信度装备进入待识别工作区）
+   *
+   * V3.3.1 F-357: 新增 rawText 可选参数，写入 errorMessage 字段（复用现有字段，避免改表）
+   * 用于前端 Modal 显示"原始 KOOK 消息内容"，方便管理员人工确认时参考。
+   */
+  async createKookBatch(
+    guildId: number,
+    imageUrl: string | null,
+    kookUserId: string,
+    kookNickname: string,
+    lowConfItems: any[],
+    rawText?: string,
+  ): Promise<OcrRecognitionBatch> {
     const batch = this.batchRepo.create({
       guildId,
       batchNo: `KOOK-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -247,6 +258,8 @@ export class OcrService {
       kookUserId,
       kookNickname,
       totalItems: lowConfItems.length,
+      // V3.3.1: 原始消息存进 errorMessage 字段（500字截断），前端 Modal 显示
+      errorMessage: rawText ? rawText.slice(0, 500) : undefined,
     });
     const saved = await this.batchRepo.save(batch);
 

@@ -157,10 +157,10 @@ export function isDeathKeyword(text: string): boolean {
   return /击杀详情|擊殺詳情|擊殺詳細資訊/i.test(text);
 }
 
-/** 判断是否含 OC 碎关键词 */
+/** 判断是否含 OC 碎关键词（V3.3.1 F-356: 兼容 "OC碎了"/"OC碎"/"oc碎"） */
 export function isOcBrokenKeyword(text: string): boolean {
   if (!text) return false;
-  return /OC\s?碎/i.test(text);
+  return /OC\s?碎了?/i.test(text);
 }
 
 /**
@@ -245,15 +245,17 @@ function parseDeathMessage(normalized: string): DeathParseResult {
  *   2. 否则回退到 "碎" 字之后的内容拆词（旧规则兜底）
  */
 function parseOcBrokenMessage(normalized: string): OcBrokenParseResult {
+  // V3.3.1 F-356: 预处理 "OC碎了" → "OC碎" 让后续 extractBracketContent 能命中
+  const preprocessed = normalized.replace(/OC\s?碎\s*了/gi, 'OC碎');
   let equipmentSegments: string[] = [];
   let fromBracket = false;
   const consumed: string[] = [];
 
   // 策略 1: OC碎[...]
   const ocBracket =
-    extractBracketContent(normalized, 'OC碎') ||
-    extractBracketContent(normalized, 'oc碎') ||
-    extractBracketContent(normalized, 'OC 碎');
+    extractBracketContent(preprocessed, 'OC碎') ||
+    extractBracketContent(preprocessed, 'oc碎') ||
+    extractBracketContent(preprocessed, 'OC 碎');
   if (ocBracket && ocBracket.content) {
     fromBracket = true;
     consumed.push(ocBracket.fullMatch);
@@ -261,17 +263,17 @@ function parseOcBrokenMessage(normalized: string): OcBrokenParseResult {
   }
 
   // 游戏名
-  const gameBracket = extractBracketContent(normalized, '游戏名');
+  const gameBracket = extractBracketContent(preprocessed, '游戏名');
   const gameName = gameBracket?.content || null;
   if (gameBracket) consumed.push(gameBracket.fullMatch);
 
   // 备注
-  const remarkBracket = extractBracketContent(normalized, '备注');
+  const remarkBracket = extractBracketContent(preprocessed, '备注');
   const remark = remarkBracket?.content || null;
   if (remarkBracket) consumed.push(remarkBracket.fullMatch);
 
   // residualText
-  let residualText = normalized;
+  let residualText = preprocessed;
   for (const c of consumed) {
     residualText = residualText.replace(c, ' ');
   }
