@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, Input, Select, message, Tooltip, Popover, Tabs, Modal, AutoComplete } from 'antd';
+import { useState, useEffect } from 'react';
+import { Card, Table, Button, Space, Tag, Typography, Input, Select, message, Tooltip, Popover, Modal, AutoComplete } from 'antd';
 import { EyeOutlined, ClockCircleOutlined, SearchOutlined, SyncOutlined, LinkOutlined } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
 import request from '@/api/request';
@@ -28,17 +28,21 @@ const ROLE_LABELS: Record<string, string> = {
   normal: '普通用户',
 };
 
+/**
+ * V3.2 成员列表页（精简版）
+ * - 隐藏 KOOK 成员 Tab，仅显示公会成员（Albion）
+ * - KOOK 数据后端保留（绑定弹窗仍依赖）
+ * - 系统账号管理已独立到 /admin/accounts
+ */
 export default function MemberPage() {
   const { currentGuildId, currentGuildRole } = useGuildStore();
-  const [activeTab, setActiveTab] = useState('albion');
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [keywordInput, setKeywordInput] = useState('');
   const [statusInput, setStatusInput] = useState<string>('');
-  const [kookRoleIdInput, setKookRoleIdInput] = useState<string>('');
-  const [queryParams, setQueryParams] = useState<{ keyword?: string; status?: string; kookRoleId?: string }>({});
+  const [queryParams, setQueryParams] = useState<{ keyword?: string; status?: string }>({});
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [expandedRoleId, setExpandedRoleId] = useState<number | null>(null);
   const [bindingModal, setBindingModal] = useState(false);
@@ -55,9 +59,7 @@ export default function MemberPage() {
     const params: any = { page, pageSize: 50 };
     if (queryParams.keyword) params.keyword = queryParams.keyword;
     if (queryParams.status) params.status = queryParams.status;
-    if (queryParams.kookRoleId && activeTab === 'kook') params.kookRoleId = queryParams.kookRoleId;
-    const url = activeTab === 'albion' ? `/guild/${currentGuildId}/members/albion` : `/guild/${currentGuildId}/members`;
-    request.get(url, { params }).then((res: any) => {
+    request.get(`/guild/${currentGuildId}/members/albion`, { params }).then((res: any) => {
       setData(res.list || []);
       setTotal(res.total || 0);
     }).finally(() => setLoading(false));
@@ -67,28 +69,15 @@ export default function MemberPage() {
     }).catch(() => {});
   };
 
-  useEffect(() => { fetchData(); }, [currentGuildId, page, queryParams, activeTab]);
-
-  const kookRoleOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const m of data) {
-      const roles = Array.isArray(m.kookRoles) ? m.kookRoles : [];
-      for (const r of roles) {
-        if (r && typeof r === 'object' && r.role_id) map.set(String(r.role_id), r.name || `角色${r.role_id}`);
-      }
-    }
-    const opts = Array.from(map.entries()).map(([id, name]) => ({ value: id, label: name }));
-    opts.unshift({ value: '__no_role__', label: '⚠ 无服务器角色' });
-    return opts;
-  }, [data]);
+  useEffect(() => { fetchData(); }, [currentGuildId, page, queryParams]);
 
   const handleSearch = () => {
     setPage(1);
-    setQueryParams({ keyword: keywordInput.trim() || undefined, status: statusInput || undefined, kookRoleId: kookRoleIdInput || undefined });
+    setQueryParams({ keyword: keywordInput.trim() || undefined, status: statusInput || undefined });
   };
 
   const handleResetSearch = () => {
-    setKeywordInput(''); setStatusInput(''); setKookRoleIdInput(''); setPage(1); setQueryParams({});
+    setKeywordInput(''); setStatusInput(''); setPage(1); setQueryParams({});
   };
 
   const handleRoleChange = async (memberId: number, role: string) => {
@@ -134,47 +123,53 @@ export default function MemberPage() {
 
   const calcDays = (joinedAt: string) => joinedAt ? dayjs().diff(dayjs(joinedAt), 'day') : '-';
 
-  const kookColumns: any[] = [
-    { title: '成员昵称', dataIndex: 'nickname', key: 'nickname', width: 160 },
-    { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (v: string) => v === 'active' ? <Tag color="green">在会</Tag> : <Tag color="red">离开</Tag> },
-    { title: '服务器角色', dataIndex: 'kookRoles', key: 'kookRoles', width: 200, render: (roles: any[]) => !roles?.length ? <Tag>无</Tag> : <Space size={2} wrap>{roles.slice(0, 3).map((r: any, i: number) => <Tag key={i} color="processing">{typeof r === 'object' ? r.name : `角色${r}`}</Tag>)}{roles.length > 3 && <Tag>+{roles.length - 3}</Tag>}</Space> },
-    { title: '系统角色', dataIndex: 'role', key: 'role', width: 120, render: (role: string) => <Tag color={ROLE_COLORS[role]}>{ROLE_LABELS[role] || role}</Tag> },
-    { title: '加入时间', dataIndex: 'joinedAt', key: 'joinedAt', width: 110, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
-    { title: '在会天数', key: 'days', width: 90, render: (_: any, record: any) => record.status !== 'active' ? '-' : `${calcDays(record.joinedAt)} 天` },
-    { title: '离开时间', dataIndex: 'leftAt', key: 'leftAt', width: 110, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
-    ...(isSuperAdmin ? [{ title: '操作', key: 'actions', width: 80, fixed: 'right' as const, render: (_: any, record: any) => record.status !== 'active' ? null : <Popover trigger="click" open={expandedRoleId === record.id} onOpenChange={(open) => setExpandedRoleId(open ? record.id : null)} content={<Space direction="vertical" size="small"><Text strong style={{ fontSize: 12 }}>修改系统角色</Text>{ROLE_OPTIONS.map(opt => <Button key={opt.value} size="small" type={record.role === opt.value ? 'primary' : 'default'} block onClick={() => handleRoleChange(record.id, opt.value)} disabled={record.role === opt.value}>{opt.label}</Button>)}</Space>}><Tooltip title="修改角色"><Button size="small" type="link" icon={<EyeOutlined />} /></Tooltip></Popover> }] : []),
-  ];
-
   const albionColumns: any[] = [
     { title: 'Albion玩家名', dataIndex: 'playerName', key: 'playerName', width: 170 },
     { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (v: string) => v === 'active' ? <Tag color="green">在会</Tag> : <Tag color="red">离开</Tag> },
     { title: 'KOOK 昵称', dataIndex: 'kookNickname', key: 'kookNickname', width: 160, render: (v: string) => v || <Text type="secondary">未绑定</Text> },
+    { title: '系统角色', dataIndex: 'role', key: 'role', width: 130, render: (role: string) => role ? <Tag color={ROLE_COLORS[role]}>{ROLE_LABELS[role] || role}</Tag> : <Text type="secondary">-</Text> },
     { title: '在公会天数', key: 'days', width: 100, render: (_: any, record: any) => record.status !== 'active' ? '-' : `${calcDays(record.joinedAt)} 天` },
     { title: '加入时间', dataIndex: 'joinedAt', key: 'joinedAt', width: 110, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
     { title: '离开时间', dataIndex: 'leftAt', key: 'leftAt', width: 110, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
-    ...(canManage ? [{ title: '操作', key: 'actions', width: 90, render: (_: any, record: any) => <Button size="small" type="link" icon={<LinkOutlined />} onClick={() => openBindModal(record)}>绑定</Button> }] : []),
+    ...(canManage ? [{
+      title: '操作', key: 'actions', width: 160, render: (_: any, record: any) => (
+        <Space size={4}>
+          <Button size="small" type="link" icon={<LinkOutlined />} onClick={() => openBindModal(record)}>绑定</Button>
+          {isSuperAdmin && record.guildMemberId ? (
+            <Popover trigger="click" open={expandedRoleId === record.guildMemberId} onOpenChange={(open) => setExpandedRoleId(open ? record.guildMemberId : null)} content={
+              <Space direction="vertical" size="small">
+                <Text strong style={{ fontSize: 12 }}>修改系统角色</Text>
+                {ROLE_OPTIONS.map(opt => (
+                  <Button key={opt.value} size="small" type={record.role === opt.value ? 'primary' : 'default'} block onClick={() => handleRoleChange(record.guildMemberId, opt.value)} disabled={record.role === opt.value}>{opt.label}</Button>
+                ))}
+              </Space>
+            }>
+              <Tooltip title="修改角色"><Button size="small" type="link" icon={<EyeOutlined />} /></Tooltip>
+            </Popover>
+          ) : null}
+        </Space>
+      )
+    }] : []),
   ];
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>成员管理</Title>
+        <Title level={4} style={{ margin: 0 }}>公会成员</Title>
         <Space>
           <ClockCircleOutlined style={{ color: '#999' }} />
           <Text type="secondary" style={{ fontSize: 12 }}>上次KOOK同步：{lastSyncedAt ? dayjs(lastSyncedAt).format('YYYY-MM-DD HH:mm:ss') : '尚未同步'}</Text>
-          {activeTab === 'albion' && canManage && <Button icon={<SyncOutlined />} onClick={handleSyncAlbion} loading={loading}>同步 Albion 成员</Button>}
+          {canManage && <Button icon={<SyncOutlined />} onClick={handleSyncAlbion} loading={loading}>同步 Albion 成员</Button>}
         </Space>
       </div>
       <Card>
-        <Tabs activeKey={activeTab} onChange={(key) => { setActiveTab(key); setPage(1); setData([]); }} items={[{ key: 'albion', label: '公会成员' }, { key: 'kook', label: 'KOOK成员' }]} />
         <Space style={{ marginBottom: 16 }} wrap>
-          <Input placeholder={activeTab === 'albion' ? '搜索玩家名/Player ID' : '搜索昵称/KOOK ID'} allowClear style={{ width: 220 }} prefix={<SearchOutlined />} value={keywordInput} onChange={(e) => setKeywordInput(e.target.value)} onPressEnter={handleSearch} />
-          {activeTab === 'kook' && <Select placeholder="KOOK 角色" allowClear style={{ width: 180 }} value={kookRoleIdInput || undefined} onChange={(v) => setKookRoleIdInput(v || '')} options={kookRoleOptions} showSearch filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())} />}
+          <Input placeholder="搜索玩家名/Player ID" allowClear style={{ width: 220 }} prefix={<SearchOutlined />} value={keywordInput} onChange={(e) => setKeywordInput(e.target.value)} onPressEnter={handleSearch} />
           <Select placeholder="状态" allowClear style={{ width: 120 }} value={statusInput || undefined} onChange={(v) => setStatusInput(v || '')} options={[{ value: 'active', label: '在会' }, { value: 'left', label: '离开' }]} />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>查询</Button>
           <Button onClick={handleResetSearch}>重置</Button>
         </Space>
-        <Table columns={activeTab === 'albion' ? albionColumns : kookColumns} dataSource={data} rowKey="id" loading={loading} size="small" scroll={{ x: activeTab === 'albion' ? 1000 : 900 }} pagination={{ current: page, total, pageSize: 50, showTotal: (t) => `共 ${t} 条`, onChange: (p) => setPage(p) }} />
+        <Table columns={albionColumns} dataSource={data} rowKey="id" loading={loading} size="small" scroll={{ x: 1100 }} pagination={{ current: page, total, pageSize: 50, showTotal: (t) => `共 ${t} 条`, onChange: (p) => setPage(p) }} />
       </Card>
 
       <Modal title={`绑定 KOOK 成员 - ${bindingTarget?.playerName || ''}`} open={bindingModal} onCancel={() => setBindingModal(false)} onOk={handleBind} okButtonProps={{ disabled: !selectedKookMemberId }}>

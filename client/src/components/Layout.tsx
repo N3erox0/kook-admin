@@ -3,9 +3,9 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Layout as AntLayout, Menu, Dropdown, Avatar, Typography, Space, Tag, message, Upload } from 'antd';
 import {
   DashboardOutlined, TeamOutlined, DatabaseOutlined, AppstoreOutlined,
-  SyncOutlined, AlertOutlined, FileTextOutlined, SwapOutlined,
+  SyncOutlined, FileTextOutlined, SwapOutlined,
   LogoutOutlined, UserOutlined, KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  SettingOutlined, PlusOutlined, ReloadOutlined, CameraOutlined,
+  PlusOutlined, ReloadOutlined, CameraOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth.store';
 import { useGuildStore } from '@/stores/guild.store';
@@ -21,18 +21,16 @@ const { Text } = Typography;
 // SSVIP 仅可见：装备参考库、邀请码管理（控制台仅显示公会数）
 // 超管：全部
 // 库存管理员/补装管理员/普通用户：仅本公会数据
-// F-107: 待识别工作区归并到补装管理页内Tab，移除独立菜单
+// V3.2: 公会侧菜单精简为 4 项（控制台/成员/装备库存/补装管理）
+//       战报记录/库存预警/操作日志/公会设置 移到仪表盘"管理入口区"
 const allMenuItems = [
   { key: '/admin/dashboard', icon: <DashboardOutlined />, label: '控制台', roles: ['super_admin', 'ssvip', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/members', icon: <TeamOutlined />, label: '成员管理', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/catalog', icon: <DatabaseOutlined />, label: '装备参考库', roles: ['ssvip'] },
   { key: '/admin/equipment', icon: <AppstoreOutlined />, label: '装备库存', roles: ['super_admin', 'inventory_admin', 'resupply_staff', 'normal'] },
   { key: '/admin/resupply', icon: <SyncOutlined />, label: '补装管理', roles: ['super_admin', 'resupply_staff'] },
-  { key: '/admin/battle-reports', icon: <FileTextOutlined />, label: '战报记录', roles: ['super_admin', 'inventory_admin', 'resupply_staff'] },
-  { key: '/admin/alerts', icon: <AlertOutlined />, label: '预警设置', roles: ['super_admin', 'inventory_admin'] },
   { key: '/admin/invite-codes', icon: <KeyOutlined />, label: '邀请码管理', roles: ['ssvip'] },
-  { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['super_admin', 'ssvip'] },
-  { key: '/admin/settings', icon: <SettingOutlined />, label: '公会设置', roles: ['super_admin'] },
+  { key: '/admin/logs', icon: <FileTextOutlined />, label: '操作日志', roles: ['ssvip'] },
 ];
 
 export default function AppLayout() {

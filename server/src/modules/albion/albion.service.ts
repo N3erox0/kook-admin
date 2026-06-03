@@ -147,6 +147,27 @@ export class AlbionService {
     return [];
   }
 
+  /**
+   * V3.2: 分页拉取玩家死亡战报（用于增量同步）
+   * @param offset 起始偏移
+   * @param pageSize 每页数量（Albion API 单次最多 51 条）
+   */
+  async getPlayerDeathsPaged(
+    server: AlbionServer | undefined,
+    playerId: string,
+    offset: number,
+    pageSize: number,
+  ): Promise<any[]> {
+    if (!playerId) return [];
+    const data = await this.fetchJson<any>(
+      server,
+      `/players/${encodeURIComponent(playerId)}/deaths?limit=${pageSize}&offset=${offset}`,
+    );
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.Events)) return data.Events;
+    return [];
+  }
+
   async matchDeathEvent(params: {
     server?: AlbionServer;
     playerName: string;

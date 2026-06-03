@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin, Dropdown, MenuProps, Radio } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined, DownloadOutlined, AppstoreOutlined, MoreOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, Typography, message, Popconfirm, AutoComplete, Upload, Timeline, Drawer, Image, Spin, Dropdown, MenuProps, Radio, Switch } from 'antd';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, SearchOutlined, HistoryOutlined, ScanOutlined, DeleteOutlined, DownloadOutlined, AppstoreOutlined, MoreOutlined, ExportOutlined } from '@ant-design/icons';
 import { getInventoryList, upsertInventory, batchUpsertInventory, updateInventoryFields, deleteInventory, getInventoryLogs } from '@/api/equipment';
 import { searchCatalog } from '@/api/catalog';
 import { createOcrBatch, getOcrBatchDetail, confirmOcrItem, saveOcrToInventory } from '@/api/ocr';
@@ -12,6 +12,22 @@ import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const QUALITY_COLORS = ['default', 'success', 'processing', 'purple', 'warning'];
+
+/** V3.2 库存 CSV 模板内容（含 BOM 防 Excel 中文乱码） */
+const CSV_TEMPLATE_CONTENT =
+  '\uFEFF装备名,数量,位置\n44堕神法杖,20,Gpass地堡\n80长弓,10,公会仓库\n62挣脱鞋,5,蓝城仓库\n';
+
+function downloadCsvTemplate() {
+  const blob = new Blob([CSV_TEMPLATE_CONTENT], { type: 'text/csv;charset=utf-8' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '库存导入模板.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}
 
 export default function EquipmentPage() {
   const { currentGuildId, currentGuildRole } = useGuildStore();
@@ -55,6 +71,13 @@ export default function EquipmentPage() {
   const [inlineQuantity, setInlineQuantity] = useState<number>(1);
   const [inlineLocation, setInlineLocation] = useState<string>('公会仓库');
   const [inlineSaving, setInlineSaving] = useState(false);
+
+  // V3.2: CSV 导入弹窗（前置文件选择 Modal，文件选定后再展示预览 excelModal）
+  const [csvImportModal, setCsvImportModal] = useState(false);
+
+  // V3.2: 导出 CSV 全选 Switch
+  const [exportAll, setExportAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // 行内数量修改（防抖）
   const handleInlineQuantityChange = async (id: number, val: number) => {
@@ -178,6 +201,71 @@ export default function EquipmentPage() {
 
   const handleDelete = async (id: number) => {
     try { await deleteInventory(guildId, id); message.success('已删除'); fetchList(); } catch {}
+  };
+
+  /**
+   * V3.2: 一键导出 CSV
+   * - exportAll=true：全量
+   * - exportAll=false：按当前筛选
+   * 列：装备名,等级,品质,装等,部位,数量,位置,更新时间
+   */
+  const handleExportCsv = async () => {
+    if (!guildId) return;
+    setExporting(true);
+    try {
+      // 取数据：拉所有页（pageSize=10000 一次性，导出场景可接受）
+      const params: any = { page: 1, pageSize: 10000 };
+      if (!exportAll) {
+        // 按当前筛选
+        Object.assign(params, filters);
+      }
+      const res: any = await getInventoryList(guildId, params);
+      const rows = res?.list || [];
+      if (rows.length === 0) {
+        message.warning('当前条件下无装备记录可导出');
+        return;
+      }
+
+      const header = ['装备名', '等级', '品质', '装等', '部位', '数量', '位置', '更新时间'];
+      const lines = [header.join(',')];
+      for (const r of rows) {
+        const cat = r.catalog || {};
+        const cells = [
+          cat.name || r.equipmentName || '',
+          cat.level ?? '',
+          cat.quality ?? '',
+          cat.gearScore ?? '',
+          cat.category || '',
+          r.quantity ?? 0,
+          r.location || '',
+          r.updatedAt ? dayjs(r.updatedAt).format('YYYY-MM-DD HH:mm:ss') : '',
+        ].map((v) => {
+          const s = String(v ?? '');
+          // CSV 字段含逗号/引号/换行 → 用引号包并转义
+          if (/[,"\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+          return s;
+        });
+        lines.push(cells.join(','));
+      }
+
+      const csvContent = '\uFEFF' + lines.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = dayjs().format('YYYYMMDD_HHmmss');
+      const scope = exportAll ? 'all' : 'filtered';
+      a.download = `装备库存_${scope}_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      message.success(`已导出 ${rows.length} 条记录`);
+    } catch (err: any) {
+      message.error(err?.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
   };
 
   // Excel 导入
@@ -660,26 +748,83 @@ export default function EquipmentPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>装备库存</Title>
-        <Space>
+        <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setInlineAdding(true)}>录入库存</Button>
-          <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={handleExcelFile}>
-            <Button icon={<UploadOutlined />}>CSV导入</Button>
-          </Upload>
-          <Button icon={<DownloadOutlined />} onClick={() => {
-            const csvContent = '\uFEFF装备名,数量,位置\n44堕神法杖,20,Gpass地堡\n80长弓,10,公会仓库\n62挣脱鞋,5,蓝城仓库\n';
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = '库存导入模板.csv';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-          }}>下载模板</Button>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setInlineAdding(true);
+              // 滚动到页面顶部确保录入区可见
+              setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 80);
+            }}
+          >
+            录入库存
+          </Button>
+          <Button icon={<UploadOutlined />} onClick={() => setCsvImportModal(true)}>
+            CSV 导入
+          </Button>
+          <Space.Compact>
+            <Button
+              icon={<ExportOutlined />}
+              loading={exporting}
+              onClick={handleExportCsv}
+            >
+              {exportAll ? '导出全部' : `导出当前筛选${total ? `(${total}条)` : ''}`}
+            </Button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '0 8px', border: '1px solid #d9d9d9', borderLeft: 'none', background: '#fafafa', borderRadius: '0 6px 6px 0' }}>
+              <Text style={{ fontSize: 12, marginRight: 6 }}>全选</Text>
+              <Switch size="small" checked={exportAll} onChange={setExportAll} />
+            </span>
+          </Space.Compact>
         </Space>
       </div>
+
+      {/* V3.2: 行内录入区（移到筛选 Card 之上，确保点击"录入库存"立刻可见） */}
+      {inlineAdding && (
+        <Card
+          size="small"
+          style={{ marginBottom: 16, borderColor: '#1677ff', background: '#f0f8ff' }}
+          title={<Space><PlusOutlined style={{ color: '#1677ff' }} /><Text strong>录入装备库存</Text></Space>}
+          extra={
+            <Button size="small" onClick={() => { setInlineAdding(false); setSelectedCatalogId(null); setCatalogOptions([]); }}>
+              取消
+            </Button>
+          }
+        >
+          <Space wrap>
+            <AutoComplete
+              style={{ width: 280 }}
+              options={catalogOptions}
+              onSearch={handleCatalogSearch}
+              onSelect={handleCatalogSelect}
+              placeholder="搜索装备名称（输入≥1字符）"
+              allowClear
+            />
+            <InputNumber min={0} value={inlineQuantity} onChange={(v) => setInlineQuantity(v || 1)} placeholder="数量" style={{ width: 100 }} />
+            <Input value={inlineLocation} onChange={(e) => setInlineLocation(e.target.value)} placeholder="位置" style={{ width: 160 }} />
+            <Button
+              type="primary"
+              loading={inlineSaving}
+              onClick={async () => {
+                if (!selectedCatalogId) { message.error('请从下拉列表选择装备'); return; }
+                setInlineSaving(true);
+                try {
+                  await upsertInventory(guildId, { catalogId: selectedCatalogId, quantity: inlineQuantity, location: inlineLocation });
+                  message.success('录入成功');
+                  setSelectedCatalogId(null);
+                  setInlineQuantity(1);
+                  setInlineLocation('公会仓库');
+                  setCatalogOptions([]);
+                  fetchList();
+                } catch {} finally { setInlineSaving(false); }
+              }}
+            >
+              保存
+            </Button>
+          </Space>
+        </Card>
+      )}
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Form layout="inline" onFinish={handleSearch}>
@@ -709,37 +854,6 @@ export default function EquipmentPage() {
       </Card>
 
       <Card>
-        {/* V3.0.2: 行内录入（替代 Modal） */}
-        {inlineAdding && (
-          <div style={{ padding: '12px 0', marginBottom: 12, borderBottom: '1px solid #f0f0f0', background: '#fafffe' }}>
-            <Space wrap>
-              <AutoComplete
-                style={{ width: 280 }}
-                options={catalogOptions}
-                onSearch={handleCatalogSearch}
-                onSelect={handleCatalogSelect}
-                placeholder="搜索装备名称"
-                allowClear
-              />
-              <InputNumber min={0} value={inlineQuantity} onChange={v => setInlineQuantity(v || 1)} placeholder="数量" style={{ width: 100 }} />
-              <Input value={inlineLocation} onChange={e => setInlineLocation(e.target.value)} placeholder="位置" style={{ width: 140 }} />
-              <Button type="primary" loading={inlineSaving} onClick={async () => {
-                if (!selectedCatalogId) { message.error('请从下拉列表选择装备'); return; }
-                setInlineSaving(true);
-                try {
-                  await upsertInventory(guildId, { catalogId: selectedCatalogId, quantity: inlineQuantity, location: inlineLocation });
-                  message.success('录入成功');
-                  setSelectedCatalogId(null);
-                  setInlineQuantity(1);
-                  setInlineLocation('公会仓库');
-                  setCatalogOptions([]);
-                  fetchList();
-                } catch {} finally { setInlineSaving(false); }
-              }}>保存</Button>
-              <Button onClick={() => { setInlineAdding(false); setSelectedCatalogId(null); setCatalogOptions([]); }}>取消</Button>
-            </Space>
-          </div>
-        )}
         {selectedRowKeys.length > 0 && (
           <Space style={{ marginBottom: 12 }}>
             <Text>已选 {selectedRowKeys.length} 条</Text>
@@ -784,6 +898,40 @@ export default function EquipmentPage() {
           </Form.Item>
           <Form.Item><Button type="primary" htmlType="submit" block>保存</Button></Form.Item>
         </Form>
+      </Modal>
+
+      {/* V3.2: CSV 导入选择文件 Modal（前置，文件选择 + 模板下载） */}
+      <Modal
+        title="CSV 导入"
+        open={csvImportModal}
+        onCancel={() => setCsvImportModal(false)}
+        footer={null}
+        destroyOnClose
+        width={520}
+      >
+        <Upload.Dragger
+          accept=".csv,.txt"
+          showUploadList={false}
+          beforeUpload={(file) => {
+            handleExcelFile(file);
+            setCsvImportModal(false);
+            return false;
+          }}
+        >
+          <p className="ant-upload-drag-icon">
+            <UploadOutlined style={{ fontSize: 32, color: '#1677ff' }} />
+          </p>
+          <p className="ant-upload-text">点击或拖拽 CSV 文件到此处</p>
+          <p className="ant-upload-hint">仅支持 .csv 文件，支持简化格式（装备名,数量,位置）</p>
+        </Upload.Dragger>
+        <div style={{ marginTop: 16, textAlign: 'center' }}>
+          <Button type="link" icon={<DownloadOutlined />} onClick={downloadCsvTemplate}>
+            下载 CSV 模板
+          </Button>
+        </div>
+        <Text type="secondary" style={{ display: 'block', marginTop: 12, fontSize: 12 }}>
+          提示：装备名按"44堕神法杖"格式自动解析等级品质，需确认参考库已存在该装备（或别称）
+        </Text>
       </Modal>
 
       {/* Excel 导入预览 */}

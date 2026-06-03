@@ -24,6 +24,7 @@ import LogPage from '@/pages/log';
 import InviteCodePage from '@/pages/invite-codes';
 import GuildSettingsPage from '@/pages/guild/GuildSettings';
 import BattleReportPage from '@/pages/battleReport';
+import AccountsPage from '@/pages/accounts';
 
 function GuildRoute({ children }: { children: React.ReactNode }) {
   const { currentGuildId } = useGuildStore();
@@ -89,6 +90,7 @@ export default function App() {
               <Route path="invite-codes" element={<InviteCodePage />} />
               <Route path="logs" element={<LogPage />} />
               <Route path="settings" element={<GuildSettingsPage />} />
+              <Route path="accounts" element={<AccountsPage />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

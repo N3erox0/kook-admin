@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card, Row, Col, Statistic, Table, Typography, Spin, Tag, Button, Space, List, Badge, Tooltip, message, Avatar } from 'antd';
 import {
   TeamOutlined, AppstoreOutlined, SyncOutlined, BankOutlined,
-  UserOutlined, RobotOutlined, KeyOutlined, ReloadOutlined,
+  UserOutlined, KeyOutlined, ReloadOutlined,
   WarningOutlined, ClockCircleOutlined, ArrowUpOutlined, ArrowDownOutlined,
   PlusCircleOutlined, MinusCircleOutlined,
+  SettingOutlined, AlertOutlined, FileTextOutlined, IdcardOutlined,
 } from '@ant-design/icons';
 import { useGuildStore } from '@/stores/guild.store';
 import { useAuthStore } from '@/stores/auth.store';
@@ -210,7 +211,7 @@ function AdminDashboard() {
 // ===== 模块二：公会管理员控制台 =====
 
 function GuildDashboard() {
-  const { currentGuildId } = useGuildStore();
+  const { currentGuildId, currentGuildRole } = useGuildStore();
   const navigate = useNavigate();
   const guildId = currentGuildId!;
   const [loading, setLoading] = useState(false);
@@ -395,7 +396,94 @@ function GuildDashboard() {
         </Row>
       </Card>
 
+      {/* V3.2: 管理入口区（按权限露出） */}
+      <ManagementEntries role={currentGuildRole} navigate={navigate} />
+
     </div>
+  );
+}
+
+// ===== V3.2: 管理入口区组件 =====
+function ManagementEntries({ role, navigate }: { role: string | null; navigate: (path: string) => void }) {
+  const isSuper = role === 'super_admin';
+  const isInventory = role === 'inventory_admin';
+  const isResupply = role === 'resupply_staff';
+
+  const entries: { key: string; label: string; desc: string; icon: any; color: string; path: string; visible: boolean }[] = [
+    {
+      key: 'settings',
+      label: '公会设置',
+      desc: '公会基础信息、KOOK/Albion 配置',
+      icon: <SettingOutlined />,
+      color: '#1677ff',
+      path: '/admin/settings',
+      visible: isSuper,
+    },
+    {
+      key: 'alerts',
+      label: '库存预警',
+      desc: '库存阈值、死亡次数预警规则',
+      icon: <AlertOutlined />,
+      color: '#fa8c16',
+      path: '/admin/alerts',
+      visible: isSuper || isInventory,
+    },
+    {
+      key: 'battle',
+      label: '战报记录',
+      desc: 'Albion 公会成员死亡记录',
+      icon: <FileTextOutlined />,
+      color: '#722ed1',
+      path: '/admin/battle-reports',
+      visible: isSuper || isInventory || isResupply,
+    },
+    {
+      key: 'logs',
+      label: '操作日志',
+      desc: '管理员操作审计',
+      icon: <FileTextOutlined />,
+      color: '#13c2c2',
+      path: '/admin/logs',
+      visible: isSuper,
+    },
+    {
+      key: 'accounts',
+      label: '登录账号',
+      desc: '系统账号管理（含手动创建）',
+      icon: <IdcardOutlined />,
+      color: '#52c41a',
+      path: '/admin/accounts',
+      visible: isSuper,
+    },
+  ].filter((e) => e.visible);
+
+  if (entries.length === 0) return null;
+
+  const { Text } = Typography;
+
+  return (
+    <Card
+      size="small"
+      title={<Space><SettingOutlined /><Text strong>管理入口</Text></Space>}
+      style={{ marginTop: 16 }}
+    >
+      <Row gutter={[12, 12]}>
+        {entries.map((e) => (
+          <Col xs={12} sm={8} md={6} lg={4} key={e.key}>
+            <Card
+              hoverable
+              size="small"
+              onClick={() => navigate(e.path)}
+              style={{ cursor: 'pointer', textAlign: 'center', borderColor: e.color }}
+            >
+              <div style={{ fontSize: 28, color: e.color, marginBottom: 6 }}>{e.icon}</div>
+              <div style={{ fontWeight: 600 }}>{e.label}</div>
+              <Text type="secondary" style={{ fontSize: 11 }}>{e.desc}</Text>
+            </Card>
+          </Col>
+        ))}
+      </Row>
+    </Card>
   );
 }
 

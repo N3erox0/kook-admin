@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Input, DatePicker, Typography, message, Tag } from 'antd';
+import { Card, Table, Button, Space, Input, DatePicker, Typography, message, Tag, Tooltip } from 'antd';
 import { ReloadOutlined, SearchOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { getBattleReports, pullBattleReports } from '@/api/battleReport';
 import { useGuildStore } from '@/stores/guild.store';
@@ -7,6 +7,58 @@ import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
+
+/**
+ * V3.2 战报记录页
+ * - 列表行精简
+ * - 展开行：10 部位装备分组
+ * - 单装备格式：{level}.{enchantLevel} {部位} {名称}
+ * - 未匹配（catalogId=null）红色 + 悬停显示完整 albionId
+ */
+
+// 10 个部位的展示顺序与中文名（与 Albion API slot 对齐）
+const SLOT_ORDER: { slot: string; label: string }[] = [
+  { slot: 'MainHand', label: '武器' },
+  { slot: 'OffHand', label: '副手' },
+  { slot: 'Head', label: '头' },
+  { slot: 'Armor', label: '甲' },
+  { slot: 'Shoes', label: '鞋' },
+  { slot: 'Cape', label: '披风' },
+  { slot: 'Mount', label: '坐骑' },
+  { slot: 'Potion', label: '药水' },
+  { slot: 'Food', label: '食物' },
+  { slot: 'Bag', label: '背包' },
+];
+
+interface EquipmentItem {
+  slot: string;
+  albionId: string;
+  name: string;
+  level: number | null;
+  enchantLevel: number | null;
+  quality?: number;
+  catalogId: number | null;
+  category?: string | null;
+  gearScore?: number | null;
+  matchStatus?: 'matched' | 'unmatched';
+}
+
+/** 渲染单件装备：{level}.{enchant} 部位 名称（V3.2 紧凑格式） */
+function renderEquipmentText(item: EquipmentItem, slotLabel: string): string {
+  const lv = item.level ?? '?';
+  const en = item.enchantLevel ?? 0;
+  // 优先用参考库 category（中文部位），否则用列表预定义 slotLabel
+  const cat = item.category || slotLabel;
+  const name = item.name || item.albionId || '未知';
+  return `${lv}.${en} ${cat} ${name}`;
+}
+
+/** 判断是否未匹配（catalogId=null 且 matchStatus 也指示 unmatched） */
+function isUnmatched(item: EquipmentItem): boolean {
+  if (item.matchStatus === 'unmatched') return true;
+  if (item.catalogId === null || item.catalogId === undefined) return true;
+  return false;
+}
 
 export default function BattleReportPage() {
   const { currentGuildId, currentGuildRole } = useGuildStore();
@@ -32,7 +84,7 @@ export default function BattleReportPage() {
       const res: any = await getBattleReports(guildId, params);
       setList(res?.list || []);
       setTotal(res?.total || 0);
-    } catch { } finally { setLoading(false); }
+    } catch {} finally { setLoading(false); }
   };
 
   useEffect(() => { fetchList(); }, [guildId]);
@@ -40,25 +92,37 @@ export default function BattleReportPage() {
   const handlePull = async () => {
     setPulling(true);
     try {
-      await pullBattleReports(guildId);
-      message.success('战报拉取已启动，请3-5分钟后刷新查看');
+      const res: any = await pullBattleReports(guildId);
+      if (res?.status === 'already_running') {
+        message.warning(res.message || '该公会战报拉取任务已在运行');
+      } else {
+        message.success('战报拉取已启动，请稍后刷新查看');
+      }
     } catch {
       message.error('拉取失败，请检查 Albion 公会ID 配置');
     } finally { setPulling(false); }
   };
 
-  const columns = [
-    {
-      title: '成员',
-      dataIndex: 'memberName',
-      width: 120,
-    },
+  // 是否任意一行有 deathMap（用于动态显示该列）
+  const hasAnyMap = list.some((r) => r.deathMap);
+
+  const columns: any[] = [
+    { title: '成员', dataIndex: 'memberName', width: 120 },
     {
       title: '死亡时间',
       dataIndex: 'deathTime',
       width: 130,
       render: (v: string) => v ? dayjs(v).format('MM-DD HH:mm') : '-',
     },
+    ...(hasAnyMap
+      ? [{
+          title: '死亡地图',
+          dataIndex: 'deathMap',
+          width: 160,
+          ellipsis: true,
+          render: (v: string) => v || <Text type="secondary">-</Text>,
+        }]
+      : []),
     {
       title: '击杀公会',
       dataIndex: 'killerGuild',
@@ -69,33 +133,55 @@ export default function BattleReportPage() {
     {
       title: '装备数',
       dataIndex: 'equipmentList',
-      width: 70,
+      width: 80,
       render: (v: any[]) => v?.length || 0,
-    },
-    {
-      title: '装备列表',
-      dataIndex: 'equipmentList',
-      render: (items: any[]) => {
-        if (!items || items.length === 0) return <Text type="secondary">无</Text>;
-        return (
-          <Space size={[4, 4]} wrap>
-            {items.slice(0, 6).map((item, i) => (
-              <Tag key={i} color={item.catalogId ? 'blue' : 'default'}>
-                {item.name && item.name !== item.albionId ? item.name : (item.albionId || '未知')}
-              </Tag>
-            ))}
-            {items.length > 6 && <Tag>+{items.length - 6}</Tag>}
-          </Space>
-        );
-      },
     },
     {
       title: '已补装',
       dataIndex: 'matchedResupply',
-      width: 80,
+      width: 90,
       render: (v: boolean) => v ? <Tag color="green">已匹配</Tag> : <Tag>未匹配</Tag>,
     },
   ];
+
+  /** 展开行：按 10 部位渲染装备 */
+  const expandedRowRender = (record: any) => {
+    const items: EquipmentItem[] = Array.isArray(record.equipmentList) ? record.equipmentList : [];
+    // 按 slot 分组
+    const slotMap = new Map<string, EquipmentItem>();
+    for (const it of items) {
+      if (it && it.slot) slotMap.set(it.slot, it);
+    }
+
+    return (
+      <div style={{ padding: '8px 0' }}>
+        <Space size={[8, 8]} wrap>
+          {SLOT_ORDER.map(({ slot, label }) => {
+            const item = slotMap.get(slot);
+            if (!item) {
+              // 缺该部位
+              return (
+                <Tag key={slot} style={{ minWidth: 140, color: '#bfbfbf' }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{label}</Text>{' '}
+                  <Text type="secondary">—</Text>
+                </Tag>
+              );
+            }
+            const text = renderEquipmentText(item, label);
+            const unmatched = isUnmatched(item);
+            const tag = (
+              <Tag key={slot} color={unmatched ? 'red' : 'blue'} style={{ minWidth: 140 }}>
+                {text}
+              </Tag>
+            );
+            return unmatched ? (
+              <Tooltip key={slot} title={`未匹配参考库：${item.albionId || '未知'}`}>{tag}</Tooltip>
+            ) : tag;
+          })}
+        </Space>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -137,6 +223,7 @@ export default function BattleReportPage() {
           rowKey="id"
           loading={loading}
           size="middle"
+          expandable={{ expandedRowRender }}
           pagination={{
             current: page,
             total,

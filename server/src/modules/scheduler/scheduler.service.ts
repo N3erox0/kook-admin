@@ -39,8 +39,8 @@ export class SchedulerService {
     private albionKillboardService: AlbionKillboardService,
   ) {}
 
-  /** 每天 07:00 — Albion 官网公会成员同步 */
-  @Cron('0 0 7 * * *')
+  /** 每天 07:00（北京时间）— Albion 官网公会成员同步 */
+  @Cron('0 0 7 * * *', { timeZone: 'Asia/Shanghai' })
   async syncAllAlbionGuildMembers() {
     this.logger.log('定时任务：开始同步所有公会 Albion 成员');
     const startTime = Date.now();
@@ -52,9 +52,9 @@ export class SchedulerService {
     );
   }
 
-  /** 每天 0:15 — KOOK 成员同步 */
+  /** 每天 0:15（北京时间）— KOOK 成员同步 */
 
-  @Cron('0 15 0 * * *')
+  @Cron('0 15 0 * * *', { timeZone: 'Asia/Shanghai' })
   async syncAllGuildMembers() {
     this.logger.log('定时任务：开始同步所有公会 KOOK 成员');
     const guilds = await this.guildRepo.find({ where: { status: 1 } });
@@ -74,8 +74,8 @@ export class SchedulerService {
     );
   }
 
-  /** 每天 05:00 — 补装库存预警 */
-  @Cron('0 0 5 * * *')
+  /** 每天 05:00（北京时间）— 补装库存预警 */
+  @Cron('0 0 5 * * *', { timeZone: 'Asia/Shanghai' })
   async refreshInventoryAlerts() {
     this.logger.log('定时任务：开始刷新所有公会库存预警（05:00）');
     const guilds = await this.guildRepo.find({
@@ -115,8 +115,8 @@ export class SchedulerService {
     );
   }
 
-  /** 每天 06:00 — 死亡次数预警（统计补装申请记录） */
-  @Cron('0 0 6 * * *')
+  /** 每天 06:00（北京时间）— 死亡次数预警（统计补装申请记录） */
+  @Cron('0 0 6 * * *', { timeZone: 'Asia/Shanghai' })
   async refreshDeathCountAlerts() {
     this.logger.log('定时任务：开始统计死亡次数预警（06:00）');
     const guilds = await this.guildRepo.find({ where: { status: 1 } });
@@ -209,9 +209,9 @@ export class SchedulerService {
    * 统计每个catalogId在inventory_logs中action=resupply_deduct的总扣减次数（所有公会合计）
    * 规则：>=1次→1, >100次→2, >1000次→3, >10000次→4，未出现→0
    */
-  @Cron('0 0 3 * * *')
+  @Cron('0 0 3 * * *', { timeZone: 'Asia/Shanghai' })
   async refreshEquipmentPopularity() {
-    this.logger.log('定时任务：开始刷新装备热度（03:00）');
+    this.logger.log('定时任务：开始刷新装备热度（北京 03:00）');
     const startTime = Date.now();
 
     try {
@@ -268,10 +268,10 @@ export class SchedulerService {
     }
   }
 
-  /** V3.0: 每天 02:00 — 拉取 Albion Killboard 战报（所有公会死亡记录） */
-  @Cron('0 0 2 * * *')
+  /** V3.0: 每天 02:00（北京时间）— 拉取 Albion Killboard 战报（所有公会死亡记录） */
+  @Cron('0 0 2 * * *', { timeZone: 'Asia/Shanghai' })
   async pullAllGuildBattleReports() {
-    this.logger.log('定时任务：开始拉取所有公会 Albion 战报（02:00）');
+    this.logger.log('定时任务：开始拉取所有公会 Albion 战报（北京 02:00）');
     const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });
     const startTime = Date.now();
     let totalNew = 0;
@@ -292,8 +292,8 @@ export class SchedulerService {
     );
   }
 
-  /** V3.0.2: 每天4次 — 轮询 KOOK 补装频道消息（08:00/12:00/18:00/23:00） */
-  @Cron('0 0 8,12,18,23 * * *')
+  /** V3.0.2: 每天4次（北京时间）— 轮询 KOOK 补装频道消息（08:00/12:00/18:00/23:00） */
+  @Cron('0 0 8,12,18,23 * * *', { timeZone: 'Asia/Shanghai' })
   async pollKookResupplyChannels() {
     this.logger.log('定时任务：轮询 KOOK 补装频道消息');
     const guilds = await this.guildRepo.find({ where: { status: GuildStatus.ACTIVE } });

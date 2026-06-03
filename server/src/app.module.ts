@@ -31,6 +31,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { InventoryLogModule } from './modules/inventory-log/inventory-log.module';
 import { AlbionModule } from './modules/albion/albion.module';
+import { AccountsModule } from './modules/accounts/accounts.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { AlbionModule } from './modules/albion/albion.module';
     DashboardModule,
     UploadModule,
     InventoryLogModule,
+    AccountsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
