@@ -342,6 +342,24 @@
 | F-338 | 战报装备紧凑格式 {level}.{enchant} 部位 名称 | completed | 2026-06-03 | 例 8.3 武器 堕神法杖 |
 | F-339 | 未匹配装备红色标识+悬停 albionId | completed | 2026-06-03 | catalogId IS NULL 的装备 |
 | F-340 | 战报死亡地图列动态显示 | completed | 2026-06-03 | 无数据时整列隐藏 |
+| **V3.2.1** | **补装系统7部位简化** | | | |
+| F-341 | 待识别弹窗7部位行内搜索 | completed | 2026-06-03 | 武/副/头/甲/鞋/披/坐 固定7行，每行独立 AutoComplete + 按部位过滤 |
+| F-342 | 战报列表"装备详情"列 | completed | 2026-06-03 | 默认前4件Tag+"+N"，点击行展开10部位 |
+| F-343 | KOOK触发逻辑7部位过滤+全命中判断 | completed | 2026-06-03 | 任一未命中或战报匹配失败 → 整条进待识别 |
+| F-344 | 补装搜索过滤药水/食物/背包/其他 | completed | 2026-06-03 | handleCatalogSearch/handleDetailEquipSearch 两处 |
+| F-345 | 待识别弹窗移除OCR显示区+图像预览 | completed | 2026-06-03 | 与 V3.0 后废弃 pHash 同步 |
+| F-346 | 待识别批次创建复用 OcrService.createKookBatch | completed | 2026-06-03 | 无需后端新增 API |
+| F-347 | V3.3.0 新增 v3-text-parser.ts 文本解析器 | completed | 2026-06-03 | 4 种 UTC 时间格式 + 全/半角【】 + OC碎清单 |
+| F-348 | KOOK 监听补装从 OCR 切为文本关键词 | completed | 2026-06-03 | 实时+历史消息同套分发，OCR 分支注释保留回退 |
+| F-349 | 新增 processDeathKeywordMessage | completed | 2026-06-03 | 解析→matchByPlayerAndTime→7部位全命中→pending；其余进待识别 |
+| F-350 | processOcBrokenMessage 支持 OC碎【】+ screenshotUrl | completed | 2026-06-03 | 新规则优先，旧"碎"字拆词兜底 |
+| F-351 | OCR 错误日志增强 logTencentOcrError | completed | 2026-06-03 | 修复 ResourcePackageRunOut 等静默吞错 |
+| F-352 | sync-members 外层 try/catch + logger.error | completed | 2026-06-03 | 异常包装 200 业务错，方便定位 500 |
+| F-353 | 公会创建流程移除"管理员角色 ID"提示 | completed | 2026-06-03 | 改在公会设置页配置 |
+| F-354 | CSV 简化格式前缀自动解析 + 失败列表 UI | completed | 2026-06-03 | "80长弓"→长弓 L8Q0；匹配失败装备保留在 Modal 内可截图 |
+
+
+
 
 
 

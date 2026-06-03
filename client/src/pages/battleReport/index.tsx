@@ -131,10 +131,30 @@ export default function BattleReportPage() {
       render: (v: string) => v || <Text type="secondary">-</Text>,
     },
     {
-      title: '装备数',
+      title: '装备详情',
       dataIndex: 'equipmentList',
-      width: 80,
-      render: (v: any[]) => v?.length || 0,
+      key: 'equipmentList',
+      render: (items: any[]) => {
+        if (!items || items.length === 0) return <Text type="secondary">无</Text>;
+        const PREVIEW = 4;
+        return (
+          <Space size={[4, 4]} wrap>
+            {items.slice(0, PREVIEW).map((it, i) => {
+              const lv = it.level ?? '?';
+              const en = it.enchantLevel ?? 0;
+              const isUnmatched = it.matchStatus === 'unmatched' || it.catalogId == null;
+              const text = `${lv}.${en} ${it.name || it.albionId || '?'}`;
+              return (
+                <Tag key={i} color={isUnmatched ? 'red' : 'blue'}>
+                  {text}
+                </Tag>
+              );
+            })}
+            {items.length > PREVIEW && <Tag>+{items.length - PREVIEW}</Tag>}
+            <Text type="secondary" style={{ fontSize: 11 }}>(点击行展开)</Text>
+          </Space>
+        );
+      },
     },
     {
       title: '已补装',

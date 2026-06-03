@@ -349,7 +349,7 @@ export default function JoinPage() {
                 <div>
                   <Paragraph style={{ margin: '4px 0' }}>1. 打开 KOOK → 设置 → 高级设置 → 开启「开发者模式」</Paragraph>
                   <Paragraph style={{ margin: '4px 0' }}>2. 右键服务器名称 → 复制 ID</Paragraph>
-                  <Paragraph style={{ margin: '4px 0' }}>3. 右键管理员角色 → 复制 ID（可选，用于 @通知）</Paragraph>
+                  {/* V3.3.0: 管理员角色 ID 不在创建流程中配置，移到公会设置页 */}
                 </div>
               }
               type="info" showIcon style={{ marginBottom: 16 }}

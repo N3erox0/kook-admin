@@ -85,12 +85,16 @@ export default function ResupplyPage() {
   // V2.10.5: 详情页装备编辑搜索
   const [detailEquipOptions, setDetailEquipOptions] = useState<any[]>([]);
   const [detailEquipSearchValue, setDetailEquipSearchValue] = useState('');
+  // V3.2.1: 补装系统仅处理 7 个部位，搜索时过滤掉 药水/食物/背包/其他
+  const SEVEN_CATEGORIES_SET = new Set(['武器', '副手', '头', '甲', '鞋', '披风', '坐骑']);
+
   const handleDetailEquipSearch = async (value: string) => {
     if (!value || value.length < 1) { setDetailEquipOptions([]); return; }
     try {
       const res: any = await searchCatalog(value);
       const items = Array.isArray(res) ? res : (res?.list || res?.data || []);
-      setDetailEquipOptions(items.slice(0, 20).map((item: any) => ({
+      const filtered = items.filter((it: any) => SEVEN_CATEGORIES_SET.has(it.category));
+      setDetailEquipOptions(filtered.slice(0, 20).map((item: any) => ({
         value: `${item.id}`,
         label: `${item.level}${item.quality}${item.name} ${item.category}`,
         item,
@@ -118,7 +122,8 @@ export default function ResupplyPage() {
     try {
       const res: any = await searchCatalog(kw.trim());
       const list = Array.isArray(res) ? res : (res?.list || []);
-      setCatalogOptions(list.slice(0, 20).map((item: any) => ({
+      const filtered = list.filter((it: any) => SEVEN_CATEGORIES_SET.has(it.category));
+      setCatalogOptions(filtered.slice(0, 20).map((item: any) => ({
         value: formatEquipName(item),
         label: `${formatEquipName(item)}${item.aliases ? ' (' + item.aliases + ')' : ''}`,
         item,

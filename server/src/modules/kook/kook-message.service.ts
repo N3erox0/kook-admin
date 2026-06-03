@@ -13,7 +13,16 @@ import { KookBotInteractionService } from './kook-bot-interaction.service';
 import { GuildStatus, InviteCodeStatus } from '../../common/constants/enums';
 import { ConfigService } from '@nestjs/config';
 import { AlbionService } from '../albion/albion.service';
+import { AlbionKillboardService } from '../albion/albion-killboard.service';
 import * as crypto from 'crypto';
+import {
+  parseV3Message,
+  isDeathKeyword,
+  isOcBrokenKeyword,
+  buildReason,
+  type DeathParseResult,
+  type OcBrokenParseResult,
+} from './parsers/v3-text-parser';
 
 export interface KookWebhookPayload {
   s: number;
@@ -64,6 +73,7 @@ export class KookMessageService {
     private botInteraction: KookBotInteractionService,
     private configService: ConfigService,
     private albionService: AlbionService,
+    private albionKillboardService: AlbionKillboardService,
   ) {}
 
   async handleWebhookEvent(payload: KookWebhookPayload): Promise<any> {
@@ -128,19 +138,54 @@ export class KookMessageService {
       : undefined;
 
     if (imageUrls.length > 0) {
-      // 多图逐张处理
-      for (const imgUrl of imageUrls) {
-        await this.processImageMessage(
+      // V3.3.0: 监听频道改为纯文本关键词驱动，图片仅作"附件"
+      // - 若文本含 "击杀详情" / "OC碎" 关键词 → 走对应文本解析（图片URL存 screenshot_url 作关联）
+      // - 否则忽略（不再调 OCR）
+      // V2.x OCR 图片分支保留注释，便于回退
+      const imageUrlsJoined = imageUrls.join(',');
+      if (isDeathKeyword(textContent)) {
+        await this.processDeathKeywordMessage(
           guild,
           authorId,
           authorName,
-          imgUrl,
           textContent,
+          imageUrlsJoined,
           d.msg_id,
           kookMsgTimeIso,
         );
+      } else if (isOcBrokenKeyword(textContent)) {
+        await this.processOcBrokenMessage(
+          guild,
+          authorId,
+          authorName,
+          textContent,
+          d.msg_id,
+          kookMsgTimeIso,
+          imageUrlsJoined,
+        );
       }
-    } else if (this.isOcBrokenMessage(textContent)) {
+      // ===== V2.x 旧 OCR 图片识别路径（V3.3.0 已停用，保留以便回退） =====
+      // for (const imgUrl of imageUrls) {
+      //   await this.processImageMessage(
+      //     guild, authorId, authorName, imgUrl, textContent, d.msg_id, kookMsgTimeIso,
+      //   );
+      // }
+    } else if (isDeathKeyword(textContent)) {
+      // V3.3.0: 死亡补装关键词（纯文本，无图片）
+      await this.processDeathKeywordMessage(
+        guild,
+        authorId,
+        authorName,
+        textContent,
+        null,
+        d.msg_id,
+        kookMsgTimeIso,
+      );
+    } else if (
+      isOcBrokenKeyword(textContent) ||
+      this.isOcBrokenMessage(textContent)
+    ) {
+      // V3.3.0: OC碎新规则优先；不命中新关键词时回退到旧模糊关键词（碎/死了/...）兜底
       await this.processOcBrokenMessage(
         guild,
         authorId,
@@ -579,6 +624,10 @@ export class KookMessageService {
       let matchStatus = 'unmatched';
       let matchReason = '';
 
+      // V3.2.1: 仅提取 7 个部位的装备（武器/副手/头/甲/鞋/披风/坐骑）
+      // 药水/食物/背包不进入补装系统
+      const SEVEN_CATEGORIES = new Set(['武器', '副手', '头', '甲', '鞋', '披风', '坐骑']);
+
       if (killDetail.gameId) {
         try {
           killboardMatch = await this.albionService.matchDeathEvent({
@@ -592,7 +641,13 @@ export class KookMessageService {
           });
           if (killboardMatch.matched) {
             matchStatus = 'matched';
-            equipmentItems = (killboardMatch.items || []).map((item: any) => ({
+            // V3.2.1: 仅保留 7 部位的装备
+            const allItems = killboardMatch.items || [];
+            const sevenItems = allItems.filter((item: any) =>
+              SEVEN_CATEGORIES.has(item.category),
+            );
+
+            equipmentItems = sevenItems.map((item: any) => ({
               catalogId: item.catalogId,
               albionId: item.albionId,
               equipmentName: item.equipmentName,
@@ -604,11 +659,11 @@ export class KookMessageService {
               source: 'killboard',
               matchStatus: item.matchStatus,
             }));
+
+            // V3.2.1: 7 部位装备数量为 1（每件 1 件）
             catalogIds = equipmentItems
               .filter((item) => item.catalogId)
-              .flatMap((item) =>
-                Array(Math.max(1, item.quantity || 1)).fill(item.catalogId),
-              );
+              .map((item) => item.catalogId);
           } else {
             matchReason = killboardMatch.reason || '官网战报未匹配';
           }
@@ -635,6 +690,51 @@ export class KookMessageService {
           this.logger.warn(`[${guild.name}] 本地战报查询失败: ${err.message}`);
         }
       }
+
+      // V3.2.1: 判断是否需要进入"待识别"
+      // 条件：① 战报未匹配 OR ② 7 部位中有任一装备未命中参考库
+      const sevenItemsCount = equipmentItems.length;
+      const allMatched =
+        matchStatus === 'matched' &&
+        sevenItemsCount > 0 &&
+        equipmentItems.every((it) => it.catalogId);
+      const goPending =
+        matchStatus !== 'matched' || sevenItemsCount === 0 || !allMatched;
+
+      if (goPending) {
+        // 整条丢入"待识别"批次（不创建 guild_resupply）
+        try {
+          // 准备 lowConfItems：把 7 部位的装备（含未命中）作为 OCR items 写入
+          const lowConfItems = equipmentItems.map((it) => ({
+            name: it.equipmentName || it.albionId || '未知',
+            catalogId: it.catalogId || null,
+            catalogName: it.catalogId ? it.equipmentName : null,
+            level: it.level || null,
+            quality: it.itemQuality ?? null,
+            category: it.slot || null,
+            gearScore: it.level && it.enchantLevel != null ? it.level + it.enchantLevel : null,
+            quantity: 1,
+            matchScore: it.catalogId ? 1 : 0,
+          }));
+          const batch = await this.ocrService.createKookBatch(
+            guild.id,
+            imageUrl,
+            kookUserId,
+            kookNickname,
+            lowConfItems,
+          );
+          this.logger.log(
+            `[${guild.name}] V3.2.1 待识别批次创建: ${batch.batchNo} (战报匹配=${matchStatus}, 7部位装备=${sevenItemsCount}, 全命中=${allMatched})`,
+          );
+        } catch (err: any) {
+          this.logger.error(
+            `[${guild.name}] V3.2.1 创建待识别批次失败: ${err.message}`,
+          );
+        }
+        return; // 不再继续走 createFromKillDetail
+      }
+
+      // 以下为 V3.2 原逻辑：装备全命中 → 直接创建 pending 补装
 
       // V3.0.2: 基于 KOOK 消息ID 去重（同一条消息不重复生成补装）
       const contentDedupHash = crypto
@@ -704,6 +804,249 @@ export class KookMessageService {
     }
   }
 
+  // ===== V3.3.0 死亡补装关键词文本处理（替代旧 OCR 图片识别） =====
+
+  /**
+   * V3.3.0：处理死亡补装关键词消息
+   *
+   * 触发：消息文本含 "击杀详情" 关键词
+   * 流程：
+   *   1. 解析 时间[] / 游戏名[] / 备注[]
+   *   2. 时间块缺失或解析失败 → 进待识别工作区
+   *   3. 用 (gameName, UTC时间) 查本地战报（matchByPlayerAndTime ±2h）
+   *      - 命中：抽出 7 部位装备 → 创建死亡补装申请
+   *      - 未命中：进待识别工作区
+   *   4. 备注 + 残余原文（800字）写入 reason；截图URL 写入 screenshotUrl
+   *
+   * @param screenshotUrls 同条消息附带的图片URL（多张用逗号拼接），可为 null
+   */
+  private async processDeathKeywordMessage(
+    guild: Guild,
+    kookUserId: string,
+    kookNickname: string,
+    textContent: string,
+    screenshotUrls: string | null,
+    kookMessageId?: string,
+    kookMessageTime?: string,
+  ): Promise<void> {
+    try {
+      const v3 = parseV3Message(textContent);
+      if (v3.type !== 'death_kill_detail') {
+        this.logger.warn(
+          `[${guild.name}] 死亡关键词解析失败，跳过: "${textContent.slice(0, 100)}"`,
+        );
+        return;
+      }
+      const parsed = v3 as DeathParseResult;
+
+      this.logger.log(
+        `[${guild.name}] [V3.3.0死亡补装] 玩家=${parsed.gameName || '?'}, 时间=${parsed.killTimeUtc || '?'} (原:${parsed.rawTimeStr || '?'}), 备注=${parsed.remark || '-'}`,
+      );
+
+      // 7 部位过滤
+      const SEVEN_CATEGORIES = new Set([
+        '武器',
+        '副手',
+        '头',
+        '甲',
+        '鞋',
+        '披风',
+        '坐骑',
+      ]);
+
+      // V3.3.0 去重：消息ID + 用户 + 日期
+      const dateStr = (parsed.killTimeUtc || new Date().toISOString()).slice(
+        0,
+        10,
+      );
+      const dedupHash = crypto
+        .createHash('md5')
+        .update(
+          `death|${textContent}|${dateStr}|${kookUserId}|${kookMessageId || ''}`,
+        )
+        .digest('hex');
+      const existingDedup = await this.resupplyService.findByDedupHash(
+        guild.id,
+        dedupHash,
+      );
+      if (existingDedup) {
+        this.logger.log(
+          `[${guild.name}] [V3.3.0死亡补装] 去重命中(msgId=${kookMessageId})，跳过`,
+        );
+        return;
+      }
+
+      // 构造 reason（V3.3.0：备注 + 残余 + 时间，800字截断）
+      const reasonParts: string[] = [];
+      if (parsed.rawTimeStr) reasonParts.push(`时间(UTC):${parsed.rawTimeStr}`);
+      if (parsed.gameName) reasonParts.push(`游戏名:${parsed.gameName}`);
+      const subReason = buildReason(parsed.remark, parsed.residualText, 600);
+      if (subReason) reasonParts.push(subReason);
+      const finalReason = reasonParts.join(' | ').slice(0, 800);
+
+      const goPending = async (
+        pendingReason: string,
+        equipmentItems: any[] = [],
+      ) => {
+        try {
+          // 写入待识别工作区
+          const lowConfItems =
+            equipmentItems.length > 0
+              ? equipmentItems
+              : [
+                  {
+                    name: parsed.gameName
+                      ? `${parsed.gameName} 死亡补装(待确认)`
+                      : '死亡补装(待确认)',
+                    catalogId: null,
+                    catalogName: null,
+                    level: null,
+                    quality: null,
+                    category: null,
+                    gearScore: null,
+                    quantity: 1,
+                    matchScore: 0,
+                  },
+                ];
+          await this.ocrService.createKookBatch(
+            guild.id,
+            screenshotUrls || null,
+            kookUserId,
+            kookNickname,
+            lowConfItems as any,
+          );
+          this.logger.log(
+            `[${guild.name}] [V3.3.0死亡补装] 进待识别工作区: ${pendingReason}`,
+          );
+        } catch (err: any) {
+          this.logger.error(
+            `[${guild.name}] [V3.3.0死亡补装] 待识别工作区写入失败: ${err.message}`,
+          );
+        }
+      };
+
+      // Step 1: 时间块缺失 → 进待识别
+      if (!parsed.killTimeUtc) {
+        await goPending(`时间块缺失或格式无法解析(原:${parsed.rawTimeStr})`);
+        return;
+      }
+
+      // Step 2: 玩家名缺失 → 进待识别
+      if (!parsed.gameName) {
+        await goPending('游戏名【】缺失');
+        return;
+      }
+
+      // Step 3: 查本地战报（matchByPlayerAndTime ±2h）
+      let battleReport: any = null;
+      try {
+        battleReport = await this.albionKillboardService.matchByPlayerAndTime(
+          guild.id,
+          parsed.gameName,
+          new Date(parsed.killTimeUtc),
+        );
+      } catch (err: any) {
+        this.logger.warn(
+          `[${guild.name}] [V3.3.0死亡补装] matchByPlayerAndTime 异常: ${err.message}`,
+        );
+      }
+
+      if (!battleReport) {
+        await goPending(
+          `本地战报未命中: ${parsed.gameName} @ ${parsed.killTimeUtc}`,
+        );
+        return;
+      }
+
+      // Step 4: 抽 7 部位装备
+      const rawEquipList: any[] = Array.isArray(battleReport.equipmentList)
+        ? battleReport.equipmentList
+        : [];
+      const sevenItems = rawEquipList.filter((it: any) => {
+        const cat = it?.slot || it?.category;
+        return cat && SEVEN_CATEGORIES.has(cat);
+      });
+
+      const equipmentItems = sevenItems.map((it: any) => ({
+        catalogId: it.catalogId || null,
+        albionId: it.albionId || '',
+        equipmentName: it.name || it.equipmentName || it.albionId || '未知',
+        slot: it.slot || it.category || null,
+        level: it.level ?? null,
+        enchantLevel: it.enchantLevel ?? null,
+        itemQuality: it.quality ?? it.itemQuality ?? 0,
+        quantity: 1,
+        source: 'battle_report_v3.3',
+        matchStatus: it.catalogId ? 'matched' : 'unmatched',
+      }));
+
+      const allMatched =
+        equipmentItems.length > 0 &&
+        equipmentItems.every((it) => it.catalogId);
+
+      if (!allMatched) {
+        // 战报命中但 7 部位有缺/未匹配参考库 → 进待识别
+        await goPending(
+          `战报命中但 7 部位有未匹配参考库(${equipmentItems.length}件 / ${equipmentItems.filter((it) => it.catalogId).length}件已匹配)`,
+          equipmentItems.map((it) => ({
+            name: it.equipmentName,
+            catalogId: it.catalogId,
+            catalogName: it.catalogId ? it.equipmentName : null,
+            level: it.level,
+            quality: it.itemQuality,
+            category: it.slot,
+            gearScore: it.level && it.enchantLevel != null
+              ? it.level + it.enchantLevel
+              : null,
+            quantity: 1,
+            matchScore: it.catalogId ? 1 : 0,
+          })),
+        );
+        return;
+      }
+
+      // Step 5: 创建死亡补装
+      const catalogIds: number[] = equipmentItems
+        .map((it) => it.catalogId)
+        .filter((id): id is number => !!id);
+
+      const result = await this.resupplyService.createFromKillDetail(guild.id, {
+        kookUserId,
+        kookNickname,
+        screenshotUrl: screenshotUrls || '',
+        killDate: dateStr,
+        mapName: battleReport.deathMap || 'unknown',
+        gameId: parsed.gameName,
+        guild: guild.albionGuildName || guild.name,
+        equipmentCatalogIds: catalogIds,
+        equipmentItems,
+        kookMessageId,
+        kookMessageTime,
+        _dedupHash: dedupHash,
+        _reason: finalReason,
+        source: 'v3.3_keyword',
+        albionEventId: battleReport.albionEventId,
+        albionBattleId: battleReport.battleId,
+        killTimeUtc: parsed.killTimeUtc,
+        killboardMatchStatus: 'matched',
+      });
+
+      if (result.created) {
+        this.logger.log(
+          `[${guild.name}] [V3.3.0死亡补装] 创建成功: id=${result.resupplyId}, ${parsed.gameName}, 7部位=${equipmentItems.length}件`,
+        );
+      } else if (result.skipped) {
+        this.logger.log(
+          `[${guild.name}] [V3.3.0死亡补装] 已存在被跳过: ${parsed.gameName}`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[${guild.name}] [V3.3.0死亡补装] 处理失败: ${err.message}\n${err.stack || ''}`,
+      );
+    }
+  }
+
   // ===== OC碎文字消息处理 =====
 
   /** V3.0: 检测是否为补装文字消息（支持简繁体关键词） */
@@ -714,6 +1057,7 @@ export class KookMessageService {
 
   /**
    * 处理OC碎文字消息
+   * V3.3.0：优先抓 `OC碎【...】` 内的清单（新规则），抓不到回退到 "碎" 字后拆词（旧规则）
    * 逻辑：拆词 → 逐个与参考库全名/别称匹配 → 全匹配创建补装，有未匹配进待识别工作区
    */
   private async processOcBrokenMessage(
@@ -723,17 +1067,41 @@ export class KookMessageService {
     textContent: string,
     kookMessageId?: string,
     kookMessageTime?: string,
+    screenshotUrls?: string | null,
   ): Promise<void> {
     try {
       this.logger.log(
         `[${guild.name}] OC碎消息: ${kookNickname} → "${textContent.slice(0, 200)}"`,
       );
 
-      // 解析装备词段（去除OC碎关键词+纯数字+分隔符）
-      const segments = this.parseOcBrokenSegments(textContent);
-      this.logger.log(
-        `[${guild.name}] OC碎拆词: ${segments.length} 个词段: [${segments.join(', ')}]`,
-      );
+      // V3.3.0: 先用新解析器抓 OC碎【】+ 备注【】+ 游戏名【】
+      const v3 = parseV3Message(textContent);
+      let segments: string[] = [];
+      let v3Remark: string | null = null;
+      let v3Residual = '';
+      let v3GameName: string | null = null;
+
+      if (v3.type === 'oc_broken') {
+        const r = v3 as OcBrokenParseResult;
+        v3Remark = r.remark;
+        v3Residual = r.residualText;
+        v3GameName = r.gameName;
+        if (r.fromBracket && r.equipmentSegments.length > 0) {
+          // 新规则路径：OC碎【】内清单
+          segments = r.equipmentSegments;
+          this.logger.log(
+            `[${guild.name}] OC碎[新规则]: ${segments.length}个词段: [${segments.join(', ')}]`,
+          );
+        }
+      }
+
+      // 旧规则兜底：以 "碎" 字为分界拆词
+      if (segments.length === 0) {
+        segments = this.parseOcBrokenSegments(textContent);
+        this.logger.log(
+          `[${guild.name}] OC碎[兜底拆词]: ${segments.length}个词段: [${segments.join(', ')}]`,
+        );
+      }
 
       // F-108: 字数分段与关键词不一致（含OC碎但拆不出有效词段）→ 整条进待识别工作区
       if (segments.length === 0) {
@@ -871,13 +1239,22 @@ export class KookMessageService {
 
       // 全部匹配 → 创建补装申请
       if (matchedIds.length > 0) {
+        // V3.3.0: reason 由 备注 + 残余原文 + 游戏名 合并（800字截断）
+        const reasonParts: string[] = [];
+        if (v3GameName) reasonParts.push(`游戏名:${v3GameName}`);
+        const v3Reason = buildReason(v3Remark, v3Residual, 760);
+        if (v3Reason) reasonParts.push(v3Reason);
+        const finalReason =
+          reasonParts.join(' | ').slice(0, 800) || textContent.slice(0, 800);
+
         const createDto: any = {
           kookUserId,
           kookNickname,
           equipmentIds: matchedIds.join(','),
           quantity: matchedIds.length,
           applyType: 'OC碎',
-          reason: textContent,
+          reason: finalReason,
+          screenshotUrl: screenshotUrls || undefined,
           kookMessageId,
           kookMessageTime,
           _dedupHash: dedupHash,
@@ -1539,19 +1916,54 @@ export class KookMessageService {
                 : undefined;
 
               if (imageUrls.length > 0) {
-                for (const imgUrl of imageUrls) {
-                  await this.processImageMessage(
+                // V3.3.0: 历史消息也走关键词路径，图片仅作附件
+                const imageUrlsJoined = imageUrls.join(',');
+                if (isDeathKeyword(textContent)) {
+                  await this.processDeathKeywordMessage(
                     guild,
                     authorId,
                     authorName,
-                    imgUrl,
                     textContent,
+                    imageUrlsJoined,
                     msg.id,
                     histMsgTimeIso,
                   );
+                  processed++;
+                } else if (isOcBrokenKeyword(textContent)) {
+                  await this.processOcBrokenMessage(
+                    guild,
+                    authorId,
+                    authorName,
+                    textContent,
+                    msg.id,
+                    histMsgTimeIso,
+                    imageUrlsJoined,
+                  );
+                  processed++;
+                } else {
+                  skipped++;
                 }
+                // ===== V2.x 旧 OCR 图片识别路径（V3.3.0 已停用，保留以便回退） =====
+                // for (const imgUrl of imageUrls) {
+                //   await this.processImageMessage(
+                //     guild, authorId, authorName, imgUrl, textContent, msg.id, histMsgTimeIso,
+                //   );
+                // }
+              } else if (isDeathKeyword(textContent)) {
+                await this.processDeathKeywordMessage(
+                  guild,
+                  authorId,
+                  authorName,
+                  textContent,
+                  null,
+                  msg.id,
+                  histMsgTimeIso,
+                );
                 processed++;
-              } else if (this.isOcBrokenMessage(textContent)) {
+              } else if (
+                isOcBrokenKeyword(textContent) ||
+                this.isOcBrokenMessage(textContent)
+              ) {
                 await this.processOcBrokenMessage(
                   guild,
                   authorId,

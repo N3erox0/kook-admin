@@ -1,8 +1,242 @@
 # KOOK 公会管理系统 — 版本更新记录
 
-> 截止版本：V3.2（2026-06-03）
+> 截止版本：V3.3.0（2026-06-03）
 > 仓库：https://github.com/N3erox0/kook-admin
 > 最新 commit：待推送
+
+---
+
+# V3.3.0 — KOOK 监听补装识别从 OCR 切换为文本关键词（2026-06-03）
+
+## 背景
+
+V3.2 之前死亡补装依赖腾讯云通用印刷体 OCR（GeneralBasicOCR）识别截图中的"击杀详情"标题及玩家昵称、UTC 时间等元数据。生产实测出现 **`ResourceUnavailable.ResourcePackageRunOut`（账号资源包耗尽）** 错误，全部 OCR 调用返回空 `TextDetections`，导致：
+- 监听频道 469 张/天死亡截图全部被判定为"非击杀详情"跳过
+- 错误被静默吞掉（`callTencentOcrRaw` 不读 `Response.Error`），PM2 日志看不出真正原因
+
+V3.3.0 砍掉 OCR 图片识别，改为成员发送**结构化关键词文本**触发补装识别（图片只作为附件挂在 reason 上）。
+
+## 一、新关键词规则
+
+### 1.1 死亡补装
+```
+击杀详情【05/31/2026 14:41】(UTC时间)游戏名【yesbabe】备注【金风】
+```
+- 触发词：`击杀详情`
+- 时间块（按 UTC 解析，支持 4 种格式）：
+  - `MM/DD/YYYY HH:mm[:ss]`
+  - `YYYY-MM-DD HH:mm[:ss]`
+  - `YYYY/MM/DD HH:mm[:ss]`
+  - `M月D日 HH:mm[:ss]`（年默认当年）
+- 游戏名：`游戏名【...】`
+- 备注：`备注【...】`（可选）
+
+### 1.2 OC 碎补装
+```
+OC碎【P8堕神奶杖、P8皇家鞋、P8冰箱头、平8石棺盾】游戏名【yesbabe】备注【金风】
+```
+- 触发词：`OC碎`
+- 装备清单：`OC碎【...】` 内（分隔符 `、` `，` `,` 空格），抓不到则回退到 V2.x 的"碎"字后拆词兜底
+- 游戏名/备注同上
+
+## 二、流程变更
+
+| 旧（V3.2 OCR） | 新（V3.3 关键词） |
+|---|---|
+| 图片 → 腾讯云OCR文字+坐标 → 判断"击杀详情" → Albion实时API匹配 | 文本 → 关键词正则 → 4 格式UTC时间解析 → `matchByPlayerAndTime` 本地战报匹配（±2h） |
+| 元数据从 OCR 文字坐标推算 | 元数据直接从【】槽位提取 |
+| `processImageMessage` 主路径 | `processDeathKeywordMessage` 主路径，OCR 分支保留注释回退用 |
+| 失败原因看不到 | 三种失败明确进待识别工作区 |
+
+## 三、变更详情（F-347~F-352）
+
+### F-347 新增 `v3-text-parser.ts` 纯函数解析器
+- 文件：`server/src/modules/kook/parsers/v3-text-parser.ts`（新增 ~290 行）
+- 导出：`parseV3Message` / `parseUtcTime` / `isDeathKeyword` / `isOcBrokenKeyword` / `splitEquipmentList` / `buildReason`
+- 中英文【】(全角/半角) 都统一处理
+- 4 种 UTC 时间格式白名单
+- 纯函数无 NestJS 依赖，便于将来加单元测试
+
+### F-348 `kook-message.service.ts` 入口分发改造
+- 文件：`server/src/modules/kook/kook-message.service.ts`
+- 实时消息（`handleWebhookEvent`）+ 历史消息（`pullHistoryMessages`）同一套关键词分发逻辑
+- 优先级：`击杀详情` → `processDeathKeywordMessage` > `OC碎` → `processOcBrokenMessage` > 旧关键词（碎/死了）兜底
+- 多图消息：图片 URL 用逗号拼接存入 `screenshot_url` 作为附件
+- 旧 `processImageMessage` 调用全部注释保留，便于灰度回退
+
+### F-349 新增 `processDeathKeywordMessage`
+- 步骤：解析 → 去重(MD5) → 时间块缺失/玩家名缺失/本地战报未命中 → 进待识别；战报命中→抽 7 部位→全命中创建 pending 补装；任一未命中参考库 → 进待识别
+- 复用现有 `albionKillboardService.matchByPlayerAndTime` 和 `resupplyService.createFromKillDetail`，零新数据库结构
+
+### F-350 `processOcBrokenMessage` 增强
+- 新增可选 `screenshotUrls` 参数（同条消息附带的图片 URL）
+- 优先抓 `OC碎【...】` 内清单（V3.3 新规则）
+- 抓不到回退到"碎"字后拆词（V2.x 旧规则兜底）
+- reason 字段：`游戏名:xxx | 备注:xxx | 残余原文`，800 字截断
+
+### F-351 OCR 错误日志增强（hotfix 顺手做）
+- 文件：`server/src/modules/ocr/ocr.service.ts`
+- 新增 `logTencentOcrError` 统一日志方法
+- 三处调用点（`recognizeImageWithCoords` / `callTencentOcr` / `callTencentOcrBase64`）调用后都打日志：
+  - `Response.Error` 存在 → ERROR 级别（含 Code/Message/RequestId/URL前80字）
+  - `TextDetections` 为空 → WARN 级别（含 RequestId）
+- 装备库存录入页继续用 OCR，本次问题（资源包耗尽）会立即在 PM2 日志可见
+
+### F-352 sync-members 500 兜底
+- 文件：`server/src/modules/dashboard/dashboard.controller.ts`
+- 整体外层 try/catch，任何未捕获异常包装为 `{ success: false, message }` 返回 200
+- 各分支异常加 `logger.error` 含 stack，方便服务器侧定位
+
+### F-353 公会创建流程移除"管理员角色 ID"提示
+- 文件：`client/src/pages/join/index.tsx`
+- 删除"3. 右键管理员角色 → 复制 ID（可选，用于 @通知）"提示行
+- 该字段保留在公会设置页（`GuildSettings.tsx`）由超管后配置
+
+### F-354 CSV 简化格式前缀自动解析 + 匹配失败列表
+- 文件：`client/src/pages/equipment/index.tsx`
+- 新增 `parseEquipNamePrefix` 工具函数，支持 6 种前缀格式：
+  - `80长弓` → name=长弓, level=8, quality=0, gearScore=8（两位数字 = LQ）
+  - `44堕神法杖` → name=堕神法杖, level=4, quality=4, gearScore=8
+  - `P9重锤` → name=重锤, level=8, quality=1, gearScore=9（装等推 LQ）
+  - `平7长弓` → name=长弓, level=7, quality=0（平=Q0）
+  - `T6Q2长弓` → name=长弓, level=6, quality=2
+  - `长弓` → 原名透传 + L0Q0（兜底）
+- 之前 simple 格式强制 level=0/quality=0，导致后端 batchMatch 必失败
+- Modal 顶部增加"总条数/已匹配/未匹配/未导入"统计 Tag
+- 新增"原文"列展示 CSV 原始装备名
+- 导入后能匹配上的直接入库，匹配失败的保留在 Modal 内的"匹配失败列表"卡片（红色边框，含原文/解析后L+Q/数量/位置/失败原因），方便用户截图反馈补全参考库
+
+## 四、随车收敛的 V3.2.1 待推送改动
+
+V3.2.1（2026-06-03 早些时候本地完成未推送）一并合并发布：
+- F-341 待识别弹窗 7 部位行内搜索
+- F-342 战报列表"装备详情"列 + 行展开 10 部位
+- F-343 KOOK 触发逻辑：7 部位全命中创建 pending，否则进待识别
+- F-344 手动创建补装搜索过滤 7 部位
+- F-345 战报装备 catalogId 反查与展示
+- F-346 `processImageMessage` 7 部位过滤（V3.3 已注释，但代码保留）
+
+## 五、数据库变更
+
+❌ 无 schema 变更（沿用 `guild_resupply` 现有字段：reason/screenshotUrl/equipmentIds/applyType/killTimeUtc/...）
+
+## 六、运维数据清理（用户手工执行）
+
+### PSC 公会清空补装+库存（重置）
+```sql
+START TRANSACTION;
+SET @gid := (SELECT id FROM guilds WHERE name = 'PSC' LIMIT 1);
+DELETE FROM guild_resupply WHERE guild_id = @gid;
+DELETE FROM ocr_recognition_batch WHERE guild_id = @gid;
+DELETE FROM guild_inventory WHERE guild_id = @gid;
+DELETE FROM inventory_log WHERE guild_id = @gid;
+COMMIT;
+```
+
+### 10087 测试工会及关联数据清理
+```sql
+START TRANSACTION;
+SET @tgid := 10087;
+DELETE FROM guild_resupply WHERE guild_id = @tgid;
+DELETE FROM ocr_recognition_batch WHERE guild_id = @tgid;
+DELETE FROM guild_inventory WHERE guild_id = @tgid;
+DELETE FROM inventory_log WHERE guild_id = @tgid;
+DELETE FROM battle_reports WHERE guild_id = @tgid;
+DELETE FROM albion_guild_members WHERE guild_id = @tgid;
+DELETE FROM guild_members WHERE guild_id = @tgid;
+DELETE FROM guilds WHERE id = @tgid;
+COMMIT;
+```
+
+## 七、修改文件统计
+
+- **新增**：1 文件（`v3-text-parser.ts` 290 行）
+- **修改**：5 文件
+  - `kook-message.service.ts` +280/-25
+  - `ocr.service.ts` +55/-5
+  - `dashboard.controller.ts` +35/-15
+  - `join/index.tsx` -1
+  - 文档 3 个
+
+## 八、运行预期
+
+成员在监听频道发：
+```
+击杀详情【06/03/2026 14:41】(UTC时间)游戏名【yesbabe】备注【金风】
+```
+PM2 日志看到：
+```
+[PSC公会] [V3.3.0死亡补装] 玩家=yesbabe, 时间=2026-06-03T14:41:00.000Z (原:06/03/2026 14:41), 备注=金风
+[PSC公会] [V3.3.0死亡补装] 创建成功: id=123, yesbabe, 7部位=7件
+```
+未命中（如玩家拼错）会进待识别工作区，前端"补装管理 → 待识别"Tab 可看到红框装备名 + 截图。
+
+---
+
+
+
+# V3.2.1 — 补装系统 7 部位简化（2026-06-03）
+
+## 核心变更
+1. **补装系统只处理 7 个部位**：武器/副手/头/甲/鞋/披风/坐骑（药水/食物/背包不再进入补装）
+2. **待识别弹窗 7 部位行内搜索**：固定 7 行，每行独立 AutoComplete + 按部位过滤参考库 + 装等显示 + 清空按钮
+3. **战报记录列表新增"装备详情"列**：默认前 4 件 Tag + "+N" 提示，点击行展开 10 部位详情（V3.2 展开行原样保留）
+4. **KOOK 触发逻辑重构**：战报匹配 → 提取 7 部位装备 → **全命中参考库** → 直接创建 pending 补装；任一未命中或战报匹配失败 → 整条进入"待识别"批次
+5. **手动创建补装搜索过滤**：装备搜索 AutoComplete 自动过滤 药水/食物/背包/其他分类
+
+## 变更详情（F-341~346）
+
+### F-341 待识别弹窗 7 部位行内搜索
+- 文件：`client/src/pages/resupply/PendingRecognitionTab.tsx`（重写）
+- 弹窗左侧：战报截图大图 + 未匹配装备名提示区
+- 弹窗右侧：固定 7 行（武器/副手/头/甲/鞋/披风/坐骑），每行：部位 Tag + AutoComplete + 装等列 + 清空按钮
+- 自动预填：从战报已匹配的 7 部位装备按 category 映射到对应行
+- 部位不一致警告：用户在"头"行选了"长剑"也允许，但显示橙色警告 Tag
+
+### F-342 战报列表"装备详情"列
+- 文件：`client/src/pages/battleReport/index.tsx`
+- "装备数"列改为"装备详情"列：显示前 4 件装备 Tag + "+N" + "(点击行展开)" 提示
+- 行点击展开仍显示 10 部位完整布局（V3.2 实现保留）
+- 未匹配装备红色 Tag
+
+### F-343 KOOK 触发逻辑：7 部位过滤 + 全命中判断
+- 文件：`server/src/modules/kook/kook-message.service.ts` (`processImageMessage`)
+- 新增常量 `SEVEN_CATEGORIES = {武器,副手,头,甲,鞋,披风,坐骑}`
+- 战报装备过滤：`equipmentItems = items.filter(it => SEVEN_CATEGORIES.has(it.category))`
+- 装备数量改为 1（每件 1 件，不再 flatMap quantity 倍数）
+- 新规则 `goPending`：战报未匹配 OR 7 部位装备数=0 OR 任一 catalogId 为空 → 进入待识别
+- 进入待识别走 `ocrService.createKookBatch(guildId, imageUrl, kookUserId, kookNickname, lowConfItems)`，跳过 `createFromKillDetail`
+
+### F-344 手动创建补装搜索过滤
+- 文件：`client/src/pages/resupply/index.tsx`
+- `handleCatalogSearch` / `handleDetailEquipSearch` 两处搜索处理器加 `filter(it => SEVEN_CATEGORIES_SET.has(it.category))`
+- 用户搜索时不会出现药水/食物/背包/其他
+
+### F-345 待识别弹窗 OCR 显示区移除
+- 砍掉旧的"OCR 原始识别"区块（与 V3.0 后废弃 pHash 路径同步）
+- 砍掉"图像识别预览（点击展开）"折叠区（V3.0 后已是死代码）
+- 保留：批次号、KOOK 用户ID、申请人昵称（可改）、战报截图大图
+
+### F-346 待识别批次创建支持仅"战报参考装备"
+- 已用现有 `OcrService.createKookBatch` API（无需后端改动）
+- `lowConfItems` 即"7 部位中战报扫到但未全命中参考库的装备"
+- 管理员在弹窗中看到这些装备名作为提示，手动选对应参考库装备
+
+## 数据库变更
+**无**（无新增字段、无新表）。
+
+## 文件统计
+- 后端修改：1 个（`kook-message.service.ts`）
+- 前端修改：3 个（`PendingRecognitionTab.tsx` / `battleReport/index.tsx` / `resupply/index.tsx`）
+
+## 风险提示
+- ⚠️ **触发逻辑变化**：以前战报匹配后会创建 pending 补装（即使部分装备未命中），现在只要任一未命中就进"待识别"，**待识别量会上升**，需管理员手动介入
+- ⚠️ **数量字段**：补装内每件装备数量固定 1（之前可能根据 `event.Count` 翻倍），如有 2 把同款也只算 1 件 → 与战报实际死亡数据一致
+
+## 待办（V3.3）
+- 按部位合并补装单（一个成员多条死亡按部位归一）
+- 战报并发拉取（worker pool 3 并发）
+- SSVIP 装备参考库专项
 
 ---
 

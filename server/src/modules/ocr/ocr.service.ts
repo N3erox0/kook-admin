@@ -303,6 +303,8 @@ export class OcrService {
     }
 
     const result = await this.callTencentOcrRaw(fullUrl, secretId, secretKey, region);
+    // V3.3.0: 错误日志增强 — 之前 result.Response.Error 被静默吞掉
+    this.logTencentOcrError('recognizeImageWithCoords', result, fullUrl);
     const textDetections = result.Response?.TextDetections || [];
 
     const texts: string[] = [];
@@ -441,6 +443,8 @@ export class OcrService {
 
     const response = await fetch(`https://${host}`, { method: 'POST', headers, body: payload });
     const result = await response.json() as any;
+    // V3.3.0: 错误日志增强
+    this.logTencentOcrError('callTencentOcr', result, imageUrl);
     return result.Response?.TextDetections?.map((t: any) => t.DetectedText) || [];
   }
 
@@ -459,7 +463,47 @@ export class OcrService {
 
     const response = await fetch(`https://${host}`, { method: 'POST', headers, body: payload });
     const result = await response.json() as any;
+    // V3.3.0: 错误日志增强
+    this.logTencentOcrError('callTencentOcrBase64', result, `base64(${base64.length}字节)`);
     return result.Response?.TextDetections?.map((t: any) => t.DetectedText) || [];
+  }
+
+  /**
+   * V3.3.0：统一打印腾讯云 OCR 错误日志
+   *
+   * 之前 result.Response.Error 被静默吞掉，导致：
+   * - 资源包耗尽（ResourcePackageRunOut）
+   * - 鉴权失败（AuthFailure.SignatureExpire）
+   * - 图片下载失败（InvalidParameter.ImageDownload）
+   * - URL 无效（FailedOperation.ImageDownloadError）
+   *
+   * 全部静默返回空数组，导致 KOOK 监听补装识别"看上去"在跑但无任何结果。
+   *
+   * 现在三种情况会留下日志，便于运维定位：
+   * 1. Error 字段存在 → ERROR 级别（含 Code/Message/RequestId/URL前80字符）
+   * 2. Error 不存在但 TextDetections 为空 → WARN 级别（含 RequestId）
+   * 3. 正常返回 → 不打日志（保持现有行为）
+   */
+  private logTencentOcrError(caller: string, result: any, urlOrHint: string): void {
+    try {
+      const err = result?.Response?.Error;
+      const requestId = result?.Response?.RequestId || '?';
+      const urlSnippet = (urlOrHint || '').slice(0, 80);
+      if (err && (err.Code || err.Message)) {
+        this.logger.error(
+          `[腾讯云OCR][${caller}] Code=${err.Code || '?'}, Message=${err.Message || '?'}, RequestId=${requestId}, URL/Hint=${urlSnippet}`,
+        );
+        return;
+      }
+      const detections = result?.Response?.TextDetections;
+      if (!Array.isArray(detections) || detections.length === 0) {
+        this.logger.warn(
+          `[腾讯云OCR][${caller}] TextDetections为空（可能图片无文字/被屏蔽/账户问题），RequestId=${requestId}, URL/Hint=${urlSnippet}`,
+        );
+      }
+    } catch {
+      // 日志方法本身绝不能抛错
+    }
   }
 
   private async generateAuth(secretId: string, secretKey: string, service: string, date: string, timestamp: number, payload: string, host: string): Promise<string> {

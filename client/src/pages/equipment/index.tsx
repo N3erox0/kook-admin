@@ -13,6 +13,76 @@ import dayjs from 'dayjs';
 const { Title, Text } = Typography;
 const QUALITY_COLORS = ['default', 'success', 'processing', 'purple', 'warning'];
 
+/**
+ * V3.3.0 F-354：CSV 装备名前缀解析（与后端 OCR EquipmentParser 保持一致的语义）
+ *
+ * 支持格式：
+ *  - "80长弓"        → name=长弓,   level=8, quality=0, gearScore=8
+ *  - "44堕神法杖"    → name=堕神法杖, level=4, quality=4, gearScore=8
+ *  - "P9重锤"        → name=重锤,   level=8, quality=1, gearScore=9
+ *  - "平7长弓"       → name=长弓,   level=7, quality=0, gearScore=7
+ *  - "T6Q2长弓"      → name=长弓,   level=6, quality=2, gearScore=8
+ *  - "长弓"          → name=长弓,   level=0, quality=0（无法解析等级时保留原名）
+ *
+ * 不抛异常，最差返回原名 + level=0,quality=0,gearScore=0
+ */
+function parseEquipNamePrefix(raw: string): { name: string; level: number; quality: number; gearScore: number } {
+  const s = (raw || '').trim();
+  if (!s) return { name: '', level: 0, quality: 0, gearScore: 0 };
+
+  // 1) T{N}Q{M} 格式
+  let m = s.match(/^T(\d)Q(\d)\s*(.+)$/i);
+  if (m) {
+    const level = parseInt(m[1], 10);
+    const quality = parseInt(m[2], 10);
+    if (level >= 1 && level <= 8 && quality >= 0 && quality <= 4) {
+      return { name: m[3].trim(), level, quality, gearScore: level + quality };
+    }
+  }
+
+  // 2) "平{N}xxx" 格式（平=quality 0）
+  m = s.match(/^平(\d)(.+)$/);
+  if (m) {
+    const level = parseInt(m[1], 10);
+    if (level >= 1 && level <= 8) {
+      return { name: m[2].trim(), level, quality: 0, gearScore: level };
+    }
+  }
+
+  // 3) "P{N}xxx" 格式（按装等推 level/quality；装等 = level + quality）
+  m = s.match(/^P(\d{1,2})(.+)$/i);
+  if (m) {
+    const gs = parseInt(m[1], 10);
+    if (gs >= 4 && gs <= 12) {
+      const level = Math.min(gs, 8);
+      const quality = Math.max(0, gs - level);
+      return { name: m[2].trim(), level, quality, gearScore: gs };
+    }
+  }
+
+  // 4) 两位数字前缀：第一位=level，第二位=quality（如 80=L8Q0, 44=L4Q4, 71=L7Q1）
+  m = s.match(/^(\d)(\d)(.+)$/);
+  if (m && m[3].trim().length >= 1) {
+    const level = parseInt(m[1], 10);
+    const quality = parseInt(m[2], 10);
+    if (level >= 1 && level <= 8 && quality >= 0 && quality <= 4) {
+      return { name: m[3].trim(), level, quality, gearScore: level + quality };
+    }
+  }
+
+  // 5) 单数字前缀：纯 level（如 "8长弓"）
+  m = s.match(/^(\d)(.+)$/);
+  if (m && m[2].trim().length >= 2) {
+    const level = parseInt(m[1], 10);
+    if (level >= 1 && level <= 8) {
+      return { name: m[2].trim(), level, quality: 0, gearScore: level };
+    }
+  }
+
+  // 6) 无前缀，原名透传
+  return { name: s, level: 0, quality: 0, gearScore: 0 };
+}
+
 /** V3.2 库存 CSV 模板内容（含 BOM 防 Excel 中文乱码） */
 const CSV_TEMPLATE_CONTENT =
   '\uFEFF装备名,数量,位置\n44堕神法杖,20,Gpass地堡\n80长弓,10,公会仓库\n62挣脱鞋,5,蓝城仓库\n';
@@ -54,6 +124,8 @@ export default function EquipmentPage() {
   const [excelModal, setExcelModal] = useState(false);
   const [excelData, setExcelData] = useState<any[]>([]);
   const [excelImporting, setExcelImporting] = useState(false);
+  // V3.3.0 F-354: 导入失败列表（匹配不上参考库的条目，供截图反馈）
+  const [excelFailedList, setExcelFailedList] = useState<any[]>([]);
 
   // 变动日志
   const [logDrawer, setLogDrawer] = useState(false);
@@ -278,40 +350,100 @@ export default function EquipmentPage() {
       if (lines.length < 2) { message.error('文件至少需要表头和一行数据'); return; }
       const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
 
-      // V2.13.1: 支持3种格式
-      // 简化格式: 装备名,数量,位置 (3列) — 装备名如"44堕神法杖"，自动解析
-      // V2.9.1+ 新格式: 别称,等级,品质,装等,数量,位置 (6列)
-      // 旧格式: 装备名称,等级,品质,数量,位置 (5列)
-      const isSimpleFormat = headers.length === 3;
-      const isNewFormat = headers.length >= 6 && (headers[0].includes('别称') || headers[0].includes('名称'));
-      const isOldFormat = headers.length === 5;
+      // V3.3.0 F-354 改进: 基于表头自动识别列位置（更稳健）
+      // 兼容多种格式：
+      //  - 3 列简化: 装备名,数量,位置
+      //  - 5 列旧格式: 装备名,等级,品质,数量,位置
+      //  - 6 列新格式: 别称,等级,品质,装等,数量,位置
+      //  - 7 列完整: 装备名,等级,品质,装等,部位,数量,位置（用户实际 Excel 格式）
+      //  - 兜底: 按列数推断
+      const headerLower = headers.map((h) => h.toLowerCase());
+      const findIdx = (...keywords: string[]): number => {
+        for (let i = 0; i < headerLower.length; i++) {
+          if (keywords.some((k) => headerLower[i].includes(k))) return i;
+        }
+        return -1;
+      };
+      const idxName = findIdx('装备名', '名称', '别称');
+      const idxLevel = findIdx('等级');
+      const idxQuality = findIdx('品质');
+      const idxGearScore = findIdx('装等');
+      // 'category' 部位列存在则跳过（不影响匹配，参考库自带 category）
+      const idxQuantity = findIdx('数量');
+      const idxLocation = findIdx('位置', '存放');
+
+      // 是否有有效的表头识别（至少识别到装备名 + 数量 + 位置）
+      const hasNamedHeaders = idxName >= 0 && idxQuantity >= 0 && idxLocation >= 0;
+
+      // 旧的固定列数判断（兼容老的无表头/旧表头数据）
+      const isSimpleFormat = !hasNamedHeaders && headers.length === 3;
+      const isOldFormat = !hasNamedHeaders && headers.length === 5;
 
       const rows = lines.slice(1).map((line, idx) => {
         const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
-        if (isSimpleFormat) {
-          // V2.13.1 简化格式: 装备名,数量,位置
+
+        // === 优先：基于表头智能识别（最稳，支持 7 列 Excel 完整格式）===
+        if (hasNamedHeaders) {
+          const rawName = cols[idxName] || '';
+          const explicitLevel = idxLevel >= 0 ? parseInt(cols[idxLevel]) : NaN;
+          const explicitQuality = idxQuality >= 0 ? parseInt(cols[idxQuality]) : NaN;
+          const explicitGsRaw = idxGearScore >= 0 ? cols[idxGearScore] : '';
+          const explicitGs = explicitGsRaw ? parseInt(explicitGsRaw.replace(/^P/i, '')) : NaN;
+
+          // 等级品质显式提供 → 优先用显式值
+          if (
+            !isNaN(explicitLevel) &&
+            explicitLevel >= 1 &&
+            explicitLevel <= 8 &&
+            !isNaN(explicitQuality) &&
+            explicitQuality >= 0 &&
+            explicitQuality <= 4
+          ) {
+            return {
+              key: idx,
+              rawName,
+              name: rawName,
+              level: explicitLevel,
+              quality: explicitQuality,
+              gearScore: !isNaN(explicitGs) ? explicitGs : explicitLevel + explicitQuality,
+              quantity: parseInt(cols[idxQuantity]) || 1,
+              location: cols[idxLocation] || '公会仓库',
+            };
+          }
+          // 否则：再用前缀解析兜底
+          const parsed = parseEquipNamePrefix(rawName);
           return {
             key: idx,
-            name: cols[0] || '',
-            level: 0,
-            quality: 0,
-            gearScore: 0,
+            rawName,
+            name: parsed.name,
+            level: parsed.level,
+            quality: parsed.quality,
+            gearScore: parsed.gearScore,
+            quantity: parseInt(cols[idxQuantity]) || 1,
+            location: cols[idxLocation] || '公会仓库',
+          };
+        }
+
+        // === 老的固定列数兜底分支（保留兼容旧 CSV）===
+        if (isSimpleFormat) {
+          // V3.3.0 F-354: 简化格式自动解析前缀
+          // "80长弓"→ name=长弓, level=8, quality=0
+          const rawName = cols[0] || '';
+          const parsed = parseEquipNamePrefix(rawName);
+          return {
+            key: idx,
+            rawName,
+            name: parsed.name,
+            level: parsed.level,
+            quality: parsed.quality,
+            gearScore: parsed.gearScore,
             quantity: parseInt(cols[1]) || 1,
             location: cols[2] || '公会仓库',
-          };
-        } else if (isNewFormat) {
-          return {
-            key: idx,
-            name: cols[0] || '',
-            level: parseInt(cols[1]) || 1,
-            quality: parseInt(cols[2]) || 0,
-            gearScore: cols[3] ? parseInt(cols[3].replace(/^P/i, '')) || 0 : 0,
-            quantity: parseInt(cols[4]) || 1,
-            location: cols[5] || '公会仓库',
           };
         } else if (isOldFormat) {
           return {
             key: idx,
+            rawName: cols[0] || '',
             name: cols[0] || '',
             level: parseInt(cols[1]) || 1,
             quality: parseInt(cols[2]) || 0,
@@ -320,18 +452,22 @@ export default function EquipmentPage() {
             location: cols[4] || '公会仓库',
           };
         }
-        // 兜底：按简化格式处理
+        // 最终兜底：按简化格式处理
+        const rawName = cols[0] || '';
+        const parsed = parseEquipNamePrefix(rawName);
         return {
           key: idx,
-          name: cols[0] || '',
-          level: 0,
-          quality: 0,
-          gearScore: 0,
+          rawName,
+          name: parsed.name,
+          level: parsed.level,
+          quality: parsed.quality,
+          gearScore: parsed.gearScore,
           quantity: parseInt(cols[1]) || 1,
           location: cols[2] || '公会仓库',
         };
       }).filter(r => r.name);
       setExcelData(rows);
+      setExcelFailedList([]); // V3.3.0: 重置失败列表
       setExcelModal(true);
     };
     reader.readAsText(file);
@@ -353,21 +489,37 @@ export default function EquipmentPage() {
       });
       setExcelData(enriched);
 
-      const items = enriched.map(row => {
-        if (!row.catalogId) return null;
-        return { catalogId: row.catalogId, quantity: row.quantity, location: row.location };
-      }).filter(Boolean);
+      // V3.3.0 F-354: 拆分成功 / 失败两份
+      const matched = enriched.filter((r: any) => r.catalogId);
+      const failed = enriched.filter((r: any) => !r.catalogId);
+      setExcelFailedList(failed);
 
-      const unmatched = enriched.filter(r => !r.catalogId).length;
+      const items = matched.map((row: any) => ({
+        catalogId: row.catalogId,
+        quantity: row.quantity,
+        location: row.location,
+      }));
+
       if (items.length === 0) {
-        message.error('没有匹配到任何装备，请确认参考库中已有对应装备（含别称）');
+        message.error(
+          `没有匹配到任何装备（共 ${enriched.length} 条全部失败），请确认参考库中已有对应装备（含别称）。失败列表已展示在弹窗下方，可截图反馈。`,
+        );
         setExcelImporting(false);
         return;
       }
 
       const res: any = await batchUpsertInventory(guildId, items);
-      message.success(`导入成功 ${res.upserted || items.length} 条${unmatched > 0 ? `，${unmatched} 条未匹配（已跳过）` : ''}`);
-      setExcelModal(false);
+      if (failed.length > 0) {
+        message.warning(
+          `导入成功 ${res.upserted || items.length} 条，${failed.length} 条未匹配（已跳过，列表见弹窗下方，可截图反馈）`,
+        );
+      } else {
+        message.success(`导入成功 ${res.upserted || items.length} 条`);
+      }
+      // V3.3.0: 有失败项则保留 Modal 让用户截图；全部成功则关闭
+      if (failed.length === 0) {
+        setExcelModal(false);
+      }
       fetchList();
     } catch {} finally { setExcelImporting(false); }
   };
@@ -935,16 +1087,29 @@ export default function EquipmentPage() {
       </Modal>
 
       {/* Excel 导入预览 */}
-      <Modal title="Excel/CSV 导入预览" open={excelModal} onCancel={() => setExcelModal(false)} width={900}
-        footer={<Space><Button onClick={() => setExcelModal(false)}>取消</Button><Button type="primary" loading={excelImporting} onClick={handleExcelImport}>确认导入 ({excelData.length} 条)</Button></Space>}>
+      <Modal title="Excel/CSV 导入预览" open={excelModal} onCancel={() => setExcelModal(false)} width={980}
+        footer={<Space><Button onClick={() => setExcelModal(false)}>关闭</Button><Button type="primary" loading={excelImporting} onClick={handleExcelImport}>确认导入 ({excelData.length} 条)</Button></Space>}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
           推荐格式: 装备名,数量,位置（如: 44堕神法杖,20,Gpass地堡）。兼容旧格式: 别称,等级,品质,装等,数量,位置
         </Text>
+        {/* V3.3.0 F-354: 解析统计 + 失败提示 */}
+        {excelData.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <Space size="small">
+              <Tag color="blue">总条数 {excelData.length}</Tag>
+              <Tag color="green">已匹配 {excelData.filter((r: any) => r.catalogId).length}</Tag>
+              <Tag color="red">未匹配 {excelData.filter((r: any) => r.matchType && !r.catalogId).length}</Tag>
+              <Tag>未导入 {excelData.filter((r: any) => !r.matchType).length}</Tag>
+            </Space>
+          </div>
+        )}
         <Table size="small" dataSource={excelData} rowKey="key" pagination={{ pageSize: 10 }}
           columns={[
-            { title: '输入别称/名称', dataIndex: 'name', width: 130 },
-            { title: '匹配装备', dataIndex: 'matchedName', width: 140, render: (v: string, row: any) => {
+            { title: '原文', dataIndex: 'rawName', width: 110, render: (v: string, r: any) => v || r.name },
+            { title: '解析名', dataIndex: 'name', width: 110 },
+            { title: '匹配装备', dataIndex: 'matchedName', width: 150, render: (v: string, row: any) => {
               if (!row.matchType || row.matchType === 'none') {
+                if (row.matchType === 'none') return <Tag color="red">未匹配</Tag>;
                 return <Text type="secondary">点击导入后匹配</Text>;
               }
               if (!v) return <Tag color="red">未匹配</Tag>;
@@ -952,13 +1117,57 @@ export default function EquipmentPage() {
               const labelMap: any = { exact: '精确', alias: '别称', fuzzy: '模糊' };
               return <Space size={4}><Text>{v}</Text><Tag color={colorMap[row.matchType]}>{labelMap[row.matchType]}</Tag></Space>;
             }},
-            { title: '等级', dataIndex: 'level', width: 60 },
-            { title: '品质', dataIndex: 'quality', width: 60 },
-            { title: '装等', dataIndex: 'gearScore', width: 70, render: (v: number) => v > 0 ? `P${v}` : '-' },
-            { title: '数量', dataIndex: 'quantity', width: 60 },
-            { title: '位置', dataIndex: 'location', width: 120 },
+            { title: '等级', dataIndex: 'level', width: 55 },
+            { title: '品质', dataIndex: 'quality', width: 55 },
+            { title: '装等', dataIndex: 'gearScore', width: 60, render: (v: number) => v > 0 ? `P${v}` : '-' },
+            { title: '数量', dataIndex: 'quantity', width: 55 },
+            { title: '位置', dataIndex: 'location', width: 140, ellipsis: true },
           ]}
         />
+        {/* V3.3.0 F-354: 失败装备列表（导入后展示，供截图反馈） */}
+        {excelFailedList.length > 0 && (
+          <Card
+            size="small"
+            type="inner"
+            title={
+              <Space>
+                <Text strong style={{ color: '#cf1322' }}>
+                  匹配失败列表（{excelFailedList.length} 条）
+                </Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  以下装备未在装备参考库中找到对应条目，已跳过。可截图反馈用于补全参考库。
+                </Text>
+              </Space>
+            }
+            style={{ marginTop: 12, borderColor: '#ffccc7' }}
+          >
+            <Table
+              size="small"
+              dataSource={excelFailedList}
+              rowKey="key"
+              pagination={{ pageSize: 20 }}
+              columns={[
+                { title: '#', dataIndex: 'key', width: 50, render: (v: number) => v + 1 },
+                { title: '原文', dataIndex: 'rawName', width: 130, render: (v: string, r: any) => v || r.name },
+                { title: '解析后', width: 200, render: (_: any, r: any) => (
+                  <Space size={4}>
+                    <Text>{r.name}</Text>
+                    <Tag>L{r.level}</Tag>
+                    <Tag>Q{r.quality}</Tag>
+                    {r.gearScore > 0 && <Tag color="cyan">P{r.gearScore}</Tag>}
+                  </Space>
+                )},
+                { title: '数量', dataIndex: 'quantity', width: 60 },
+                { title: '位置', dataIndex: 'location', width: 150, ellipsis: true },
+                { title: '失败原因', width: 180, render: () => (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    参考库中无此名称（或等级/品质不一致）
+                  </Text>
+                )},
+              ]}
+            />
+          </Card>
+        )}
       </Modal>
 
       {/* V2.9.2 网格识别入库（方案D） */}

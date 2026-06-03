@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Space, Tag, Typography, message, Modal, Image, Popconfirm, Input, Form, InputNumber, AutoComplete, Collapse } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, ThunderboltOutlined, ScanOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Tag, Typography, message, Modal, Image, Popconfirm, Input, Form, AutoComplete } from 'antd';
+import { ReloadOutlined, DeleteOutlined, EyeOutlined, ThunderboltOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getKookPending, getOcrBatchDetail } from '@/api/ocr';
 import { searchCatalog } from '@/api/catalog';
 import { quickCompleteResupply, batchRejectResupply, createResupply } from '@/api/resupply';
 import { formatEquipName } from '@/types';
-import MatchPreview, { ConfirmedItem } from './components/MatchPreview';
 
 const { Text } = Typography;
 
@@ -18,6 +17,45 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
   failed: { label: '失败', color: 'red' },
 };
 
+/**
+ * V3.2.1 待识别弹窗用的 7 个固定部位
+ * 顺序：武器/副手/头/甲/鞋/披风/坐骑（药水/食物/背包丢弃）
+ */
+const SEVEN_SLOTS: { slot: string; label: string; category: string }[] = [
+  { slot: 'MainHand', label: '武器', category: '武器' },
+  { slot: 'OffHand',  label: '副手', category: '副手' },
+  { slot: 'Head',     label: '头',   category: '头' },
+  { slot: 'Armor',    label: '甲',   category: '甲' },
+  { slot: 'Shoes',    label: '鞋',   category: '鞋' },
+  { slot: 'Cape',     label: '披风', category: '披风' },
+  { slot: 'Mount',    label: '坐骑', category: '坐骑' },
+];
+
+const SEVEN_CATEGORIES = new Set(SEVEN_SLOTS.map((s) => s.category));
+
+/** 槽位录入项类型 */
+interface SlotItem {
+  slot: string;
+  label: string;
+  category: string;
+  catalogId: number | null;
+  name: string;
+  gearScore: number | null;
+  itemCategory: string | null; // 实际选中装备的部位（用于警告）
+}
+
+function makeEmptySlots(): SlotItem[] {
+  return SEVEN_SLOTS.map((s) => ({
+    slot: s.slot,
+    label: s.label,
+    category: s.category,
+    catalogId: null,
+    name: '',
+    gearScore: null,
+    itemCategory: null,
+  }));
+}
+
 interface Props {
   guildId: number;
   canProcess: boolean;
@@ -25,11 +63,16 @@ interface Props {
 }
 
 /**
- * F-107/F-108: 补装管理 → 待识别 Tab
- * 列表显示所有 source='kook' 的 OCR 批次（识别失败/置信度不足/OC碎未匹配）
- * 支持：
- *   - 批量勾选废弃（路径A）
- *   - 单条修正装备列表后直接完成补装（路径B，扣库存+标记已发放）
+ * V3.2.1 补装管理 → 待识别 Tab
+ *
+ * 触发链路：KOOK 监听频道发死亡截图
+ *   → OCR 识别"击杀详情"
+ *   → 提取玩家ID + UTC时间
+ *   → 战报匹配
+ *   → 装备 7 部位全命中参考库 → 直接创建 pending 补装
+ *   → 任一未命中或战报匹配失败 → 整条进入"待识别"
+ *
+ * 弹窗：固定 7 行（武器/副手/头/甲/鞋/披风/坐骑），每行独立搜索 + 按部位过滤
  */
 export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }: Props) {
   const [list, setList] = useState<any[]>([]);
@@ -42,10 +85,15 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
   const [detailModal, setDetailModal] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [editEquipList, setEditEquipList] = useState<{ id: number; name: string; gearScore?: number; category?: string; quantity: number }[]>([]);
+  const [slots, setSlots] = useState<SlotItem[]>(makeEmptySlots());
   const [editKookNickname, setEditKookNickname] = useState('');
-  const [catalogOptions, setCatalogOptions] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // 每行的搜索状态：{slot: {options, value}}
+  const [slotSearchState, setSlotSearchState] = useState<Record<string, { options: any[]; value: string }>>({});
+
+  // 未匹配装备的提示信息（OCR 战报中未命中参考库的）
+  const [unmatchedHints, setUnmatchedHints] = useState<string[]>([]);
 
   const fetchList = async (p = page) => {
     if (!guildId) return;
@@ -62,67 +110,114 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
   const openDetail = async (batchId: number) => {
     setDetailModal(true);
     setDetailLoading(true);
+    setSlots(makeEmptySlots());
+    setSlotSearchState({});
+    setUnmatchedHints([]);
     try {
       const res: any = await getOcrBatchDetail(guildId, batchId);
       setDetail(res);
       setEditKookNickname(res?.batch?.kookNickname || res?.kookNickname || '');
-      // 初始化装备列表：优先已匹配到参考库的项
+
+      // 已匹配的装备按部位预填到 7 个槽位（仅 7 部位之一）
       const items = res?.items || [];
-      const initList = items
-        .filter((it: any) => it.matchedCatalogId)
-        .map((it: any) => ({
-          id: it.matchedCatalogId,
-          name: it.matchedCatalogName || it.equipmentName,
-          gearScore: it.gearScore,
-          category: it.category,
-          quantity: it.quantity || 1,
-        }));
-      setEditEquipList(initList);
+      const next = makeEmptySlots();
+      const unmatched: string[] = [];
+
+      for (const it of items) {
+        if (!it.matchedCatalogId) {
+          // 未命中参考库 → 提示给管理员
+          if (it.equipmentName) unmatched.push(it.equipmentName);
+          continue;
+        }
+        const cat = it.category || '';
+        if (!SEVEN_CATEGORIES.has(cat)) continue; // 非 7 部位（药水/食物/背包/其他）丢弃
+
+        const slotIdx = next.findIndex((s) => s.category === cat);
+        if (slotIdx < 0) continue;
+        if (next[slotIdx].catalogId) continue; // 同部位已填，跳过
+
+        next[slotIdx].catalogId = it.matchedCatalogId;
+        next[slotIdx].name = it.matchedCatalogName || it.equipmentName || '';
+        next[slotIdx].gearScore = it.gearScore ?? null;
+        next[slotIdx].itemCategory = cat;
+      }
+
+      setSlots(next);
+      setUnmatchedHints(unmatched);
     } catch {} finally { setDetailLoading(false); }
   };
 
-  const handleCatalogSearch = async (kw: string) => {
-    if (!kw || kw.length < 1) { setCatalogOptions([]); return; }
+  /** 单行搜索：按该行部位过滤参考库 */
+  const handleSlotSearch = async (slot: string, slotCategory: string, kw: string) => {
+    setSlotSearchState((prev) => ({
+      ...prev,
+      [slot]: { ...(prev[slot] || { options: [], value: '' }), value: kw },
+    }));
+    if (!kw || kw.length < 1) {
+      setSlotSearchState((prev) => ({ ...prev, [slot]: { options: [], value: kw } }));
+      return;
+    }
     try {
       const res: any = await searchCatalog(kw.trim());
-      setCatalogOptions((res || []).map((item: any) => ({
-        value: formatEquipName(item),
-        label: formatEquipName(item),
-        item,
-      })));
-    } catch { setCatalogOptions([]); }
+      // 前端按部位过滤：优先返回该行部位的装备，其他部位也展示但加灰色提示
+      const sameCat = (res || []).filter((it: any) => it.category === slotCategory);
+      const others = (res || []).filter(
+        (it: any) => it.category !== slotCategory && SEVEN_CATEGORIES.has(it.category),
+      );
+      const all = [...sameCat, ...others];
+      const opts = all.map((it: any) => ({
+        value: `${it.id}|${formatEquipName(it)}`,
+        label: (
+          <Space>
+            {it.category === slotCategory ? (
+              <Tag color="blue">{it.category}</Tag>
+            ) : (
+              <Tag color="orange">{it.category}</Tag>
+            )}
+            <span>{formatEquipName(it)}</span>
+          </Space>
+        ),
+        item: it,
+      }));
+      setSlotSearchState((prev) => ({ ...prev, [slot]: { options: opts, value: kw } }));
+    } catch {
+      setSlotSearchState((prev) => ({ ...prev, [slot]: { options: [], value: kw } }));
+    }
   };
 
-  /** V2.9.3: 图像识别预览回调 — 将勾选结果合并进修正装备列表 */
-  const handleMatchConfirm = (items: ConfirmedItem[]) => {
-    if (items.length === 0) return;
-    setEditEquipList(prev => {
-      const map = new Map<number, typeof prev[0]>();
-      for (const e of prev) map.set(e.id, { ...e });
-      for (const it of items) {
-        const ex = map.get(it.catalogId);
-        if (ex) ex.quantity += it.quantity;
-        else map.set(it.catalogId, {
-          id: it.catalogId,
-          name: it.name,
-          gearScore: it.gearScore,
-          category: it.category,
-          quantity: it.quantity,
-        });
-      }
-      return Array.from(map.values());
-    });
-    message.success(`已添加 ${items.length} 件装备到列表（合计 ${items.reduce((s, i) => s + i.quantity, 0)} 件）`);
+  /** 选中装备填入槽位 */
+  const handleSlotSelect = (slot: string, _val: string, option: any) => {
+    const item = option.item;
+    setSlots((prev) =>
+      prev.map((s) =>
+        s.slot === slot
+          ? {
+              ...s,
+              catalogId: item.id,
+              name: item.name,
+              gearScore: item.gearScore ?? null,
+              itemCategory: item.category || null,
+            }
+          : s,
+      ),
+    );
+    setSlotSearchState((prev) => ({ ...prev, [slot]: { options: [], value: '' } }));
   };
 
-  /** 路径A: 批量废弃 — 将选中批次关联的所有补装申请废弃（当前批次source=kook本身不在resupply中，故只更新批次状态） */
+  /** 清空指定槽位 */
+  const handleSlotClear = (slot: string) => {
+    setSlots((prev) =>
+      prev.map((s) =>
+        s.slot === slot
+          ? { ...s, catalogId: null, name: '', gearScore: null, itemCategory: null }
+          : s,
+      ),
+    );
+    setSlotSearchState((prev) => ({ ...prev, [slot]: { options: [], value: '' } }));
+  };
+
   const handleBatchDiscard = async () => {
     if (selectedIds.length === 0) { message.warning('请先选择记录'); return; }
-    // 待识别批次本身在 ocr_recognition_batch 表，尚未生成 resupply 记录
-    // 废弃方式：遍历每个批次的 items 全部标记 discarded（通过已有 confirmOcrItem 接口）
-    // 简化：走后端批量 API — 这里使用补装的 batch-reject（如果后续批次生成了 resupply）
-    // 实际上 batch-reject 针对的是 guild_resupply 表，而当前批次在 ocr_recognition_batch
-    // 所以这里应调用 ocr 的 discardBatch（待后端补齐），临时方案：逐条调用 confirmOcrItem discarded
     try {
       const { confirmOcrItem } = await import('@/api/ocr');
       let done = 0;
@@ -147,25 +242,20 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
     }
   };
 
-  /** 路径B: 单条修正+确认补装完成
-   * 逻辑：
-   *  1. 从待识别批次的 items 生成 guild_resupply 记录（走创建接口）
-   *  2. 对新创建的 resupply 调用 quick-complete（扣库存+标记已发放）
-   *  3. 标记该批次所有 items 为 saved（避免重复处理）
-   */
+  /** 提交：取已填的槽位创建补装 + quickComplete */
   const handleConfirmAndComplete = async () => {
     if (!detail) return;
-    if (editEquipList.length === 0) { message.warning('请至少添加一件装备'); return; }
+    const filled = slots.filter((s) => s.catalogId);
+    if (filled.length === 0) { message.warning('至少填一件装备'); return; }
     setSubmitting(true);
     try {
-      const equipmentEntries = editEquipList.map(e => ({ catalogId: e.id, quantity: e.quantity }));
-      // 1. 创建补装申请
+      const equipmentEntries = filled.map((s) => ({ catalogId: s.catalogId!, quantity: 1 }));
       const batch = detail.batch || detail;
       const createRes: any = await createResupply(guildId, {
         kookUserId: batch.kookUserId,
         kookNickname: editKookNickname || batch.kookNickname,
         equipmentEntries,
-        applyType: '待识别确认',
+        applyType: '死亡补装',
         reason: `待识别批次 #${batch.id} 人工确认`,
         screenshotUrl: batch.imageUrl || undefined,
       });
@@ -174,13 +264,12 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
       } else {
         const newId = createRes?.id;
         if (!newId) throw new Error('创建补装失败');
-        // 2. 快捷完成（扣库存）
         await quickCompleteResupply(guildId, newId, {
           equipmentEntries,
           remark: `待识别批次#${batch.id}修正后确认`,
         });
       }
-      // 3. 标记批次 items 为 discarded（避免重复）
+      // 标记批次 items 为 discarded（避免重复）
       const { confirmOcrItem } = await import('@/api/ocr');
       for (const it of (detail.items || [])) {
         if (it.status === 'pending') {
@@ -190,7 +279,7 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
       message.success('补装已完成（库存已扣减）');
       setDetailModal(false);
       setDetail(null);
-      setEditEquipList([]);
+      setSlots(makeEmptySlots());
       fetchList();
       onRefresh?.();
     } catch (err: any) {
@@ -200,7 +289,6 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
     }
   };
 
-  /** 路径A: 单条废弃 */
   const handleDiscardBatch = async (batchId: number) => {
     try {
       const { confirmOcrItem } = await import('@/api/ocr');
@@ -228,7 +316,6 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
       },
     },
     { title: 'KOOK用户', dataIndex: 'kookNickname', width: 140, ellipsis: true },
-    { title: '装备数', dataIndex: 'totalItems', width: 70 },
     {
       title: '截图', dataIndex: 'imageUrl', width: 80,
       render: (v: string) => v ? <Image src={v} width={40} height={40} style={{ objectFit: 'cover', borderRadius: 4 }} /> : <Text type="secondary">文字</Text>,
@@ -252,12 +339,14 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
     },
   ];
 
+  const filledCount = slots.filter((s) => s.catalogId).length;
+
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
         <Button icon={<ReloadOutlined />} onClick={() => fetchList()}>刷新</Button>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          OCR 未匹配/置信度不足/文字未匹配 OC碎 的记录会在这里汇总，人工确认后可直接扣库存完成补装
+          KOOK 战报截图未匹配/装备未在参考库的记录会汇总在这里，人工确认后扣库存完成补装
         </Text>
       </Space>
 
@@ -285,12 +374,12 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
         pagination={{ current: page, total, pageSize: 20, showTotal: t => `共 ${t} 条`, onChange: p => { setPage(p); fetchList(p); } }}
       />
 
-      {/* 修正弹窗 */}
+      {/* V3.2.1 修正弹窗 — 7 部位行内搜索 */}
       <Modal
-        title="待识别记录 - 修正并完成补装"
+        title="待识别记录 — 修正并完成补装"
         open={detailModal}
-        onCancel={() => { setDetailModal(false); setDetail(null); setEditEquipList([]); }}
-        width={1100}
+        onCancel={() => { setDetailModal(false); setDetail(null); setSlots(makeEmptySlots()); setUnmatchedHints([]); }}
+        width={1080}
         centered
         footer={null}
         destroyOnClose
@@ -301,109 +390,106 @@ export default function PendingRecognitionTab({ guildId, canProcess, onRefresh }
               <div><Text strong>批次号：</Text>{detail.batch?.batchNo || detail.batchNo}</div>
               <div><Text strong>KOOK用户ID：</Text>{detail.batch?.kookUserId || detail.kookUserId || '-'}</div>
               <Form.Item label="申请人昵称（可修改）" style={{ marginBottom: 8 }}>
-                <Input value={editKookNickname} onChange={e => setEditKookNickname(e.target.value)} placeholder="含箱子编号自动提取，如 玩家A 3-16" />
+                <Input value={editKookNickname} onChange={(e) => setEditKookNickname(e.target.value)} placeholder="如 玩家A 3-16" />
               </Form.Item>
-              {(detail.batch?.imageUrl || detail.imageUrl) && (
-                <div><Text strong>截图：</Text><br />
-                  <Image src={detail.batch?.imageUrl || detail.imageUrl} width={240} style={{ marginTop: 4, borderRadius: 8 }} />
-                </div>
-              )}
             </Space>
 
-            {/* V2.9.3: 图像识别预览（可折叠） */}
-            {(detail.batch?.imageUrl || detail.imageUrl) && (
-              <Collapse
-                style={{ marginBottom: 12 }}
-                items={[{
-                  key: 'match-preview',
-                  label: <Space><ScanOutlined /><span>图像识别预览（点击展开，勾选后自动加入装备列表）</span></Space>,
-                  children: (
-                    <MatchPreview
-                      guildId={guildId}
-                      imageUrl={detail.batch?.imageUrl || detail.imageUrl}
-                      onConfirm={handleMatchConfirm}
-                      confirmText="加入装备列表"
-                    />
-                  ),
-                }]}
-              />
-            )}
-
-            {/* OCR 原始识别结果（参考） */}
-            {detail.items?.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>OCR 原始识别：</Text>
-                <div style={{ background: '#fafafa', padding: 8, borderRadius: 4, maxHeight: 120, overflow: 'auto', fontSize: 12 }}>
-                  {detail.items.map((it: any, i: number) => (
-                    <div key={i}>
-                      <Tag color={it.matchedCatalogId ? 'green' : 'orange'}>{it.status}</Tag>
-                      {it.equipmentName}
-                      {it.matchedCatalogName && <Text type="secondary"> → {it.matchedCatalogName}</Text>}
-                      {it.confidence !== null && <Text type="secondary"> ({it.confidence}%)</Text>}
+            <div style={{ display: 'flex', gap: 16 }}>
+              {/* 左：战报截图大图 */}
+              <div style={{ flex: '0 0 360px' }}>
+                <Text strong style={{ display: 'block', marginBottom: 8 }}>战报截图：</Text>
+                {(detail.batch?.imageUrl || detail.imageUrl) ? (
+                  <Image
+                    src={detail.batch?.imageUrl || detail.imageUrl}
+                    width={360}
+                    style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}
+                  />
+                ) : (
+                  <Text type="secondary">无截图</Text>
+                )}
+                {unmatchedHints.length > 0 && (
+                  <div style={{ marginTop: 12, padding: 8, background: '#fff7e6', borderRadius: 4 }}>
+                    <Text strong style={{ fontSize: 12, color: '#fa8c16' }}>战报中未在参考库的装备：</Text>
+                    <div style={{ marginTop: 4 }}>
+                      {unmatchedHints.map((n, i) => (
+                        <Tag key={i} color="orange" style={{ margin: '2px 4px 2px 0' }}>{n}</Tag>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>请在右侧 7 个部位中手动选择对应装备</Text>
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* 装备编辑区 */}
-            <div style={{ marginBottom: 12 }}>
-              <Text strong>补装装备列表（{editEquipList.length}件）：</Text>
-              <div style={{ marginTop: 8 }}>
-                <AutoComplete
-                  options={catalogOptions}
-                  onSearch={handleCatalogSearch}
-                  onSelect={(_: string, option: any) => {
-                    const item = option.item;
-                    if (editEquipList.find(e => e.id === item.id)) { message.warning('该装备已添加'); return; }
-                    setEditEquipList(prev => [...prev, {
-                      id: item.id, name: item.name, gearScore: item.gearScore,
-                      category: item.category, quantity: 1,
-                    }]);
-                    setCatalogOptions([]);
-                  }}
-                  placeholder="搜索参考库装备添加..."
-                  style={{ width: '100%' }}
-                  value=""
-                />
-              </div>
-              {editEquipList.length > 0 && (
+              {/* 右：7 部位行内搜索 */}
+              <div style={{ flex: 1 }}>
+                <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                  补装装备清单（已填 {filledCount}/7）：
+                </Text>
                 <Table
                   size="small"
                   pagination={false}
-                  dataSource={editEquipList}
-                  rowKey="id"
-                  style={{ marginTop: 8 }}
+                  dataSource={slots}
+                  rowKey="slot"
                   columns={[
-                    { title: '装备名称', dataIndex: 'name', key: 'name' },
-                    { title: '装等', key: 'gs', width: 60, render: (_: any, r: any) => r.gearScore ? `P${r.gearScore}` : '-' },
-                    { title: '部位', dataIndex: 'category', key: 'cat', width: 60 },
                     {
-                      title: '数量', key: 'qty', width: 90,
-                      render: (_: any, r: any) => (
-                        <InputNumber min={1} max={99} value={r.quantity}
-                          onChange={(v) => setEditEquipList(prev => prev.map(e => e.id === r.id ? { ...e, quantity: v || 1 } : e))}
-                          style={{ width: 70 }} size="small" />
-                      ),
+                      title: '部位', dataIndex: 'label', width: 70,
+                      render: (v: string) => <Tag color="default" style={{ fontSize: 13 }}>{v}</Tag>,
                     },
                     {
-                      title: '', key: 'del', width: 50,
-                      render: (_: any, r: any) => (
-                        <Button size="small" type="link" danger icon={<DeleteOutlined />}
-                          onClick={() => setEditEquipList(prev => prev.filter(e => e.id !== r.id))} />
-                      ),
+                      title: '装备',
+                      key: 'equip',
+                      render: (_: any, r: SlotItem) => {
+                        if (r.catalogId) {
+                          const isMismatch = r.itemCategory && r.itemCategory !== r.category;
+                          return (
+                            <Space>
+                              <Tag color={isMismatch ? 'orange' : 'blue'} style={{ fontSize: 13 }}>
+                                {r.name}
+                              </Tag>
+                              {isMismatch && (
+                                <Text type="warning" style={{ fontSize: 11 }}>
+                                  ⚠ 实际部位: {r.itemCategory}
+                                </Text>
+                              )}
+                            </Space>
+                          );
+                        }
+                        const state = slotSearchState[r.slot] || { options: [], value: '' };
+                        return (
+                          <AutoComplete
+                            options={state.options}
+                            value={state.value}
+                            onSearch={(kw) => handleSlotSearch(r.slot, r.category, kw)}
+                            onSelect={(val, opt) => handleSlotSelect(r.slot, val, opt)}
+                            onChange={(v) => setSlotSearchState((prev) => ({ ...prev, [r.slot]: { ...(prev[r.slot] || { options: [] }), value: v } }))}
+                            placeholder={`搜索"${r.label}"装备...`}
+                            style={{ width: '100%' }}
+                            allowClear
+                          />
+                        );
+                      },
+                    },
+                    {
+                      title: '装等', dataIndex: 'gearScore', width: 60,
+                      render: (v: number | null) => v ? <Tag>P{v}</Tag> : <Text type="secondary">—</Text>,
+                    },
+                    {
+                      title: '', key: 'clear', width: 50,
+                      render: (_: any, r: SlotItem) =>
+                        r.catalogId ? (
+                          <Button size="small" type="link" danger icon={<CloseCircleOutlined />} onClick={() => handleSlotClear(r.slot)} />
+                        ) : null,
                     },
                   ]}
                 />
-              )}
+              </div>
             </div>
 
-            <Space style={{ marginTop: 12, width: '100%', justifyContent: 'flex-end' }}>
+            <Space style={{ marginTop: 16, width: '100%', justifyContent: 'flex-end' }}>
               <Button onClick={() => setDetailModal(false)}>取消</Button>
-              <Popconfirm title={`确认补装完成并扣减库存？${editEquipList.reduce((s, e) => s + e.quantity, 0)} 件`}
-                onConfirm={handleConfirmAndComplete}>
-                <Button type="primary" icon={<ThunderboltOutlined />} loading={submitting}>
-                  确认并补装完成
+              <Popconfirm title={`确认补装完成并扣减库存？${filledCount} 件`} onConfirm={handleConfirmAndComplete}>
+                <Button type="primary" icon={<ThunderboltOutlined />} loading={submitting} disabled={filledCount === 0}>
+                  确认并补装完成（{filledCount} 件）
                 </Button>
               </Popconfirm>
             </Space>
